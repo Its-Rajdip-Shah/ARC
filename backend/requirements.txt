@@ -11,3 +11,12 @@ django-environ==0.14.0
 
 # core.fields.EncryptedCharField
 cryptography==50.0.1
+
+# Authentication: JWT plus TOTP multi-factor
+djangorestframework-simplejwt==5.5.1
+pyotp==2.10.0
+qrcode[pil]==8.2
+
+# Tests
+pytest==9.1.1
+pytest-django==4.14.0

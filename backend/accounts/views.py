@@ -8,7 +8,8 @@ the one endpoint below that expects it in the request body.
 
 from django.contrib.auth import get_user_model
 from django.contrib.auth.signals import user_logged_in
-from rest_framework import status
+from drf_spectacular.utils import extend_schema, inline_serializer
+from rest_framework import serializers, status
 from rest_framework.exceptions import AuthenticationFailed, PermissionDenied
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
@@ -69,6 +70,26 @@ class PublicAuthView(APIView):
 class RegisterView(PublicAuthView):
     """POST /api/auth/register/ (FR-01)."""
 
+    @extend_schema(
+        request=RegisterSerializer,
+        responses={
+            201: inline_serializer(
+                'RegisterResponse',
+                {
+                    'user': UserSerializer(),
+                    'enrolment_token': serializers.CharField(),
+                    'mfa': inline_serializer(
+                        'MFAEnrolment',
+                        {
+                            'secret': serializers.CharField(),
+                            'provisioning_uri': serializers.CharField(),
+                            'qr_png_base64': serializers.CharField(),
+                        },
+                    ),
+                },
+            )
+        },
+    )
     def post(self, request):
         serializer = RegisterSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -102,6 +123,13 @@ class RegisterView(PublicAuthView):
 class MFAEnrolConfirmView(PublicAuthView):
     """POST /api/auth/mfa/enroll/confirm/ (FR-01)."""
 
+    @extend_schema(
+        request=MFAEnrolConfirmSerializer,
+        responses=inline_serializer(
+            'MFAEnrolConfirmResponse',
+            {'enrolled': serializers.BooleanField(), 'user': UserSerializer()},
+        ),
+    )
     def post(self, request):
         serializer = MFAEnrolConfirmSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -133,6 +161,16 @@ class LoginView(PublicAuthView):
 
     require_admin = False
 
+    @extend_schema(
+        request=LoginSerializer,
+        responses=inline_serializer(
+            'LoginResponse',
+            {
+                'mfa_required': serializers.BooleanField(),
+                'mfa_token': serializers.CharField(help_text='Valid for 5 minutes.'),
+            },
+        ),
+    )
     def post(self, request):
         serializer = LoginSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -176,6 +214,17 @@ class MFAVerifyView(PublicAuthView):
 
     require_admin = False
 
+    @extend_schema(
+        request=MFAVerifySerializer,
+        responses=inline_serializer(
+            'TokenPairResponse',
+            {
+                'access': serializers.CharField(),
+                'refresh': serializers.CharField(),
+                'user': UserSerializer(),
+            },
+        ),
+    )
     def post(self, request):
         serializer = MFAVerifySerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -225,6 +274,7 @@ class LogoutView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(request=LogoutSerializer, responses={205: None})
     def post(self, request):
         serializer = LogoutSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -241,5 +291,6 @@ class MeView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(responses=UserSerializer)
     def get(self, request):
         return Response(UserSerializer(request.user).data)

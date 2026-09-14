@@ -17,7 +17,14 @@ djangorestframework-simplejwt==5.5.1
 pyotp==2.10.0
 qrcode[pil]==8.2
 
+# OpenAPI schema at /api/schema/ and Swagger UI at /api/docs/
+drf-spectacular==0.30.0
+
+# canvas_integration.client
+requests==2.34.2
+
 # Tests
 pytest==9.1.1
 pytest-django==4.14.0
 freezegun==1.5.5
+responses==0.26.3

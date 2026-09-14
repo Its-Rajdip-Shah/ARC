@@ -25,6 +25,7 @@ env = environ.Env(
     ALLOWED_HOSTS=(list, []),
     CORS_ALLOWED_ORIGINS=(list, []),
     ARC_FIELD_ENCRYPTION_KEY=(str, ''),
+    CANVAS_BASE_URL=(str, 'https://canvas.sydney.edu.au'),
 )
 environ.Env.read_env(BASE_DIR / '.env')
 
@@ -51,6 +52,7 @@ INSTALLED_APPS = [
     'rest_framework',
     'rest_framework_simplejwt',
     'rest_framework_simplejwt.token_blacklist',
+    'drf_spectacular',
     'corsheaders',
     # ARC shared library
     'core',
@@ -181,7 +183,31 @@ REST_FRAMEWORK = {
         'rest_framework.renderers.JSONRenderer',
         'rest_framework.renderers.BrowsableAPIRenderer',
     ],
+    'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
 }
+
+
+# OpenAPI schema at /api/schema/, Swagger UI at /api/docs/
+
+SPECTACULAR_SETTINGS = {
+    'TITLE': 'ARC API',
+    'DESCRIPTION': (
+        'University workload and planning API. Every planning, Canvas and '
+        'admin endpoint requires a full-scope bearer token; the two-step MFA '
+        'login under /api/auth/ is what issues one.'
+    ),
+    'VERSION': '0.1.0',
+    'SERVE_INCLUDE_SCHEMA': False,
+    'SCHEMA_PATH_PREFIX': '/api',
+    'COMPONENT_SPLIT_REQUEST': True,
+    'SWAGGER_UI_SETTINGS': {'persistAuthorization': True},
+}
+
+
+# Canvas LMS (canvas_integration)
+# The institution's Canvas host. No trailing /api/v1: the client appends it.
+
+CANVAS_BASE_URL = env('CANVAS_BASE_URL')
 
 
 # Field-level encryption (core.fields.EncryptedCharField)

@@ -25,18 +25,6 @@ def other_user(db):
 
 
 @pytest.fixture
-def make_item(db):
-    """Create a planning item. Defaults to an active task with no dates."""
-
-    def factory(user, title, item_type=ItemType.TASK, parent=None, **fields):
-        return PlanningItem.objects.create(
-            user=user, title=title, item_type=item_type, parent=parent, **fields
-        )
-
-    return factory
-
-
-@pytest.fixture
 def chain(user, make_item):
     """A three-deep line: a -> b -> c."""
     a = make_item(user, 'a', ItemType.GOAL)

@@ -69,3 +69,32 @@ def root_id(user_id, item_id):
     """The top of this item's tree, or the item itself when it is a root."""
     ancestors = ancestor_ids(user_id, item_id)
     return ancestors[-1] if ancestors else item_id
+
+
+# In-memory equivalents, for callers that need the ancestry of many items at
+# once. One CTE per item would be a query per row; these load the whole
+# parent table once and walk it in Python instead.
+
+def parent_map(user_id):
+    """{item_id: parent_id} covering everything this user owns."""
+    from planning.models import PlanningItem
+
+    return dict(
+        PlanningItem.objects.filter(user_id=user_id).values_list('id', 'parent_id')
+    )
+
+
+def ancestor_chain(parents, item_id):
+    """Ancestor ids nearest-first, read from a prefetched parent_map."""
+    chain = []
+    current = parents.get(item_id)
+    while current is not None and len(chain) < MAX_DEPTH:
+        chain.append(current)
+        current = parents.get(current)
+    return chain
+
+
+def root_of(parents, item_id):
+    """The root of this item's tree, read from a prefetched parent_map."""
+    chain = ancestor_chain(parents, item_id)
+    return chain[-1] if chain else item_id

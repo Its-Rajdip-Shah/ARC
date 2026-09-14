@@ -1,3 +1,277 @@
-from django.db import models
+"""The planning hierarchy, tags, assignment detail and contextual timezones.
 
-# Create your models here.
+Covers FR-05 to FR-14. The self-referencing PlanningItem table holds roots,
+goals, tasks and assignments in one hierarchy; the rules that operate on it
+(cycle detection, priority ordering, adaptive scheduling) live in
+planning/services/ in Phase 4 rather than here.
+"""
+
+from datetime import timedelta
+
+from django.db import models
+from django.db.models import F, Q
+from django.db.models.functions import Coalesce
+
+from core.models import OwnedModel, TimestampedModel
+
+
+class ItemType(models.TextChoices):
+    GOAL = 'GOAL', 'Goal'
+    TASK = 'TASK', 'Task'
+    ASSIGNMENT = 'ASSIGNMENT', 'Assignment'
+
+
+#: Types that can be scheduled, prioritised and completed. Goals are
+#: containers, so they never take a priority position or a timeline slot.
+ACTIONABLE_TYPES = (ItemType.TASK, ItemType.ASSIGNMENT)
+
+#: FR-12: overdue work at most this many days past due shows in Recent,
+#: anything older shows in Backlog.
+RECENT_OVERDUE_DAYS = 7
+
+
+class DurationCategory(models.TextChoices):
+    UNDER_20_MIN = 'UNDER_20_MIN', 'Under 20 minutes'
+    MIN_20_TO_60 = 'MIN_20_TO_60', '20 to 60 minutes'
+    OVER_60_MIN = 'OVER_60_MIN', 'Over 60 minutes'
+
+
+class CanvasObjectType(models.TextChoices):
+    COURSE = 'COURSE', 'Course'
+    ASSIGNMENT = 'ASSIGNMENT', 'Assignment'
+
+
+class Tag(OwnedModel):
+    """A reusable, user-owned label (FR-07, FR-08)."""
+
+    id = models.BigAutoField(primary_key=True, db_column='tag_id')
+    name = models.CharField(max_length=100)
+
+    class Meta:
+        db_table = 'tags'
+        ordering = ['name']
+        constraints = [
+            models.UniqueConstraint(fields=['user', 'name'], name='uniq_tag_name_per_user'),
+        ]
+
+    def __str__(self):
+        return self.name
+
+
+class PlanningItemQuerySet(models.QuerySet):
+    def for_user(self, user):
+        return self.filter(user=user)
+
+    def roots(self):
+        return self.filter(parent__isnull=True)
+
+    def actionable(self):
+        return self.filter(item_type__in=ACTIONABLE_TYPES)
+
+    def active(self):
+        return self.filter(is_completed=False)
+
+    def fixed(self):
+        """Items with a real deadline. Only these can become overdue."""
+        return self.filter(due_date__isnull=False)
+
+    def adaptive(self):
+        """Items with no deadline, carrying a temporary scheduled_date instead."""
+        return self.filter(due_date__isnull=True)
+
+    def overdue(self, today):
+        return self.actionable().active().fixed().filter(due_date__lt=today)
+
+    def recent_overdue(self, today):
+        cutoff = today - timedelta(days=RECENT_OVERDUE_DAYS)
+        return self.overdue(today).filter(due_date__gte=cutoff)
+
+    def backlog(self, today):
+        cutoff = today - timedelta(days=RECENT_OVERDUE_DAYS)
+        return self.overdue(today).filter(due_date__lt=cutoff)
+
+    def in_window(self, start, end):
+        """Items whose date span overlaps [start, end], for FR-10's filter.
+
+        An item occupies start_date..due_date when it has fixed dates, and a
+        single day at scheduled_date when it is adaptive.
+        """
+        return (
+            self.annotate(window_end=Coalesce('due_date', 'scheduled_date'))
+            .annotate(window_start=Coalesce('start_date', 'window_end'))
+            .filter(window_start__lte=end, window_end__gte=start)
+        )
+
+    def search(self, term):
+        """FR-08: match on title, description or attached tag name."""
+        return self.filter(
+            Q(title__icontains=term)
+            | Q(description__icontains=term)
+            | Q(tags__name__icontains=term)
+        ).distinct()
+
+
+class PlanningItem(OwnedModel, TimestampedModel):
+    """A root, goal, task or assignment in the user's planning hierarchy."""
+
+    id = models.BigAutoField(primary_key=True, db_column='planning_item_id')
+    parent = models.ForeignKey(
+        'self',
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name='children',
+        db_column='parent_id',
+    )
+    item_type = models.CharField(max_length=10, choices=ItemType.choices)
+    title = models.CharField(max_length=200)
+    description = models.TextField(null=True, blank=True)
+    sibling_order = models.PositiveIntegerField(default=1)
+    start_date = models.DateField(null=True, blank=True)
+    due_date = models.DateField(null=True, blank=True)
+    # Temporary ARC-assigned date for adaptive items; FR-11 moves this
+    # forward, and never touches due_date.
+    scheduled_date = models.DateField(null=True, blank=True)
+    duration_category = models.CharField(
+        max_length=12, choices=DurationCategory.choices, null=True, blank=True
+    )
+    priority_position = models.PositiveIntegerField(null=True, blank=True)
+    is_completed = models.BooleanField(default=False)
+    canvas_object_type = models.CharField(
+        max_length=10, choices=CanvasObjectType.choices, null=True, blank=True
+    )
+    canvas_object_id = models.CharField(max_length=100, null=True, blank=True)
+    tags = models.ManyToManyField(
+        Tag, through='PlanningItemTag', related_name='planning_items', blank=True
+    )
+
+    objects = PlanningItemQuerySet.as_manager()
+
+    class Meta:
+        db_table = 'planning_items'
+        ordering = ['sibling_order', 'id']
+        constraints = [
+            # FR-09: one global priority order per user, each active task in
+            # exactly one row. No condition= is needed because Postgres treats
+            # NULLs as distinct, so any number of completed or non-actionable
+            # items can sit at NULL. Deferring the check to COMMIT is what lets
+            # the Phase 4 reorder renumber rows in a single bulk_update instead
+            # of shuffling them through a temporary offset range; a condition=
+            # would rule deferral out, since Postgres cannot defer a partial
+            # index.
+            models.UniqueConstraint(
+                fields=['user', 'priority_position'],
+                name='uniq_user_priority_position',
+                deferrable=models.Deferrable.DEFERRED,
+            ),
+            # FR-05: re-syncing Canvas updates these rows instead of
+            # duplicating them.
+            models.UniqueConstraint(
+                fields=['user', 'canvas_object_type', 'canvas_object_id'],
+                condition=Q(canvas_object_id__isnull=False),
+                name='uniq_canvas_object_per_user',
+            ),
+            # FR-06: the trivial cycle. Deeper cycles need an ancestor walk and
+            # are rejected by planning.services.hierarchy in Phase 4.
+            models.CheckConstraint(
+                condition=~Q(id=F('parent_id')),
+                name='planning_item_no_self_parent',
+            ),
+            models.CheckConstraint(
+                condition=Q(priority_position__gte=1) | Q(priority_position__isnull=True),
+                name='planning_item_priority_position_positive',
+            ),
+        ]
+
+    def __str__(self):
+        return f'[{self.item_type}] {self.title}'
+
+    @property
+    def is_actionable(self):
+        return self.item_type in ACTIONABLE_TYPES
+
+    @property
+    def is_adaptive(self):
+        """True when ARC schedules this item rather than a real deadline."""
+        return self.due_date is None
+
+
+class PlanningItemTag(models.Model):
+    """Junction resolving the PlanningItem/Tag many-to-many (FR-07, FR-08).
+
+    The ERD uses a composite primary key. Django requires a surrogate key, so
+    the pair is enforced with a unique constraint instead; the guarantee that
+    a tag cannot attach to the same item twice is identical.
+    """
+
+    id = models.BigAutoField(primary_key=True, db_column='planning_item_tag_id')
+    planning_item = models.ForeignKey(
+        PlanningItem, on_delete=models.CASCADE, db_column='planning_item_id'
+    )
+    tag = models.ForeignKey(Tag, on_delete=models.CASCADE, db_column='tag_id')
+
+    class Meta:
+        db_table = 'planning_item_tags'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['planning_item', 'tag'], name='uniq_planning_item_tag'
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.planning_item_id}:{self.tag_id}'
+
+
+class AssignmentDetail(models.Model):
+    """Assignment-only fields, kept out of PlanningItem (FR-05, FR-07, FR-14).
+
+    primary_key=True on the OneToOneField reproduces the ERD's shared primary
+    key, giving the 1-to-0..1 relationship exactly.
+    """
+
+    planning_item = models.OneToOneField(
+        PlanningItem,
+        on_delete=models.CASCADE,
+        primary_key=True,
+        db_column='planning_item_id',
+        related_name='assignment_detail',
+    )
+    weight_percent = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
+    # FR-14: NULL means unmarked and must never be displayed or totalled as 0.
+    mark_achieved = models.DecimalField(max_digits=6, decimal_places=2, null=True, blank=True)
+    submission_url = models.URLField(max_length=1000, null=True, blank=True)
+    marks_position = models.IntegerField(null=True, blank=True)
+
+    class Meta:
+        db_table = 'assignment_details'
+        ordering = ['marks_position']
+
+    def __str__(self):
+        return f'Assignment detail for {self.planning_item_id}'
+
+
+class Timezone(OwnedModel):
+    """A named contextual period on the timeline (FR-13).
+
+    Nothing to do with django.utils.timezone: this is a user-defined date
+    range such as a semester, teaching week, exam period or break. Separate
+    rows are allowed to overlap.
+    """
+
+    id = models.BigAutoField(primary_key=True, db_column='timezone_id')
+    title = models.CharField(max_length=150)
+    start_date = models.DateField()
+    end_date = models.DateField()
+
+    class Meta:
+        db_table = 'timezones'
+        ordering = ['start_date', 'id']
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(end_date__gte=F('start_date')),
+                name='timezone_end_not_before_start',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.title} ({self.start_date} to {self.end_date})'

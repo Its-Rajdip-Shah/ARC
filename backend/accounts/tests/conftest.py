@@ -5,29 +5,13 @@ from datetime import timedelta
 import pyotp
 import pytest
 from django.contrib.auth import get_user_model
-from django.core.cache import cache
 from django.utils import timezone
-from rest_framework.test import APIClient
 
 from accounts.tokens import MFAPendingToken
 
 User = get_user_model()
 
 PASSWORD = 'corr3ct-horse-battery'
-
-
-@pytest.fixture(autouse=True)
-def clear_cache():
-    """The TOTP replay guard lives in the cache, which would otherwise leak
-    spent codes between tests."""
-    cache.clear()
-    yield
-    cache.clear()
-
-
-@pytest.fixture
-def api():
-    return APIClient()
 
 
 @pytest.fixture

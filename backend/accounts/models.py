@@ -4,6 +4,7 @@ from datetime import timedelta
 
 from django.contrib.auth.base_user import AbstractBaseUser, BaseUserManager
 from django.db import models
+from django.db.models.functions import Length
 from django.utils import timezone
 
 from core.fields import EncryptedCharField
@@ -19,6 +20,19 @@ class UserQuerySet(models.QuerySet):
     def active_since(self, days=7):
         """Users who logged in within the window - FR-16's 'active users'."""
         return self.filter(last_login__gte=timezone.now() - timedelta(days=days))
+
+    def mfa_enrolled(self):
+        """Users who finished TOTP setup (FR-01).
+
+        Tested by ciphertext length, because EncryptedCharField refuses
+        content lookups outright: every value encrypts to a different token,
+        so an ``exact`` or ``gt`` comparison against the column would quietly
+        return the wrong answer. Length is the one thing about the stored
+        token that still means something.
+        """
+        return self.annotate(
+            _secret_length=Length('totp_secret_encrypted')
+        ).filter(_secret_length__gt=0)
 
 
 class UserManager(BaseUserManager.from_queryset(UserQuerySet)):

@@ -56,7 +56,6 @@ INSTALLED_APPS = [
     'planning',
     'canvas_integration',
     'analytics',
-    'goals',
 ]
 
 MIDDLEWARE = [

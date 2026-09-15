@@ -50,7 +50,7 @@ Relational integrity is the product: a tag cannot attach to another user's item,
 
 ### React, Vite and Tailwind CSS v4
 
-The wireframes are a single authenticated SPA with several coordinated views over the same planning tree. React + Vite is the shortest path to that, with Tailwind v4 (`@tailwindcss/vite`) for the dark, dense UI without a separate CSS pipeline. TanStack Query owns server state (30s `staleTime`, no retry on 4xx). Zustand owns the session. React Router is present for Phase 7+ routing; Phase 6 only needed the API bridge and a ping screen.
+The wireframes are a single authenticated SPA with several coordinated views over the same planning tree. React + Vite is the shortest path to that, with Tailwind v4 (`@tailwindcss/vite`) for the dark, dense UI without a separate CSS pipeline. TanStack Query owns server state (30s `staleTime`, no retry on 4xx). Zustand owns the session. React Router splits the student ping (`/`) from the staff console (`/admin/*`) so privileged views cannot leak onto the student surface.
 
 ### Canvas REST API
 
@@ -251,11 +251,28 @@ The response interceptor, on **401**:
 3. Requires a refresh token; otherwise rejects.
 4. Runs **one** in-flight refresh (`singleFlightRefresh`) on a bare Axios instance that has no interceptors, so SimpleJWT's 401 cannot re-enter.
 5. Queued callers await that same promise, then replay with the new access token.
-6. On refresh failure: `clearSession()` and `window.location.assign('/login')`.
+6. On refresh failure: `clearSession()` and `window.location.assign('/login')`, or `/admin/login` when the failed call was made from a staff path. Admin login URLs are in the no-refresh list so a wrong staff password cannot trigger a leftover-token refresh.
 
 TanStack Query (`staleTime: 30_000`) does not retry 4xx, so a real 401 after a failed refresh is not hammered. Wrappers in `src/api/` and hooks in `src/hooks/` (`usePlanningTree`, `usePriorityOrder`, `useTimeline`, …) are the only way screens talk to the backend.
 
-The Phase 6 ping (`ConnectionStatus` in `App.jsx`) proves the stack end-to-end: unauthenticated `/health/`, register + TOTP enrol + login, authenticated `/auth/me/`, and a **Force 401** that corrupts the access token and fires two parallel `/me` calls through a single refresh.
+The Phase 6 ping (`ConnectionStatus` in `frontend/src/pages/ConnectionStatus.jsx`) proves the stack end-to-end: unauthenticated `/health/`, register + TOTP enrol + login, authenticated `/auth/me/`, and a **Force 401** that corrupts the access token and fires two parallel `/me` calls through a single refresh.
+
+### Custom staff console (not Django admin)
+
+The academic requirement is a user-facing panel for privileged operators, not developers. The SPA therefore **never links to Django's `/admin/`**. Staff UI lives under the Vite origin at `/admin/*` and talks only to `/api/auth/admin/login/`, `/api/auth/admin/login/mfa/`, and `/api/admin/*`.
+
+| Piece | Role |
+| --- | --- |
+| `AdminLoginPage` | Two-step staff sign-in. Stores the JWT pair in `authStore` the same way student login does. A non-admin password is rejected by the API (`not_an_administrator`); the page does not fall back to student login. |
+| `AdminRoute` | Renders the console only when `user.is_admin` is true. Missing session → `/admin/login`. Student session → `/`. |
+| `AdminLayout` | Overview and Accounts only. No settings, no schema, no INSTALLED_APPS, no planner titles. |
+| `AdminDashboardPage` | FR-16 stats: people, locks, overdue counts, Canvas sync health, and a "needs attention" list (locked accounts, missing MFA, failed syncs). |
+| `AdminUsersPage` | Email search and lock/restore via `/api/admin/users/{id}/lock/` and `/unlock/`. Self-lock is disabled in the UI as well as the API. |
+
+`SessionHydrator` mints a fresh access token from the persisted refresh token after a reload so `AdminRoute` can read `is_admin` before painting. Axios 401s that occur on `/admin/*` redirect to `/admin/login`, not the student ping screen.
+
+The backend still registers `django.contrib.admin` for `manage.py` tasks. That URL is not part of the product surface and is not linked from any React view.
+
 
 ---
 

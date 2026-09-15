@@ -20,7 +20,7 @@ The TOTP secret is held in the enrolment token until the first valid code is sub
 | --- | --- |
 | Endpoints | `POST /api/auth/login/`, `POST /api/auth/login/mfa/`, `POST /api/auth/token/refresh/`, `POST /api/auth/logout/`, `GET /api/auth/me/` |
 | Implementation | `accounts/views.py` (`LoginView`, `MFAVerifyView`, `LogoutView`, `MeView`); `accounts/authentication.py` (`ArcJWTAuthentication` rejects `mfa_pending` tokens and re-reads `is_locked`); `accounts/tokens.py` (`MFAPendingToken`); frontend `src/stores/authStore.js`, `src/lib/apiClient.js` |
-| Tests | `accounts/tests/test_auth.py`; frontend ping in `frontend/src/App.jsx` |
+| Tests | `accounts/tests/test_auth.py`; frontend ping in `frontend/src/pages/ConnectionStatus.jsx` |
 
 Password and TOTP are separate requests. The only link is a five-minute `mfa_pending` token that `ArcJWTAuthentication` refuses everywhere except the MFA verify view.
 
@@ -135,20 +135,20 @@ Unrelated to `django.utils.timezone`: these are named date ranges (semester, exa
 | Layer | Location |
 | --- | --- |
 | Endpoints | `POST /api/auth/admin/login/`, `POST /api/auth/admin/login/mfa/` |
-| Implementation | `accounts/views.py` (`AdminLoginView`, `AdminMFAVerifyView`) reject `is_admin=False`; `core.permissions.IsAdminAccount` gates `/api/admin/*` |
+| Implementation | `accounts/views.py` (`AdminLoginView`, `AdminMFAVerifyView`) reject `is_admin=False`; `core.permissions.IsAdminAccount` gates `/api/admin/*`. Frontend: `frontend/src/pages/admin/AdminLoginPage.jsx` (staff-only two-step form), `frontend/src/components/AdminRoute.jsx` (`is_admin` gate), `frontend/src/stores/authStore.js` |
 | Tests | `accounts/tests/test_auth.py`; `analytics/tests/test_api.py` |
 
-An ordinary account's token is 403 on every admin route. A pending admin token cannot be redeemed on the student MFA endpoint, and vice versa.
+An ordinary account's token is 403 on every admin route. A pending admin token cannot be redeemed on the student MFA endpoint, and vice versa. The React staff console is a separate route (`/admin/login`); it does not use or link to Django's built-in admin.
 
 ## FR-16 — Admin stats, lock and unlock
 
 | Layer | Location |
 | --- | --- |
 | Endpoints | `GET /api/admin/stats/`, `GET /api/admin/users/`, `GET /api/admin/users/{id}/`, `POST /api/admin/users/{id}/lock/`, `POST /api/admin/users/{id}/unlock/` |
-| Implementation | `analytics/views.py` (`PlatformStatsView`, `AdminUserViewSet`); `accounts.UserQuerySet` (`admins`, `locked`, `active_since`, `mfa_enrolled`); locking re-reads `is_locked` in `ArcJWTAuthentication`, so a live session dies on the next request |
+| Implementation | `analytics/views.py` (`PlatformStatsView`, `AdminUserViewSet`); `accounts.UserQuerySet` (`admins`, `locked`, `active_since`, `mfa_enrolled`); locking re-reads `is_locked` in `ArcJWTAuthentication`, so a live session dies on the next request. Frontend: `frontend/src/pages/admin/AdminDashboardPage.jsx` (platform health and attention list), `frontend/src/pages/admin/AdminUsersPage.jsx` (email search, lock/restore), `frontend/src/hooks/useAdmin.js` |
 | Tests | `analytics/tests/test_api.py` |
 
-The admin console reports counts and account state, never the contents of anyone's planner. An administrator cannot lock their own account.
+The admin console reports counts and account state, never the contents of anyone's planner. An administrator cannot lock their own account. Operators review locked accounts and missing MFA from the Overview "needs attention" panel, then act on the Accounts table.
 
 ---
 

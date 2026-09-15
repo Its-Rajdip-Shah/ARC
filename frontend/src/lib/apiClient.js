@@ -15,13 +15,14 @@ function readBaseUrl() {
 export const API_BASE_URL = readBaseUrl()
 
 const LOGIN_PATH = '/login'
+const ADMIN_LOGIN_PATH = '/admin/login'
 
 /**
  * Paths that return 401 as a legitimate business response (wrong password,
  * spent TOTP, expired enrolment token). Refreshing those would either loop
  * or redeem a leftover session against the wrong endpoint.
  */
-const NO_REFRESH = /(?:^|\/)(?:health|auth\/(?:login|register|mfa|token\/refresh))(?:\/|$)/
+const NO_REFRESH = /(?:^|\/)(?:health|auth\/(?:admin\/login|login|register|mfa|token\/refresh))(?:\/|$)/
 
 export const apiClient = axios.create({
   baseURL: API_BASE_URL,
@@ -51,8 +52,11 @@ let inflightRefresh = null
 
 function redirectToLogin() {
   useAuthStore.getState().clearSession()
-  if (window.location.pathname !== LOGIN_PATH) {
-    window.location.assign(LOGIN_PATH)
+  const dest = window.location.pathname.startsWith('/admin')
+    ? ADMIN_LOGIN_PATH
+    : LOGIN_PATH
+  if (window.location.pathname !== dest) {
+    window.location.assign(dest)
   }
 }
 

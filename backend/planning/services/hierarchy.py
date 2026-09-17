@@ -62,7 +62,7 @@ def set_parent(item, new_parent):
 
 
 def _siblings(user, parent):
-    return PlanningItem.objects.filter(user=user, parent=parent).order_by(
+    return PlanningItem.objects.visible().filter(user=user, parent=parent).order_by(
         'sibling_order', 'id'
     )
 
@@ -96,7 +96,7 @@ def complete_subtree(item):
     that a position belongs to an active task.
     """
     ids = [item.pk] + descendant_ids(item.user_id, item.pk)
-    PlanningItem.objects.filter(user_id=item.user_id, pk__in=ids).update(is_completed=True)
+    PlanningItem.objects.visible().filter(user_id=item.user_id, pk__in=ids).update(is_completed=True)
     priority.release_positions(item.user, ids)
     item.is_completed = True
     return ids
@@ -110,7 +110,7 @@ def reopen(item):
     downwards, and re-opening a root should not silently re-open a subtree the
     user finished individually.
     """
-    PlanningItem.objects.filter(pk=item.pk).update(is_completed=False)
+    PlanningItem.objects.visible().filter(pk=item.pk).update(is_completed=False)
     item.is_completed = False
     item.refresh_from_db(fields=['priority_position'])
     priority.restore_position(item)

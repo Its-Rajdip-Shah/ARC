@@ -47,6 +47,7 @@ from planning.serializers import (
     TimezoneSerializer,
 )
 from planning.services import hierarchy, overdue, priority, scheduling
+from planning.services import history
 
 #: How long to trust that today's adaptive sweep has already run for a user.
 ROLL_FORWARD_CACHE_SECONDS = 60 * 60 * 12
@@ -77,7 +78,7 @@ def _root_lookup(user):
     parents = queries.parent_map(user.pk)
     meta = {
         pk: {'id': pk, 'title': title, 'item_type': item_type}
-        for pk, title, item_type in PlanningItem.objects.filter(user=user).values_list(
+        for pk, title, item_type in PlanningItem.objects.visible().filter(user=user).values_list(
             'id', 'title', 'item_type'
         )
     }
@@ -153,6 +154,7 @@ class PlanningItemViewSet(UserScopedMixin, viewsets.ModelViewSet):
         queryset = (
             super()
             .get_queryset()
+            .visible()
             .select_related('assignment_detail', 'parent')
             .prefetch_related('tags')
         )
@@ -186,14 +188,117 @@ class PlanningItemViewSet(UserScopedMixin, viewsets.ModelViewSet):
 
         return queryset.distinct()
 
+    @transaction.atomic
+    def perform_create(self, serializer):
+        # Creating an item may change the global priority ordering.
+        priority_before = history.capture_priority(self.request.user)
+
+        instance = serializer.save(user=self.request.user)
+
+        item_after = history.capture_items(
+            self.request.user,
+            [instance.pk],
+        )
+        priority_after = history.capture_priority(self.request.user)
+
+        history.record_checkpoint(
+            self.request.user,
+            'CREATE',
+            {
+                'delete_ids': [instance.pk],
+                'priority': priority_before,
+            },
+            {
+                'items': item_after,
+                'priority': priority_after,
+            },
+        )
+
+    @transaction.atomic
+    def perform_update(self, serializer):
+        instance = serializer.instance
+
+        before = history.capture_items(
+            self.request.user,
+            [instance.pk],
+        )
+
+        updated = serializer.save()
+
+        after = history.capture_items(
+            self.request.user,
+            [updated.pk],
+        )
+
+        history.record_checkpoint(
+            self.request.user,
+            'UPDATE',
+            {'items': before},
+            {'items': after},
+        )
+
+    @transaction.atomic
     def perform_destroy(self, instance):
         parent = instance.parent
+        parent_id = instance.parent_id
         user = instance.user
-        # Give the priority slot up before the row disappears, so the
-        # remaining order stays dense (FR-09).
-        priority.release_position(instance)
-        instance.delete()
+
+        # Resolve the complete subtree BEFORE hiding anything.
+        subtree_ids = [
+            instance.pk,
+            *queries.descendant_ids(user.pk, instance.pk),
+        ]
+
+        siblings_before = history.capture_siblings(user, parent_id)
+        priority_before = history.capture_priority(user)
+
+        # Release active priority positions before hiding the subtree.
+        #
+        # complete_subtree-style descendants can also hold priority
+        # positions, so release every affected row that currently has one.
+        priority_items = list(
+            PlanningItem.objects.filter(
+                user=user,
+                pk__in=subtree_ids,
+                priority_position__isnull=False,
+            ).order_by("-priority_position")
+        )
+
+        for priority_item in priority_items:
+            priority.release_position(priority_item)
+
+        # The original rows, PKs, hierarchy, tags and assignment details
+        # remain intact while DELETE is undoable.
+        PlanningItem.objects.filter(
+            user=user,
+            pk__in=subtree_ids,
+        ).update(is_deleted=True)
+
         hierarchy.reindex_siblings(user, parent)
+
+        siblings_after = history.capture_siblings(user, parent_id)
+        priority_after = history.capture_priority(user)
+
+        history.record_checkpoint(
+            user,
+            'DELETE',
+            {
+                'soft_delete': {
+                    'ids': subtree_ids,
+                    'value': False,
+                },
+                'siblings': siblings_before,
+                'priority': priority_before,
+            },
+            {
+                'soft_delete': {
+                    'ids': subtree_ids,
+                    'value': True,
+                },
+                'siblings': siblings_after,
+                'priority': priority_after,
+            },
+        )
 
     @extend_schema(
         responses=PlanningItemTreeSerializer(many=True),
@@ -234,25 +339,61 @@ class PlanningItemViewSet(UserScopedMixin, viewsets.ModelViewSet):
 
     @extend_schema(request=MoveSerializer, responses=PlanningItemSerializer)
     @action(detail=True, methods=['post'])
+    @transaction.atomic
     def move(self, request, pk=None):
         """FR-06: re-parent, refusing any move that would close a cycle."""
         item = self.get_object()
         serializer = MoveSerializer(data=request.data, context={'request': request})
         serializer.is_valid(raise_exception=True)
 
+        old_parent_id = item.parent_id
+        new_parent_id = serializer.validated_data['parent_id']
+
+        affected_parent_ids = {old_parent_id, new_parent_id}
+
+        siblings_before = []
+        for parent_id in affected_parent_ids:
+            siblings_before.extend(
+                history.capture_siblings(request.user, parent_id)
+            )
+
         try:
-            hierarchy.set_parent(item, serializer.validated_data['parent_id'])
+            hierarchy.set_parent(item, new_parent_id)
         except DjangoValidationError as exc:
             raise _as_400(exc)
 
-        if (order := serializer.validated_data.get('sibling_order')):
-            # Land on the requested position by numbering just below it, then
-            # letting the reindex close the gaps.
-            item.sibling_order = order
-            item.save(update_fields=['sibling_order'])
-            hierarchy.reindex_siblings(request.user, item.parent)
+        order = serializer.validated_data.get('sibling_order')
+        if order is not None:
+            siblings = list(
+                hierarchy._siblings(request.user, item.parent)
+                .exclude(pk=item.pk)
+            )
+
+            # Insert the moved item at the requested 1-based position.
+            index = max(0, min(order - 1, len(siblings)))
+            siblings.insert(index, item)
+
+            # Persist the resulting sibling order explicitly.
+            for sibling_order, sibling in enumerate(siblings, start=1):
+                if sibling.sibling_order != sibling_order:
+                    sibling.sibling_order = sibling_order
+                    sibling.save(update_fields=['sibling_order'])
 
         item.refresh_from_db()
+
+        siblings_after = []
+        for parent_id in affected_parent_ids:
+            siblings_after.extend(
+                history.capture_siblings(request.user, parent_id)
+            )
+
+        history.record_checkpoint(
+            request.user,
+            'MOVE',
+            {'siblings': siblings_before},
+            {'siblings': siblings_after},
+        )
+
         return Response(self.get_serializer(item).data)
 
     @extend_schema(
@@ -266,6 +407,7 @@ class PlanningItemViewSet(UserScopedMixin, viewsets.ModelViewSet):
         ),
     )
     @action(detail=True, methods=['post'])
+    @transaction.atomic
     def complete(self, request, pk=None):
         """FR-08: completing a parent completes everything beneath it."""
         item = self.get_object()
@@ -273,15 +415,86 @@ class PlanningItemViewSet(UserScopedMixin, viewsets.ModelViewSet):
         serializer.is_valid(raise_exception=True)
 
         if serializer.validated_data['completed']:
+            affected_ids = [
+                item.pk,
+                *queries.descendant_ids(request.user.pk, item.pk),
+            ]
+        else:
+            affected_ids = [item.pk]
+
+        items_before = history.capture_items(
+            request.user,
+            affected_ids,
+        )
+        priority_before = history.capture_priority(request.user)
+
+        if serializer.validated_data['completed']:
             affected = hierarchy.complete_subtree(item)
         else:
             hierarchy.reopen(item)
             affected = [item.pk]
 
+        items_after = history.capture_items(
+            request.user,
+            affected_ids,
+        )
+        priority_after = history.capture_priority(request.user)
+
+        history.record_checkpoint(
+            request.user,
+            'COMPLETE',
+            {
+                'items': items_before,
+                'priority': priority_before,
+            },
+            {
+                'items': items_after,
+                'priority': priority_after,
+            },
+        )
+
         item.refresh_from_db()
         return Response({
             'item': self.get_serializer(item).data,
             'affected_ids': affected,
+        })
+
+    @action(detail=False, methods=['get'], url_path='history-status')
+    def history_status(self, request):
+        return Response(history.history_status(request.user))
+
+    @action(detail=False, methods=['post'])
+    @transaction.atomic
+    def undo(self, request):
+        entry = history.undo(request.user)
+
+        if entry is None:
+            return Response({
+                'changed': False,
+                **history.history_status(request.user),
+            })
+
+        return Response({
+            'changed': True,
+            'action_type': entry.action_type,
+            **history.history_status(request.user),
+        })
+
+    @action(detail=False, methods=['post'])
+    @transaction.atomic
+    def redo(self, request):
+        entry = history.redo(request.user)
+
+        if entry is None:
+            return Response({
+                'changed': False,
+                **history.history_status(request.user),
+            })
+
+        return Response({
+            'changed': True,
+            'action_type': entry.action_type,
+            **history.history_status(request.user),
         })
 
 

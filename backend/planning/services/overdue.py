@@ -29,7 +29,7 @@ def classify(user, today):
         return {'recent': [], 'backlog': []}
 
     parents = parent_map(user.pk)
-    titles = dict(PlanningItem.objects.filter(user=user).values_list('id', 'title'))
+    titles = dict(PlanningItem.objects.visible().filter(user=user).values_list('id', 'title'))
 
     result = {'recent': [], 'backlog': []}
     for item in items:

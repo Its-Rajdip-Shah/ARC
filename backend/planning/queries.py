@@ -51,13 +51,17 @@ WITH RECURSIVE tree AS (
     SELECT planning_item_id, 0 AS depth,
            ARRAY[sibling_order, planning_item_id] AS path
       FROM planning_items
-     WHERE user_id = %(user_id)s AND parent_id IS NULL
+     WHERE user_id = %(user_id)s
+       AND parent_id IS NULL
+       AND is_deleted = FALSE
     UNION ALL
     SELECT child.planning_item_id, tree.depth + 1,
            tree.path || ARRAY[child.sibling_order, child.planning_item_id]
       FROM planning_items AS child
       JOIN tree ON child.parent_id = tree.planning_item_id
-     WHERE child.user_id = %(user_id)s AND tree.depth < %(max_depth)s
+     WHERE child.user_id = %(user_id)s
+       AND child.is_deleted = FALSE
+       AND tree.depth < %(max_depth)s
 )
 SELECT planning_item_id, depth FROM tree ORDER BY path
 """
@@ -109,7 +113,7 @@ def parent_map(user_id):
     from planning.models import PlanningItem
 
     return dict(
-        PlanningItem.objects.filter(user_id=user_id).values_list('id', 'parent_id')
+        PlanningItem.objects.visible().filter(user_id=user_id).values_list('id', 'parent_id')
     )
 
 

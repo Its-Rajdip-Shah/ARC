@@ -1,0 +1,546 @@
+import { useEffect, useRef, useState } from 'react'
+import {
+  Check,
+  GripVertical,
+  Plus,
+  Pencil,
+  Trash2,
+  ChevronDown,
+} from 'lucide-react'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useSortable } from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
+
+import { completeItem, deleteItem } from '../../../api/planning'
+
+export default function PlannerTreeItem({
+  item,
+  depth = 0,
+  selectedItemId,
+  panelOwnerId,
+  hoveredItemId,
+  showAllDetails = false,
+  showCheckboxes = true,
+  searchMatchedIds,
+  onDeleteItem,
+  onHoverItem,
+  onSelectItem,
+  onEditItem,
+  onCreateNested,
+  dndEnabled = true,
+}) {
+  const queryClient = useQueryClient()
+  const clickTimerRef = useRef(null)
+
+  const isSelected = selectedItemId === item.id
+  const isHovered = hoveredItemId === item.id
+
+  // Click selection is retained internally for dragging,
+  // but visual selection exists only while the row is hovered.
+  const [localDetailsOpen, setLocalDetailsOpen] = useState(false)
+  const singleClickTimerRef = useRef(null)
+
+  const isActive = isHovered
+  const isPanelOwner = panelOwnerId === item.id
+  const isSearchMatch =
+    searchMatchedIds?.has(item.id) ?? false
+
+  const showDetails =
+    showAllDetails ||
+    localDetailsOpen ||
+    isSearchMatch
+
+  useEffect(() => {
+    if (!isHovered) {
+      return
+    }
+
+    function handleDetailsShortcut(event) {
+      const target = event.target
+
+      // Never steal keyboard input while the user is typing.
+      if (
+        target instanceof HTMLElement &&
+        (
+          target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.tagName === 'SELECT' ||
+          target.isContentEditable
+        )
+      ) {
+        return
+      }
+
+      if (
+        event.key.toLowerCase() === 'd' &&
+        !event.metaKey &&
+        !event.ctrlKey &&
+        !event.altKey
+      ) {
+        event.preventDefault()
+        setLocalDetailsOpen((value) => !value)
+      }
+    }
+
+    window.addEventListener('keydown', handleDetailsShortcut)
+
+    return () => {
+      window.removeEventListener('keydown', handleDetailsShortcut)
+    }
+  }, [isHovered])
+
+
+  const indent = depth * 42
+
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({
+    id: item.id,
+    disabled: !dndEnabled,
+  })
+
+  const completionMutation = useMutation({
+    mutationFn: () =>
+      completeItem(
+        item.id,
+        item.is_completed
+          ? { completed: false }
+          : {},
+      ),
+
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({
+        queryKey: ['planning', 'tree'],
+      })
+
+      await queryClient.invalidateQueries({
+        queryKey: ['planning', 'priority'],
+      })
+
+      await queryClient.invalidateQueries({
+        queryKey: ['planning', 'history'],
+      })
+    },
+  })
+
+  useEffect(() => {
+    if (!isDragging) {
+      return
+    }
+
+    if (clickTimerRef.current) {
+      clearTimeout(clickTimerRef.current)
+      clickTimerRef.current = null
+    }
+  }, [isDragging])
+
+  useEffect(() => {
+    return () => {
+      if (clickTimerRef.current) {
+        clearTimeout(clickTimerRef.current)
+      }
+    }
+  }, [])
+
+  const deleteMutation = useMutation({
+    mutationFn: () => deleteItem(item.id),
+
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({
+        queryKey: ['planning', 'tree'],
+      })
+
+      await queryClient.invalidateQueries({
+        queryKey: ['planning', 'priority'],
+      })
+
+      await queryClient.invalidateQueries({
+        queryKey: ['planning', 'history'],
+      })
+    },
+  })
+
+  function handleDelete(event) {
+    event.stopPropagation()
+
+    if (onDeleteItem) {
+      onDeleteItem(item.id)
+      return
+    }
+
+    // Fallback for isolated rendering.
+    if (!deleteMutation.isPending) {
+      deleteMutation.mutate()
+    }
+  }
+
+  function handleCompletion(event) {
+    event.stopPropagation()
+
+    if (!completionMutation.isPending) {
+      completionMutation.mutate()
+    }
+  }
+
+  return (
+    <li
+      ref={setNodeRef}
+      data-planner-item-id={item.id}
+      className="relative scroll-mt-[150px]"
+      style={{
+        transform: CSS.Transform.toString(transform),
+        transition,
+        opacity: isDragging ? 0.5 : 1,
+        zIndex: isDragging ? 20 : undefined,
+      }}
+    >
+      {Array.from({ length: depth }).map((_, index) => (
+        <span
+          key={index}
+          aria-hidden="true"
+          className="
+            pointer-events-none absolute bottom-0 top-0
+            w-[2px] bg-[#7c9cde]/50
+          "
+          style={{
+            left: `${index * 42 + 33}px`,
+          }}
+        />
+      ))}
+
+      <div
+        {...attributes}
+        {...listeners}
+        onMouseEnter={() => onHoverItem?.(item.id)}
+        onMouseLeave={() => onHoverItem?.(null)}
+        className={`
+          relative flex min-h-[36px] items-center
+          cursor-grab touch-none active:cursor-grabbing
+        `}
+        style={{
+          paddingLeft: `${indent}px`,
+        }}
+      >
+        {isSearchMatch ? (
+          <div
+            aria-hidden="true"
+            className="
+              pointer-events-none absolute inset-y-0 right-0
+              bg-[#e0b84f]/35
+            "
+            style={{
+              left:
+                depth === 0
+                  ? '0px'
+                  : `${(depth - 1) * 42 + 33}px`,
+            }}
+          />
+        ) : (
+          (isActive || isPanelOwner) && (
+            <div
+              aria-hidden="true"
+              className="
+                pointer-events-none absolute inset-y-0 right-0
+                bg-[#204566]
+              "
+              style={{
+                left:
+                  depth === 0
+                    ? '0px'
+                    : `${(depth - 1) * 42 + 33}px`,
+              }}
+            />
+          )
+        )}
+
+        {showCheckboxes && (
+<button
+          type="button"
+          aria-label={
+            item.is_completed
+              ? `Reopen ${item.title}`
+              : `Mark ${item.title} complete`
+          }
+          aria-pressed={item.is_completed}
+          disabled={completionMutation.isPending}
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={handleCompletion}
+          className={`
+            relative z-10
+            flex h-[25px] w-[33px] shrink-0
+            items-center justify-center
+            rounded-[10px]
+            border-2 border-[#7c9cde]
+            transition-colors
+            disabled:cursor-wait disabled:opacity-60
+            ${
+              item.is_completed
+                ? 'bg-[#7c9cde] text-[#171a36]'
+                : 'bg-transparent text-transparent hover:bg-[#7c9cde]/20'
+            }
+          `}
+        >
+          {item.is_completed && (
+            <Check size={17} strokeWidth={2.5} />
+          )}
+        </button>
+        )}
+
+        <button
+          type="button"
+          onClick={(event) => {
+            event.stopPropagation()
+
+            if (event.detail !== 1) {
+              return
+            }
+
+            // Cmd-click on macOS / Ctrl-click elsewhere = add child.
+            if (event.metaKey || event.ctrlKey) {
+              if (singleClickTimerRef.current) {
+                window.clearTimeout(singleClickTimerRef.current)
+                singleClickTimerRef.current = null
+              }
+
+              onCreateNested?.(item)
+              return
+            }
+
+            // Ordinary single-click still toggles completion.
+            singleClickTimerRef.current = window.setTimeout(() => {
+              handleCompletion(event)
+              singleClickTimerRef.current = null
+            }, 220)
+          }}
+          onDoubleClick={(event) => {
+            event.stopPropagation()
+
+            if (singleClickTimerRef.current) {
+              window.clearTimeout(singleClickTimerRef.current)
+              singleClickTimerRef.current = null
+            }
+
+            onEditItem?.(item)
+          }}
+          className={`
+            relative z-10 min-w-0 flex-1 truncate
+            px-[7px] py-2 text-left
+            ${
+              depth === 0
+                ? 'text-[18px] font-bold'
+                : 'text-[15px]'
+            }
+            ${
+              item.is_completed
+                ? 'text-white/50 line-through'
+                : 'text-white'
+            }
+          `}
+        >
+          {item.title}
+        </button>
+
+        {isActive && (
+          <div
+            className="
+              relative z-10 mr-1
+              flex shrink-0 items-center gap-[3px]
+            "
+          >
+            <span
+              aria-hidden="true"
+              className="
+                pointer-events-none
+                flex h-[22px] w-[18px]
+                items-center justify-center
+                text-[#7c9cde]
+              "
+            >
+              <GripVertical size={17} strokeWidth={1.8} />
+            </span>
+
+            <button
+              type="button"
+              aria-label={
+                localDetailsOpen
+                  ? `Hide details for ${item.title}`
+                  : `Show details for ${item.title}`
+              }
+              aria-expanded={showDetails}
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={(event) => {
+                event.stopPropagation()
+                setLocalDetailsOpen((value) => !value)
+              }}
+              className={`
+                flex h-[18px] w-[18px]
+                items-center justify-center
+                rounded-[5px] transition-colors
+                ${
+                  showDetails
+                    ? 'bg-[#7c9cde] text-[#171a36]'
+                    : 'text-[#7c9cde] hover:bg-white/10'
+                }
+              `}
+            >
+              <ChevronDown
+                size={15}
+                strokeWidth={2}
+                className={`
+                  transition-transform duration-150
+                  ${showDetails ? 'rotate-180' : ''}
+                `}
+              />
+            </button>
+
+            <button
+              type="button"
+              aria-label={`Create nested item under ${item.title}`}
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={(event) => {
+                event.stopPropagation()
+                onCreateNested?.(item)
+              }}
+              className="
+                flex h-[18px] w-[18px]
+                items-center justify-center
+                rounded-[5px]
+                bg-[#7c9cde]
+                text-[#171a36]
+              "
+            >
+              <Plus size={14} strokeWidth={2} />
+            </button>
+
+            <button
+              type="button"
+              aria-label={`Edit ${item.title}`}
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={(event) => {
+                event.stopPropagation()
+                onEditItem?.(item)
+              }}
+              className="
+                flex h-[18px] w-[21px]
+                items-center justify-center
+                rounded-[5px]
+                bg-[#c3d19b]
+                text-[#171a36]
+              "
+            >
+              <Pencil size={14} strokeWidth={1.8} />
+            </button>
+
+            <button
+              type="button"
+              aria-label={`Delete ${item.title}`}
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={handleDelete}
+              disabled={deleteMutation.isPending}
+              className="
+                flex h-[18px] w-[18px]
+                items-center justify-center
+                text-[#e87979]
+              "
+            >
+              <Trash2 size={17} strokeWidth={1.7} />
+            </button>
+          </div>
+        )}
+      </div>
+
+      {showDetails && (
+        <div
+          className="
+            relative z-10 pb-3 pr-[72px]
+            text-[12px] leading-[1.45] text-white/60
+          "
+          style={{
+            paddingLeft: `${indent + 40}px`,
+          }}
+        >
+          {item.description && (
+            <p className="mb-1 whitespace-pre-wrap text-white/70">
+              {item.description}
+            </p>
+          )}
+
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            {item.start_date && (
+              <span>
+                Start: <span className="text-white/80">{item.start_date}</span>
+              </span>
+            )}
+
+            {item.due_date && (
+              <span>
+                Due: <span className="text-white/80">{item.due_date}</span>
+              </span>
+            )}
+
+            {item.duration_category && (
+              <span>
+                Estimate:{' '}
+                <span className="text-white/80">
+                  {item.duration_category}
+                </span>
+              </span>
+            )}
+
+            {item.priority_position != null && (
+              <span>
+                Priority:{' '}
+                <span className="text-white/80">
+                  {item.priority_position}
+                </span>
+              </span>
+            )}
+          </div>
+
+          {item.tags?.length > 0 && (
+            <div className="mt-1 flex flex-wrap gap-1">
+              {item.tags.map((tag) => (
+                <span
+                  key={typeof tag === 'object' ? tag.id : tag}
+                  className="
+                    rounded-full bg-[#7c9cde]/15
+                    px-2 py-[2px] text-[#a9c0ef]
+                  "
+                >
+                  {typeof tag === 'object' ? tag.name : tag}
+                </span>
+              ))}
+            </div>
+          )}
+
+          {item.assignment_detail && (
+            <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1">
+              {item.assignment_detail.weight_percent != null && (
+                <span>
+                  Weight:{' '}
+                  <span className="text-white/80">
+                    {item.assignment_detail.weight_percent}%
+                  </span>
+                </span>
+              )}
+
+              {item.assignment_detail.submission_url && (
+                <span className="max-w-full truncate">
+                  Submission:{' '}
+                  <span className="text-white/80">
+                    {item.assignment_detail.submission_url}
+                  </span>
+                </span>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </li>
+  )
+}

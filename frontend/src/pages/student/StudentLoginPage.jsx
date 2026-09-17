@@ -1,0 +1,190 @@
+import { useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+
+import { login, verifyMfa } from '../../api/auth'
+import loginBackground from '../../assets/auth/login-background.png'
+import { useAuthStore } from '../../stores/authStore'
+
+export default function StudentLoginPage() {
+  const navigate = useNavigate()
+  const setSession = useAuthStore((state) => state.setSession)
+
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [mfaToken, setMfaToken] = useState(null)
+  const [code, setCode] = useState(Array(6).fill(''))
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState(null)
+
+  const codeRefs = useRef([])
+
+  async function submitCredentials(event) {
+    event.preventDefault()
+    setBusy(true)
+    setError(null)
+
+    try {
+      const data = await login({ email, password })
+      setMfaToken(data.mfa_token)
+      requestAnimationFrame(() => codeRefs.current[0]?.focus())
+    } catch (err) {
+      setError(
+        err.response?.data?.detail ??
+          err.response?.data?.error ??
+          'Unable to log in.',
+      )
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function submitTotp(event) {
+    event.preventDefault()
+
+    const totp = code.join('')
+    if (totp.length !== 6 || !mfaToken) return
+
+    setBusy(true)
+    setError(null)
+
+    try {
+      const session = await verifyMfa({
+        mfa_token: mfaToken,
+        code: totp,
+      })
+
+      setSession(session)
+      navigate('/planner', { replace: true })
+    } catch (err) {
+      setError(
+        err.response?.data?.detail ??
+          err.response?.data?.error ??
+          'Invalid authentication code.',
+      )
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  function updateCode(index, value) {
+    const digit = value.replace(/\D/g, '').slice(-1)
+    const next = [...code]
+    next[index] = digit
+    setCode(next)
+
+    if (digit && index < 5) {
+      codeRefs.current[index + 1]?.focus()
+    }
+  }
+
+  function handleCodeKeyDown(index, event) {
+    if (event.key === 'Backspace' && !code[index] && index > 0) {
+      codeRefs.current[index - 1]?.focus()
+    }
+  }
+
+  return (
+    <main
+      className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[#152C72] bg-cover bg-center"
+      style={{ backgroundImage: `url(${loginBackground})` }}
+    >
+      <section className="relative w-[499px] max-w-[calc(100vw-32px)] bg-[#7D98D7]/40 px-[61px] py-[26px] text-white">
+        <h1 className="text-center text-[32px] font-semibold tracking-wide">
+          WELCOME
+        </h1>
+
+        {!mfaToken ? (
+          <form className="mt-8" onSubmit={submitCredentials}>
+            <input
+              type="email"
+              required
+              autoComplete="username"
+              placeholder="email..."
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+              className="h-[55px] w-full bg-[#1D4074] px-12 text-lg text-white outline-none placeholder:text-[#B7A6EC]"
+            />
+
+            <input
+              type="password"
+              required
+              autoComplete="current-password"
+              placeholder="password..."
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              className="mt-[17px] h-[55px] w-full bg-[#1D4074] px-12 text-lg text-white outline-none placeholder:text-[#B7A6EC]"
+            />
+
+            <button
+              type="button"
+              className="mt-1 block w-full text-right text-sm text-[#D8CDF8]"
+            >
+              forgot password
+            </button>
+
+            <button
+              type="submit"
+              disabled={busy}
+              className="mx-auto mt-10 block h-[58px] w-[172px] bg-[#C3D19B] text-lg font-semibold text-black disabled:opacity-60"
+            >
+              {busy ? 'CHECKING...' : 'LOG IN'}
+            </button>
+          </form>
+        ) : (
+          <form className="mt-8" onSubmit={submitTotp}>
+            <p className="mb-2 text-lg font-medium">ENTER CODE</p>
+
+            <div className="flex justify-between">
+              {code.map((digit, index) => (
+                <input
+                  key={index}
+                  ref={(element) => {
+                    codeRefs.current[index] = element
+                  }}
+                  aria-label={`Authentication code digit ${index + 1}`}
+                  inputMode="numeric"
+                  autoComplete={index === 0 ? 'one-time-code' : 'off'}
+                  maxLength={1}
+                  value={digit}
+                  onChange={(event) => updateCode(index, event.target.value)}
+                  onKeyDown={(event) => handleCodeKeyDown(index, event)}
+                  className="h-[55px] w-[59px] bg-[#1D4074] text-center text-2xl text-[#B7A6EC] outline-none"
+                />
+              ))}
+            </div>
+
+            <button
+              type="submit"
+              disabled={busy || code.join('').length !== 6}
+              className="mx-auto mt-10 block h-[58px] w-[172px] bg-[#C3D19B] text-lg font-semibold text-black disabled:opacity-60"
+            >
+              {busy ? 'VERIFYING...' : 'LOG IN'}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setMfaToken(null)
+                setCode(Array(6).fill(''))
+                setError(null)
+              }}
+              className="mt-3 block w-full text-center text-sm text-[#D8CDF8]"
+            >
+              Use a different account
+            </button>
+          </form>
+        )}
+
+        {error && (
+          <p className="mt-4 text-center text-sm text-red-200">{error}</p>
+        )}
+
+        {!mfaToken && (
+          <p className="mt-3 text-center text-lg text-[#D8CDF8]">
+            Not logged in? <span className="underline">Sign Up</span>
+          </p>
+        )}
+      </section>
+    </main>
+  )
+}

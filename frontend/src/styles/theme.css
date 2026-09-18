@@ -1,0 +1,86 @@
+@theme {
+  /* Typography */
+  --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+
+  /* Jaro is reserved for ARC display and page headings. */
+  --font-display: "Jaro", var(--font-ui);
+
+  /* Core backgrounds */
+  --color-arc-bg: #1d214d;
+  --color-arc-surface: #383969;
+  --color-arc-surface-secondary: #1d214d;
+
+  /* Panels and controls */
+  --color-arc-panel: #2c3369;
+  --color-arc-panel-light: #343971;
+
+  /* Purple scale */
+  --color-arc-purple: #383969;
+  --color-arc-purple-mid: #534c8d;
+  --color-arc-purple-light: #7e79bf;
+
+  /* Blue scale */
+  --color-arc-blue: #4d569c;
+  --color-arc-blue-light: #7c9cde;
+  --color-arc-blue-muted: #5276b8;
+
+  /* Text and accents */
+  --color-arc-text: #ffffff;
+  --color-arc-text-secondary: #b7a6ec;
+  --color-arc-text-muted: #b3c2f6;
+  --color-arc-accent: #c3d19b;
+
+  /* Destructive actions */
+  --color-arc-danger: #d36868;
+  --color-arc-danger-light: #e89393;
+
+  /* Radii */
+  --radius-arc-sm: 7px;
+  --radius-arc-control: 10px;
+  --radius-arc-card: 15px;
+  --radius-arc-pill: 22px;
+
+  --spacing-arc-sidebar: 216px;
+}
+
+:root {
+  /*
+   * Semi-transparent surface found extensively throughout
+   * the Figma MVP.
+   */
+  --arc-glass: rgb(107 135 199 / 41%);
+  --arc-glass-blur: 4px;
+
+  --arc-shadow-raised: 5px 10px 4px rgb(0 0 0 / 25%);
+}
+
+html {
+  font-family: var(--font-ui);
+  color: var(--color-arc-text);
+  background: var(--color-arc-bg);
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  font-family: inherit;
+  background: inherit;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+.arc-glass {
+  background: var(--arc-glass);
+  backdrop-filter: blur(var(--arc-glass-blur));
+  -webkit-backdrop-filter: blur(var(--arc-glass-blur));
+}
+
+.arc-display {
+  font-family: var(--font-display);
+}

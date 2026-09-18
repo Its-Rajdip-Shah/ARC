@@ -95,3 +95,22 @@ export function getMarks() {
 export function reorderMarks(payload) {
   return apiClient.post('planning/marks/reorder/', payload).then((res) => res.data)
 }
+
+
+export function getHistoryStatus() {
+  return apiClient
+    .get('planning/items/history-status/')
+    .then((res) => res.data)
+}
+
+export function undoPlanningAction() {
+  return apiClient
+    .post('planning/items/undo/')
+    .then((res) => res.data)
+}
+
+export function redoPlanningAction() {
+  return apiClient
+    .post('planning/items/redo/')
+    .then((res) => res.data)
+}

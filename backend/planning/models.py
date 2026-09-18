@@ -59,8 +59,12 @@ class Tag(OwnedModel):
 
 
 class PlanningItemQuerySet(models.QuerySet):
+    def visible(self):
+        """Items currently visible in the planner (not soft-deleted)."""
+        return self.filter(is_deleted=False)
+
     def for_user(self, user):
-        return self.filter(user=user)
+        return self.visible().filter(user=user)
 
     def roots(self):
         return self.filter(parent__isnull=True)
@@ -137,6 +141,10 @@ class PlanningItem(OwnedModel, TimestampedModel):
     )
     priority_position = models.PositiveIntegerField(null=True, blank=True)
     is_completed = models.BooleanField(default=False)
+    # Soft deletion keeps rows intact while DELETE remains undoable.
+    # Once no history entry can restore the deletion, history GC may
+    # permanently remove the row.
+    is_deleted = models.BooleanField(default=False, db_index=True)
     canvas_object_type = models.CharField(
         max_length=10, choices=CanvasObjectType.choices, null=True, blank=True
     )
@@ -194,6 +202,43 @@ class PlanningItem(OwnedModel, TimestampedModel):
     def is_adaptive(self):
         """True when ARC schedules this item rather than a real deadline."""
         return self.due_date is None
+
+
+class PlanningHistoryEntry(OwnedModel):
+    """One reversible user action in the planner.
+
+    before_state and after_state contain planner snapshots so one history
+    entry can represent an operation affecting multiple rows, such as moving
+    siblings or completing an entire subtree.
+    """
+
+    class ActionType(models.TextChoices):
+        CREATE = 'CREATE', 'Create'
+        UPDATE = 'UPDATE', 'Update'
+        DELETE = 'DELETE', 'Delete'
+        MOVE = 'MOVE', 'Move'
+        COMPLETE = 'COMPLETE', 'Complete'
+
+    id = models.BigAutoField(primary_key=True)
+    action_type = models.CharField(max_length=10, choices=ActionType.choices)
+    before_state = models.JSONField(default=dict)
+    after_state = models.JSONField(default=dict)
+    is_undone = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'planning_history_entries'
+        ordering = ['-id']
+        indexes = [
+            models.Index(
+                fields=['user', 'is_undone', '-id'],
+                name='planning_history_user_idx',
+            ),
+        ]
+
+    def __str__(self):
+        state = 'undone' if self.is_undone else 'applied'
+        return f'{self.action_type} #{self.pk} ({state})'
 
 
 class PlanningItemTag(models.Model):

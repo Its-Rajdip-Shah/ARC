@@ -12,7 +12,9 @@ from planning.models import (
     DurationCategory,
     PlanningHistoryEntry,
     PlanningItem,
+    SchedulerAllocation,
     SchedulingOverload,
+    SchedulingState,
 )
 
 MAX_HISTORY_ENTRIES = 100
@@ -491,17 +493,78 @@ def _apply_delta(user, state, action_type):
 
     if action_type == "SCHEDULE":
         _restore_priority(user, state.get('priority'))
-        _restore_leaf_order(user, state.get('leaf_siblings', []))
+        _restore_leaf_order(
+            user,
+            state.get('leaf_siblings', []),
+        )
+
         for row in state.get('schedule', []):
-            PlanningItem.objects.filter(user=user, pk=row['id']).update(
-                scheduled_date=row['scheduled_date'],
-                manual_requested_date=row.get('manual_requested_date'),
-                priority_restore_context=row['priority_restore_context'],
+            values = {
+                'scheduled_date': row['scheduled_date'],
+                'manual_requested_date':
+                    row.get('manual_requested_date'),
+                'priority_restore_context':
+                    row['priority_restore_context'],
+            }
+
+            if 'execution_rank' in row:
+                values['execution_rank'] = row[
+                    'execution_rank'
+                ]
+
+            PlanningItem.objects.filter(
+                user=user,
+                pk=row['id'],
+            ).update(**values)
+
+        if 'scheduler_allocations' in state:
+            SchedulerAllocation.objects.filter(
+                item__user=user,
+            ).delete()
+
+            SchedulerAllocation.objects.bulk_create([
+                SchedulerAllocation(
+                    item_id=row['item_id'],
+                    percentage=row['percentage'],
+                    scheduled_date=row['scheduled_date'],
+                    execution_rank=row['execution_rank'],
+                )
+                for row in state.get(
+                    'scheduler_allocations',
+                    [],
+                )
+            ])
+
+        if 'scheduler_runtime' in state:
+            scheduler_state, _ = (
+                SchedulingState.objects.get_or_create(
+                    user=user,
+                )
             )
-        SchedulingOverload.objects.filter(user=user).delete()
+
+            scheduler_state.scheduler_runtime = state[
+                'scheduler_runtime'
+            ]
+
+            scheduler_state.save(
+                update_fields=['scheduler_runtime']
+            )
+
+        SchedulingOverload.objects.filter(
+            user=user,
+        ).delete()
+
         SchedulingOverload.objects.bulk_create([
-            SchedulingOverload(user=user, **row) for row in state.get('overload', [])
+            SchedulingOverload(
+                user=user,
+                **row,
+            )
+            for row in state.get(
+                'overload',
+                [],
+            )
         ])
+
         return
 
     # Soft-delete / restore existing rows in one bulk UPDATE.

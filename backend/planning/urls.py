@@ -20,6 +20,11 @@ router.register(
 urlpatterns = [
     path('priority/', views.PriorityView.as_view(), name='priority'),
     path('priority/reorder/', views.PriorityReorderView.as_view(), name='priority-reorder'),
+    path(
+        'scheduler/settings/',
+        views.SchedulerSettingsView.as_view(),
+        name='scheduler-settings',
+    ),
     path('timeline/reschedule/', views.ScheduleRescheduleView.as_view(), name='schedule-reschedule'),
     path('timeline/move/', views.ScheduleMoveView.as_view(), name='schedule-move'),
     path('timeline/replace/', views.ScheduleReplaceView.as_view(), name='schedule-replace'),

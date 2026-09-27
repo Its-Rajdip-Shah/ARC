@@ -16,6 +16,7 @@ from planning.models import (
     ItemType,
     PlanningItem,
     PlanningItemTag,
+    SchedulingState,
     Tag,
     Timezone,
 )
@@ -235,6 +236,17 @@ class CompleteSerializer(serializers.Serializer):
     completed = serializers.BooleanField(default=True)
 
 
+class SchedulerAllocationProjectionSerializer(serializers.Serializer):
+    """One persisted disposable split-session projection."""
+
+    percentage = serializers.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+    )
+    scheduled_date = serializers.DateField()
+    execution_rank = serializers.IntegerField()
+
+
 class TimelineItemSerializer(serializers.ModelSerializer):
     """A dated item on the Timeline (FR-10, FR-11)."""
 
@@ -242,6 +254,7 @@ class TimelineItemSerializer(serializers.ModelSerializer):
     submission_url = serializers.CharField(source='assignment_detail.submission_url', read_only=True, allow_null=True, default=None)
     hierarchy_path = serializers.SerializerMethodField()
     has_children = serializers.SerializerMethodField()
+    allocations = serializers.SerializerMethodField()
 
     class Meta:
         model = PlanningItem
@@ -249,6 +262,7 @@ class TimelineItemSerializer(serializers.ModelSerializer):
             'id', 'parent', 'title', 'item_type', 'start_date', 'due_date', 'scheduled_date',
             'execution_rank', 'duration_category', 'is_completed', 'priority_position',
             'overdue', 'submission_url', 'hierarchy_path', 'has_children',
+            'allocations',
         ]
 
     @extend_schema_field(serializers.BooleanField())
@@ -263,6 +277,18 @@ class TimelineItemSerializer(serializers.ModelSerializer):
     @extend_schema_field(serializers.BooleanField())
     def get_has_children(self, item):
         return bool(getattr(item, 'has_children', False))
+
+    @extend_schema_field(
+        SchedulerAllocationProjectionSerializer(many=True)
+    )
+    def get_allocations(self, item):
+        return self.context.get(
+            'allocations_by_item',
+            {},
+        ).get(
+            item.pk,
+            [],
+        )
 
 
 class OverdueEntrySerializer(serializers.Serializer):
@@ -315,6 +341,135 @@ class ScheduleOverloadSerializer(serializers.Serializer):
 
 
 
+class SchedulerEngineAllocationSerializer(serializers.Serializer):
+    item_id = serializers.IntegerField()
+    scheduled_date = serializers.DateField()
+    hours = serializers.DecimalField(
+        max_digits=12,
+        decimal_places=4,
+    )
+    percentage = serializers.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+    )
+    execution_rank = serializers.IntegerField()
+
+
+class SchedulerEstimateSerializer(serializers.Serializer):
+    item_id = serializers.IntegerField()
+    total_hours = serializers.DecimalField(
+        max_digits=12,
+        decimal_places=4,
+    )
+    source = serializers.CharField()
+
+
+class SchedulerDayLoadSerializer(serializers.Serializer):
+    scheduled_date = serializers.DateField()
+    hours = serializers.DecimalField(
+        max_digits=12,
+        decimal_places=4,
+    )
+    status = serializers.CharField()
+
+
+class SchedulerPeriodLoadSerializer(serializers.Serializer):
+    period = serializers.CharField()
+    hours = serializers.DecimalField(
+        max_digits=12,
+        decimal_places=4,
+    )
+    status = serializers.CharField()
+
+
+class SchedulerDiagnosticSerializer(serializers.Serializer):
+    code = serializers.CharField()
+    detail = serializers.CharField()
+
+
+class SchedulerRuntimeSerializer(serializers.Serializer):
+    """Derived scheduler state returned to the frontend."""
+
+    configured = serializers.BooleanField()
+    flavour = serializers.CharField(
+        allow_null=True,
+    )
+
+    engine_version = serializers.CharField(required=False)
+    input_contract_version = serializers.CharField(required=False)
+    output_contract_version = serializers.CharField(required=False)
+
+    iterations = serializers.IntegerField(required=False)
+    evaluations = serializers.IntegerField(required=False)
+    termination_reason = serializers.CharField(required=False)
+
+    compatibility_conflicts = serializers.ListField(
+        child=serializers.DictField(),
+        required=False,
+    )
+    engine_conflicts = serializers.ListField(
+        child=serializers.CharField(),
+        required=False,
+    )
+    diagnostics = SchedulerDiagnosticSerializer(
+        many=True,
+        required=False,
+    )
+
+    allocation_count = serializers.IntegerField(required=False)
+
+    allocations = SchedulerEngineAllocationSerializer(
+        many=True,
+        required=False,
+    )
+    estimates = SchedulerEstimateSerializer(
+        many=True,
+        required=False,
+    )
+    daily_load = SchedulerDayLoadSerializer(
+        many=True,
+        required=False,
+    )
+    weekly_load = SchedulerPeriodLoadSerializer(
+        many=True,
+        required=False,
+    )
+    monthly_load = SchedulerPeriodLoadSerializer(
+        many=True,
+        required=False,
+    )
+
+    objective = serializers.DictField(required=False)
+
+
 class ScheduleResultSerializer(serializers.Serializer):
-    changed_ids = serializers.ListField(child=serializers.IntegerField(), required=False)
-    conflicts = serializers.ListField(child=serializers.DictField())
+    changed_ids = serializers.ListField(
+        child=serializers.IntegerField(),
+        required=False,
+    )
+    conflicts = serializers.ListField(
+        child=serializers.DictField(),
+    )
+    scheduler = SchedulerRuntimeSerializer(required=False)
+
+
+class SchedulerSettingsSerializer(serializers.Serializer):
+    """Frontend-facing scheduler configuration.
+
+    ``null`` is a valid and deliberate state: the user has not chosen a V1
+    scheduler flavour yet.
+    """
+
+    flavour = serializers.ChoiceField(
+        choices=SchedulingState.SchedulerFlavour.choices,
+        allow_null=True,
+    )
+    configured = serializers.BooleanField(read_only=True)
+
+
+class SchedulerSettingsUpdateSerializer(serializers.Serializer):
+    flavour = serializers.ChoiceField(
+        choices=SchedulingState.SchedulerFlavour.choices,
+        allow_null=True,
+    )
+

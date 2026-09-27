@@ -29,13 +29,25 @@ from rest_framework.views import APIView
 
 from core.mixins import UserScopedMixin
 from planning import queries
-from planning.models import AssignmentDetail, ItemType, PlanningItem, SchedulingOverload, Tag, Timezone
+from planning.models import (
+    AssignmentDetail,
+    ItemType,
+    PlanningItem,
+    SchedulerAllocation,
+    SchedulingOverload,
+    SchedulingState,
+    Tag,
+    Timezone,
+)
 from planning.serializers import (
     AssignmentDetailSerializer,
     ScheduleMoveSerializer,
     ScheduleResultSerializer,
     ScheduleReplaceSerializer,
     ScheduleOverloadSerializer,
+    SchedulerRuntimeSerializer,
+    SchedulerSettingsSerializer,
+    SchedulerSettingsUpdateSerializer,
     CompleteSerializer,
     MarkGroupSerializer,
     MarksReorderSerializer,
@@ -552,6 +564,7 @@ class TimelineView(APIView):
             'TimelineResponse',
             {
                 'conflicts': serializers.ListField(child=serializers.DictField()),
+                'scheduler': SchedulerRuntimeSerializer(),
                 'capacities': serializers.DictField(child=serializers.IntegerField()),
                 'overload': serializers.ListField(child=serializers.DictField()),
                 'range': serializers.DictField(child=serializers.DateField()),
@@ -598,13 +611,49 @@ class TimelineView(APIView):
         meta = dict(PlanningItem.objects.for_user(request.user).values_list('pk', 'title'))
         paths = {item.pk: [{'id': pk, 'title': meta[pk]} for pk in reversed(queries.ancestor_chain(parents, item.pk))]
                  for item in items}
+        allocations_by_item = {}
+
+        for row in (
+            SchedulerAllocation.objects
+            .filter(
+                item__user=request.user,
+                scheduled_date__range=(start, end),
+            )
+            .order_by(
+                'scheduled_date',
+                'execution_rank',
+                'id',
+            )
+            .values(
+                'item_id',
+                'percentage',
+                'scheduled_date',
+                'execution_rank',
+            )
+        ):
+            allocations_by_item.setdefault(
+                row['item_id'],
+                [],
+            ).append({
+                'percentage': row['percentage'],
+                'scheduled_date': row['scheduled_date'],
+                'execution_rank': row['execution_rank'],
+            })
+
         groups = []
         for root, members in grouped.values():
             members.sort(key=lambda i: (i.scheduled_date is None, i.scheduled_date or end,
                                        i.priority_position is None, i.priority_position or 0, i.pk))
             groups.append({
                 'root': root,
-                'items': TimelineItemSerializer(members, many=True, context={'paths': paths}).data,
+                'items': TimelineItemSerializer(
+                    members,
+                    many=True,
+                    context={
+                        'paths': paths,
+                        'allocations_by_item': allocations_by_item,
+                    },
+                ).data,
             })
         groups.sort(key=lambda group: group['root']['title'])
 
@@ -617,6 +666,7 @@ class TimelineView(APIView):
             'timezones': TimezoneSerializer(zones, many=True).data,
             'groups': groups,
             'conflicts': schedule_result['conflicts'],
+            'scheduler': schedule_result['scheduler'],
             'capacities': scheduling.capacities(request.user),
             'overload': list(SchedulingOverload.objects.filter(
                 user=request.user, date__range=(start, end),
@@ -748,6 +798,66 @@ class MarksReorderView(APIView):
                 AssignmentDetail.objects.bulk_update(changed, ['marks_position'])
 
         return Response({'reordered': len(ordered_ids)})
+
+
+class SchedulerSettingsView(APIView):
+    """Read or explicitly choose the user's scheduler V1 flavour."""
+
+    @extend_schema(
+        responses=SchedulerSettingsSerializer,
+        description=(
+            "Return the user's scheduler flavour. "
+            "flavour=null means V1 has not been explicitly enabled."
+        ),
+    )
+    def get(self, request):
+        state, _ = SchedulingState.objects.get_or_create(
+            user=request.user,
+        )
+
+        return Response({
+            'flavour': state.scheduler_flavour,
+            'configured': state.scheduler_flavour is not None,
+        })
+
+    @extend_schema(
+        request=SchedulerSettingsUpdateSerializer,
+        responses=SchedulerSettingsSerializer,
+        description=(
+            "Choose lock-in or monk. Sending flavour=null clears the "
+            "selection and returns the user to the unconfigured state."
+        ),
+    )
+    def put(self, request):
+        serializer = SchedulerSettingsUpdateSerializer(
+            data=request.data,
+        )
+        serializer.is_valid(raise_exception=True)
+
+        state, _ = SchedulingState.objects.get_or_create(
+            user=request.user,
+        )
+
+        state.scheduler_flavour = serializer.validated_data[
+            'flavour'
+        ]
+
+        # The previous disposable result belongs to the previous flavour
+        # selection (or to the previously configured state).  Force the next
+        # scheduling boundary to generate a fresh V1 result.
+        state.scheduler_runtime = {}
+
+        state.save(
+            update_fields=[
+                'scheduler_flavour',
+                'scheduler_runtime',
+            ]
+        )
+
+        return Response({
+            'flavour': state.scheduler_flavour,
+            'configured': state.scheduler_flavour is not None,
+        })
 
 
 class ScheduleMoveView(APIView):

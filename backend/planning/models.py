@@ -143,13 +143,19 @@ class PlanningItemQuerySet(models.QuerySet):
         return self.overdue(today).filter(due_date__lt=cutoff)
 
     def in_window(self, start, end):
-        """Execution dates and factual constraint ranges intersecting the window."""
+        """Execution sessions or factual constraints intersecting the window.
+
+        A splittable item remains visible when any disposable scheduler
+        allocation intersects the requested Timeline window, even when its
+        summary scheduled_date points at an earlier first session.
+        """
         return self.filter(
             Q(scheduled_date__range=(start, end))
+            | Q(scheduler_allocations__scheduled_date__range=(start, end))
             | Q(start_date__range=(start, end))
             | Q(due_date__range=(start, end))
             | Q(start_date__lte=end, due_date__gte=start)
-        )
+        ).distinct()
 
     def search(self, term):
         """FR-08: match on title, description or attached tag name."""
@@ -516,8 +522,39 @@ class SchedulingOverload(OwnedModel):
 
 
 class SchedulingState(OwnedModel):
-    """Daily maintenance state, deliberately outside user undo snapshots."""
+    """Per-user scheduler configuration and daily maintenance state.
+
+    This state is deliberately outside planner undo snapshots.  Scheduler
+    flavour is a planning preference, not an authentication/account property.
+    A null flavour means the user has not explicitly chosen a V1 scheduler
+    behaviour yet.
+    """
+
+    class SchedulerFlavour(models.TextChoices):
+        LOCK_IN = 'lock-in', 'Lock-in'
+        MONK = 'monk', 'Monk'
+
     last_global_date = models.DateField(null=True, blank=True)
 
+    scheduler_flavour = models.CharField(
+        max_length=16,
+        choices=SchedulerFlavour.choices,
+        null=True,
+        blank=True,
+    )
+
+    # Disposable serialized V1 output used by read-only Timeline requests.
+    # This is never canonical planning state and may be replaced whenever ARC
+    # reschedules.
+    scheduler_runtime = models.JSONField(
+        default=dict,
+        blank=True,
+    )
+
     class Meta:
-        constraints = [models.UniqueConstraint(fields=['user'], name='uniq_scheduling_state_user')]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['user'],
+                name='uniq_scheduling_state_user',
+            )
+        ]

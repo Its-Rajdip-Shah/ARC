@@ -1,6 +1,6 @@
 """Global, capacity-constrained execution dates and atomic Timeline operations."""
 from collections import Counter
-from datetime import timedelta
+from datetime import date, timedelta
 from decimal import Decimal
 
 from django.core.exceptions import ValidationError
@@ -96,7 +96,7 @@ def _validate_date(item, day, today):
 
 
 @transaction.atomic
-def schedule(user, today=None, *, mode='minimal'):
+def _legacy_schedule(user, today=None, *, mode='minimal'):
     """Generate proposals from canonical state, reconsidering dates in global mode.
 
     Capacity is soft when deadlines are infeasible. Release dates remain hard;
@@ -235,6 +235,287 @@ def schedule(user, today=None, *, mode='minimal'):
     return {'changed_ids': [item.pk for item in changed], 'conflicts': conflicts}
 
 
+def _configured_scheduler_flavour(user):
+    """Return the explicitly selected V1 flavour, or None.
+
+    A null SchedulingState.scheduler_flavour is deliberate: the user has not
+    opted into either production scheduler behaviour yet.
+    """
+
+    state = (
+        SchedulingState.objects
+        .filter(user=user)
+        .only('scheduler_flavour')
+        .first()
+    )
+
+    if state is None:
+        return None
+
+    return state.scheduler_flavour
+
+
+def _disposable_schedule_state(user):
+    """Snapshot only scheduler-owned summary projection fields."""
+
+    return {
+        item_id: (scheduled_date, execution_rank)
+        for item_id, scheduled_date, execution_rank in (
+            PlanningItem.objects
+            .filter(user=user)
+            .values_list(
+                'pk',
+                'scheduled_date',
+                'execution_rank',
+            )
+        )
+    }
+
+
+def _json_safe_scheduler_value(value):
+    """Convert frozen scheduler values into JSONField-safe primitives."""
+
+    if isinstance(value, Decimal):
+        return str(value)
+
+    if isinstance(value, date):
+        return value.isoformat()
+
+    if isinstance(value, dict):
+        return {
+            key: _json_safe_scheduler_value(item)
+            for key, item in value.items()
+        }
+
+    if isinstance(value, (list, tuple)):
+        return [
+            _json_safe_scheduler_value(item)
+            for item in value
+        ]
+
+    return value
+
+
+def _store_scheduler_runtime(user, runtime):
+    """Replace disposable cached scheduler output."""
+
+    state, _ = SchedulingState.objects.get_or_create(
+        user=user,
+    )
+
+    state.scheduler_runtime = _json_safe_scheduler_value(
+        runtime
+    )
+
+    state.save(
+        update_fields=['scheduler_runtime']
+    )
+
+
+def _scheduler_v1_response(output, persistence):
+    """Serialize the useful frozen V1 output for API consumers.
+
+    This is derived/disposable scheduler information only.  It does not
+    manufacture or alter canonical planning state.
+    """
+
+    objective = output.objective
+
+    return {
+        'configured': True,
+        'flavour': output.metadata.flavour.value,
+        'engine_version': output.metadata.engine_version,
+        'input_contract_version': (
+            output.metadata.input_contract_version
+        ),
+        'output_contract_version': (
+            output.metadata.output_contract_version
+        ),
+        'iterations': output.metadata.iterations,
+        'evaluations': output.metadata.evaluations,
+        'termination_reason': (
+            output.metadata.termination_reason
+        ),
+        'engine_conflicts': list(output.conflicts),
+        'diagnostics': [
+            {
+                'code': code,
+                'detail': detail,
+            }
+            for code, detail in output.diagnostics
+        ],
+        'allocation_count': persistence['allocation_count'],
+        'allocations': [
+            {
+                'item_id': row.item_id,
+                'scheduled_date': row.scheduled_date,
+                'hours': row.hours,
+                'percentage': row.percentage,
+                'execution_rank': row.execution_rank,
+            }
+            for row in output.allocations
+        ],
+        'estimates': [
+            {
+                'item_id': row.item_id,
+                'total_hours': row.total_hours,
+                'source': row.source,
+            }
+            for row in output.estimates
+        ],
+        'daily_load': [
+            {
+                'scheduled_date': row.scheduled_date,
+                'hours': row.hours,
+                'status': row.status.value,
+            }
+            for row in output.daily_load
+        ],
+        'weekly_load': [
+            {
+                'period': row.period,
+                'hours': row.hours,
+                'status': row.status.value,
+            }
+            for row in output.weekly_load
+        ],
+        'monthly_load': [
+            {
+                'period': row.period,
+                'hours': row.hours,
+                'status': row.status.value,
+            }
+            for row in output.monthly_load
+        ],
+        'objective': {
+            'late_hours': objective.late_hours,
+            'infeasible_day_count': objective.infeasible_day_count,
+            'infeasible_excess_hours': (
+                objective.infeasible_excess_hours
+            ),
+            'tiny_nonfinal_sessions': (
+                objective.tiny_nonfinal_sessions
+            ),
+            'avoidable_idle_days': (
+                objective.avoidable_idle_days
+            ),
+            'max_daily_hours': objective.max_daily_hours,
+            'overloaded_excess_hours': (
+                objective.overloaded_excess_hours
+            ),
+            'overloaded_day_count': (
+                objective.overloaded_day_count
+            ),
+            'unjustified_marathon_excess_hours': (
+                objective.unjustified_marathon_excess_hours
+            ),
+            'deadline_buffer_risk': (
+                objective.deadline_buffer_risk
+            ),
+            'priority_postponement_days': (
+                objective.priority_postponement_days
+            ),
+            'session_shape_penalty': (
+                objective.session_shape_penalty
+            ),
+            'fragmentation_count': (
+                objective.fragmentation_count
+            ),
+            'preferred_excess_squared': (
+                objective.preferred_excess_squared
+            ),
+            'continuity_gap_days': (
+                objective.continuity_gap_days
+            ),
+            'completion_day_sum': (
+                objective.completion_day_sum
+            ),
+        },
+    }
+
+
+@transaction.atomic
+def schedule(user, today=None, *, mode='minimal'):
+    """ARC scheduling facade.
+
+    Unconfigured users retain the frozen legacy ARC scheduler behaviour.
+
+    Once a user explicitly chooses Lock-in or Monk, the legacy scheduler is
+    still run first solely to preserve ARC's established conflict contract.
+    The versioned V1 engine then owns the final disposable schedule proposal.
+
+    Canonical planning state remains outside scheduler authority.
+    """
+
+    today = today or timezone.localdate()
+    flavour = _configured_scheduler_flavour(user)
+
+    if flavour is None:
+        result = _legacy_schedule(
+            user,
+            today,
+            mode=mode,
+        )
+
+        result['scheduler'] = {
+            'configured': False,
+            'flavour': None,
+        }
+
+        return result
+
+    before = _disposable_schedule_state(user)
+
+    # Preserve ARC's established conflict/API semantics.  This intermediary
+    # proposal is disposable and is immediately replaced by V1 below.
+    compatibility = _legacy_schedule(
+        user,
+        today,
+        mode=mode,
+    )
+
+    from planning.services import scheduler_v1
+
+    request, output, persistence = (
+        scheduler_v1.run_and_apply_scheduler_v1(
+            user,
+            flavour=flavour,
+            today=today,
+        )
+    )
+
+    after = _disposable_schedule_state(user)
+
+    changed_ids = sorted(
+        item_id
+        for item_id in set(before) | set(after)
+        if before.get(item_id) != after.get(item_id)
+    )
+
+    runtime = _scheduler_v1_response(
+        output,
+        persistence,
+    )
+
+    # Preserve the compatibility conflict surface alongside the cached V1
+    # runtime so later read-only Timeline requests do not need to rerun either
+    # scheduler merely to reconstruct the response.
+    runtime['compatibility_conflicts'] = compatibility[
+        'conflicts'
+    ]
+
+    _store_scheduler_runtime(
+        user,
+        runtime,
+    )
+
+    return {
+        'changed_ids': changed_ids,
+        'conflicts': compatibility['conflicts'],
+        'scheduler': runtime,
+    }
+
+
 def _expire_past_manual_anchors(user, today):
     """Expire past canonical anchors without manufacturing deadline overdue.
 
@@ -273,21 +554,78 @@ def daily_schedule(user, today=None):
     state, _ = SchedulingState.objects.get_or_create(user=user)
     mode = 'global' if state.last_global_date != today else 'minimal'
     expired_anchor_ids = _expire_past_manual_anchors(user, today)
-    result = schedule(user, today, mode=mode)
+
+    # A configured V1 schedule is already refreshed by every canonical
+    # planning mutation.  Do not rerun the full optimiser on a read-only
+    # Timeline GET when today's disposable result is already available.
+    if (
+        state.scheduler_flavour is not None
+        and mode == 'minimal'
+        and state.scheduler_runtime
+        and not expired_anchor_ids
+    ):
+        result = {
+            'changed_ids': [],
+            'conflicts': state.scheduler_runtime.get(
+                'compatibility_conflicts',
+                [],
+            ),
+            'scheduler': state.scheduler_runtime,
+        }
+    else:
+        result = schedule(
+            user,
+            today,
+            mode=mode,
+        )
+
     result['expired_anchor_ids'] = expired_anchor_ids
+
     if mode == 'global':
         state.last_global_date = today
         state.save(update_fields=['last_global_date'])
+
     return result
 
 
 @transaction.atomic
 def reschedule(user, today=None):
     """Explicit global optimisation is undoable, including legacy repairs."""
+
+    today = today or timezone.localdate()
+
     priority._lock(user)
+
     before = _snapshot(user)
-    result = schedule(user, today, mode='global')
-    history.record_checkpoint(user, 'SCHEDULE', before, _snapshot(user))
+
+    result = schedule(
+        user,
+        today,
+        mode='global',
+    )
+
+    history.record_checkpoint(
+        user,
+        'SCHEDULE',
+        before,
+        _snapshot(user),
+    )
+
+    # A successful explicit V1 reschedule already performed today's global
+    # optimisation.  Record that maintenance fact so the next read-only
+    # Timeline request can reuse the cached runtime instead of immediately
+    # running the expensive optimiser again.
+    if result.get('scheduler', {}).get('configured'):
+        state, _ = SchedulingState.objects.get_or_create(
+            user=user,
+        )
+
+        if state.last_global_date != today:
+            state.last_global_date = today
+            state.save(
+                update_fields=['last_global_date']
+            )
+
     return result
 
 
@@ -298,16 +636,67 @@ def roll_forward_adaptive(user, today):
 
 
 def _snapshot(user):
+    scheduler_state = (
+        SchedulingState.objects
+        .filter(user=user)
+        .first()
+    )
+
     return {
-        'priority': history.capture_priority(user, include_unpositioned=True),
+        'priority': history.capture_priority(
+            user,
+            include_unpositioned=True,
+        ),
         'leaf_siblings': history.capture_leaf_order(user),
         'schedule': [
-            {'id': item.pk, 'scheduled_date': item.scheduled_date.isoformat() if item.scheduled_date else None,
-             'manual_requested_date': item.manual_requested_date.isoformat() if item.manual_requested_date else None, 'priority_restore_context': item.priority_restore_context}
-            for item in PlanningItem.objects.filter(user=user).order_by('pk')
+            {
+                'id': item.pk,
+                'scheduled_date': (
+                    item.scheduled_date.isoformat()
+                    if item.scheduled_date else None
+                ),
+                'execution_rank': item.execution_rank,
+                'manual_requested_date': (
+                    item.manual_requested_date.isoformat()
+                    if item.manual_requested_date else None
+                ),
+                'priority_restore_context':
+                    item.priority_restore_context,
+            }
+            for item in PlanningItem.objects
+            .filter(user=user)
+            .order_by('pk')
         ],
-        'overload': [{'date': row.date.isoformat(), 'allowed': row.allowed}
-                     for row in SchedulingOverload.objects.filter(user=user).order_by('date')],
+        'scheduler_allocations': [
+            {
+                'item_id': row.item_id,
+                'percentage': str(row.percentage),
+                'scheduled_date':
+                    row.scheduled_date.isoformat(),
+                'execution_rank': row.execution_rank,
+            }
+            for row in SchedulerAllocation.objects
+            .filter(item__user=user)
+            .order_by(
+                'scheduled_date',
+                'execution_rank',
+                'id',
+            )
+        ],
+        'scheduler_runtime': (
+            scheduler_state.scheduler_runtime
+            if scheduler_state is not None
+            else {}
+        ),
+        'overload': [
+            {
+                'date': row.date.isoformat(),
+                'allowed': row.allowed,
+            }
+            for row in SchedulingOverload.objects
+            .filter(user=user)
+            .order_by('date')
+        ],
     }
 
 

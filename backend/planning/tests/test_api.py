@@ -43,7 +43,7 @@ def test_creating_a_task_places_it_in_the_priority_order(client):
     )
     assert response.status_code == 201, response.data
     assert response.data['priority_position'] == 1
-    assert response.data['is_adaptive'] is True
+    assert response.data['has_deadline'] is False
 
 
 def test_creating_a_goal_stays_out_of_the_priority_order(client):
@@ -443,11 +443,11 @@ def test_the_timeline_groups_dated_items_under_their_root(client, user, make_ite
     assert len(response.data['groups']) == 1
     group = response.data['groups'][0]
     assert group['root']['title'] == 'ELEC3609'
-    assert [item['title'] for item in group['items']] == ['Lab', 'Quiz']
+    assert [item['title'] for item in group['items']] == ['Quiz', 'Lab']
 
 
 @freeze_time('2026-09-14')
-def test_the_timeline_marks_fixed_and_adaptive_dates_differently(client, user, make_item):
+def test_the_timeline_separates_execution_dates_and_deadlines(client, user, make_item):
     """FR-11: the client has to be able to tell a real deadline from an ARC
     suggestion."""
     make_item(user, 'Fixed', ItemType.GOAL)  # a root to group under
@@ -459,9 +459,10 @@ def test_the_timeline_marks_fixed_and_adaptive_dates_differently(client, user, m
         for group in client.get('/api/planning/timeline/').data['groups']
         for item in group['items']
     }
-    assert items['Deadline']['date_source'] == 'fixed'
-    assert items['Whenever']['date_source'] == 'adaptive'
-    assert items['Whenever']['effective_date'] == '2026-09-20'
+    assert items['Deadline']['due_date'] == '2026-09-20'
+    assert items['Deadline']['scheduled_date'] == '2026-09-14'
+    assert items['Whenever']['due_date'] is None
+    assert items['Whenever']['scheduled_date'] == '2026-09-14'  # daily global optimisation
 
 
 @freeze_time('2026-09-14')

@@ -74,14 +74,14 @@ class PlanningItemSerializer(serializers.ModelSerializer):
         queryset=PlanningItem.objects.all(), required=False, allow_null=True
     )
     assignment_detail = AssignmentDetailSerializer(required=False, allow_null=True)
-    is_adaptive = serializers.BooleanField(read_only=True)
+    has_deadline = serializers.BooleanField(read_only=True)
 
     class Meta:
         model = PlanningItem
         fields = [
             'id', 'parent', 'item_type', 'title', 'description', 'sibling_order',
             'start_date', 'due_date', 'scheduled_date', 'duration_category',
-            'priority_position', 'is_completed', 'is_adaptive',
+            'priority_position', 'is_completed', 'has_deadline',
             'canvas_object_type', 'canvas_object_id',
             'tags', 'tag_ids', 'assignment_detail',
             'created_at', 'updated_at',
@@ -124,7 +124,7 @@ class PlanningItemSerializer(serializers.ModelSerializer):
         return value
 
     def create(self, validated_data):
-        from planning.services import priority
+        from planning.services import scheduling
 
         detail = validated_data.pop('assignment_detail', None)
         tags = validated_data.pop('tags', None)
@@ -143,8 +143,9 @@ class PlanningItemSerializer(serializers.ModelSerializer):
         if tags:
             self._set_tags(item, tags)
 
-        # FR-09: a new active task joins the global order immediately.
-        priority.assign_initial_position(item)
+        # Reconcile global priority because creating a child can make its
+        # parent no longer priority-eligible.
+        scheduling.schedule(user)
         item.refresh_from_db()
         return item
 
@@ -162,6 +163,9 @@ class PlanningItemSerializer(serializers.ModelSerializer):
         if tags is not serializers.empty:
             self._set_tags(instance, tags)
 
+        if {'item_type', 'start_date', 'due_date', 'duration_category', 'parent', 'is_completed', 'scheduled_date', 'schedule_is_manual'} & validated_data.keys():
+            from planning.services import scheduling
+            scheduling.schedule(instance.user)
         instance.refresh_from_db()
         return instance
 
@@ -250,30 +254,31 @@ class CompleteSerializer(serializers.Serializer):
 class TimelineItemSerializer(serializers.ModelSerializer):
     """A dated item on the Timeline (FR-10, FR-11)."""
 
-    date_source = serializers.SerializerMethodField()
-    effective_date = serializers.SerializerMethodField()
+    overdue = serializers.SerializerMethodField()
+    submission_url = serializers.CharField(source='assignment_detail.submission_url', read_only=True, allow_null=True, default=None)
+    hierarchy_path = serializers.SerializerMethodField()
+    has_children = serializers.SerializerMethodField()
 
     class Meta:
         model = PlanningItem
         fields = [
-            'id', 'title', 'item_type', 'start_date', 'due_date', 'scheduled_date',
-            'duration_category', 'is_completed', 'priority_position',
-            'date_source', 'effective_date',
+            'id', 'parent', 'title', 'item_type', 'start_date', 'due_date', 'scheduled_date',
+            'schedule_is_manual', 'duration_category', 'is_completed', 'priority_position',
+            'overdue', 'submission_url', 'hierarchy_path', 'has_children',
         ]
 
-    @extend_schema_field(serializers.ChoiceField(choices=['fixed', 'adaptive']))
-    def get_date_source(self, item):
-        """Tells the client whether the date is a real deadline or an ARC
-        suggestion, which is what lets the Timeline style them differently."""
-        return 'adaptive' if item.due_date is None else 'fixed'
+    @extend_schema_field(serializers.BooleanField())
+    def get_overdue(self, item):
+        from django.utils import timezone
+        return bool(not item.is_completed and item.due_date and item.due_date < timezone.localdate())
 
-    @extend_schema_field(serializers.DateField(allow_null=True))
-    def get_effective_date(self, item):
-        """The date to draw the item on. isoformat() because a method field
-        does no coercion of its own, and every neighbouring date here is
-        already a string."""
-        date = item.due_date or item.scheduled_date
-        return date.isoformat() if date else None
+    @extend_schema_field(serializers.ListField(child=serializers.DictField()))
+    def get_hierarchy_path(self, item):
+        return self.context.get('paths', {}).get(item.pk, [])
+
+    @extend_schema_field(serializers.BooleanField())
+    def get_has_children(self, item):
+        return bool(getattr(item, 'has_children', False))
 
 
 class OverdueEntrySerializer(serializers.Serializer):
@@ -306,3 +311,32 @@ class MarkGroupSerializer(serializers.Serializer):
 
 class MarksReorderSerializer(serializers.Serializer):
     ordered_ids = serializers.ListField(child=serializers.IntegerField(), allow_empty=False)
+
+
+class ScheduleMoveSerializer(serializers.Serializer):
+    item_id = serializers.IntegerField()
+    date = serializers.DateField()
+    allow_overload = serializers.BooleanField(default=False)
+
+
+class ScheduleReplaceSerializer(serializers.Serializer):
+    replacement_id = serializers.IntegerField()
+    displaced_id = serializers.IntegerField()
+    allow_overload = serializers.BooleanField(default=False)
+
+
+class ScheduleCapacitySerializer(serializers.Serializer):
+    under_20 = serializers.IntegerField(min_value=0, max_value=32767, required=False)
+    minutes_20_to_60 = serializers.IntegerField(min_value=0, max_value=32767, required=False)
+    over_60 = serializers.IntegerField(min_value=0, max_value=32767, required=False)
+
+
+class ScheduleOverloadSerializer(serializers.Serializer):
+    date = serializers.DateField()
+    allowed = serializers.BooleanField()
+
+
+
+class ScheduleResultSerializer(serializers.Serializer):
+    changed_ids = serializers.ListField(child=serializers.IntegerField(), required=False)
+    conflicts = serializers.ListField(child=serializers.DictField())

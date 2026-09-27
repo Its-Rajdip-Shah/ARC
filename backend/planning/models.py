@@ -2,15 +2,14 @@
 
 Covers FR-05 to FR-14. The self-referencing PlanningItem table holds roots,
 goals, tasks and assignments in one hierarchy; the rules that operate on it
-(cycle detection, priority ordering, adaptive scheduling) live in
+(cycle detection, priority ordering, execution scheduling) live in
 planning/services/ in Phase 4 rather than here.
 """
 
 from datetime import timedelta
 
 from django.db import models
-from django.db.models import F, Q
-from django.db.models.functions import Coalesce
+from django.db.models import Count, F, Q
 
 from core.models import OwnedModel, TimestampedModel
 
@@ -75,12 +74,30 @@ class PlanningItemQuerySet(models.QuerySet):
     def active(self):
         return self.filter(is_completed=False)
 
+    def priority_eligible(self):
+        """Incomplete actionable items with no incomplete visible children."""
+        return (
+            self.actionable()
+            .active()
+            .visible()
+            .annotate(
+                incomplete_child_count=Count(
+                    'children',
+                    filter=Q(
+                        children__is_completed=False,
+                        children__is_deleted=False,
+                    ),
+                )
+            )
+            .filter(incomplete_child_count=0)
+        )
+
     def fixed(self):
         """Items with a real deadline. Only these can become overdue."""
         return self.filter(due_date__isnull=False)
 
-    def adaptive(self):
-        """Items with no deadline, carrying a temporary scheduled_date instead."""
+    def without_deadline(self):
+        """Items without a deadline, independent of their execution date."""
         return self.filter(due_date__isnull=True)
 
     def overdue(self, today):
@@ -95,15 +112,12 @@ class PlanningItemQuerySet(models.QuerySet):
         return self.overdue(today).filter(due_date__lt=cutoff)
 
     def in_window(self, start, end):
-        """Items whose date span overlaps [start, end], for FR-10's filter.
-
-        An item occupies start_date..due_date when it has fixed dates, and a
-        single day at scheduled_date when it is adaptive.
-        """
-        return (
-            self.annotate(window_end=Coalesce('due_date', 'scheduled_date'))
-            .annotate(window_start=Coalesce('start_date', 'window_end'))
-            .filter(window_start__lte=end, window_end__gte=start)
+        """Execution dates and factual constraint ranges intersecting the window."""
+        return self.filter(
+            Q(scheduled_date__range=(start, end))
+            | Q(start_date__range=(start, end))
+            | Q(due_date__range=(start, end))
+            | Q(start_date__lte=end, due_date__gte=start)
         )
 
     def search(self, term):
@@ -133,11 +147,12 @@ class PlanningItem(OwnedModel, TimestampedModel):
     sibling_order = models.PositiveIntegerField(default=1)
     start_date = models.DateField(null=True, blank=True)
     due_date = models.DateField(null=True, blank=True)
-    # Temporary ARC-assigned date for adaptive items; FR-11 moves this
-    # forward, and never touches due_date.
+    # Planned execution date, independent of release/deadline constraints.
     scheduled_date = models.DateField(null=True, blank=True)
+    schedule_is_manual = models.BooleanField(default=False)
+    priority_restore_context = models.JSONField(default=dict, blank=True)
     duration_category = models.CharField(
-        max_length=12, choices=DurationCategory.choices, null=True, blank=True
+        max_length=12, choices=DurationCategory.choices, default=DurationCategory.MIN_20_TO_60
     )
     priority_position = models.PositiveIntegerField(null=True, blank=True)
     is_completed = models.BooleanField(default=False)
@@ -199,9 +214,9 @@ class PlanningItem(OwnedModel, TimestampedModel):
         return self.item_type in ACTIONABLE_TYPES
 
     @property
-    def is_adaptive(self):
-        """True when ARC schedules this item rather than a real deadline."""
-        return self.due_date is None
+    def has_deadline(self):
+        """Whether this item has a factual deadline constraint."""
+        return self.due_date is not None
 
 
 class PlanningHistoryEntry(OwnedModel):
@@ -218,6 +233,8 @@ class PlanningHistoryEntry(OwnedModel):
         DELETE = 'DELETE', 'Delete'
         MOVE = 'MOVE', 'Move'
         COMPLETE = 'COMPLETE', 'Complete'
+        PRIORITY = 'PRIORITY', 'Priority'
+        SCHEDULE = 'SCHEDULE', 'Schedule'
 
     id = models.BigAutoField(primary_key=True)
     action_type = models.CharField(max_length=10, choices=ActionType.choices)
@@ -320,3 +337,30 @@ class Timezone(OwnedModel):
 
     def __str__(self):
         return f'{self.title} ({self.start_date} to {self.end_date})'
+
+
+class SchedulingPreference(OwnedModel):
+    """Normal daily slot capacity for each duration bucket."""
+    under_20 = models.PositiveSmallIntegerField(default=5)
+    minutes_20_to_60 = models.PositiveSmallIntegerField(default=4)
+    over_60 = models.PositiveSmallIntegerField(default=3)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=['user'], name='uniq_scheduling_preferences_user')]
+
+
+class SchedulingOverload(OwnedModel):
+    """An explicit permission to exceed normal capacity on one calendar date."""
+    date = models.DateField()
+    allowed = models.BooleanField(default=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=['user', 'date'], name='uniq_scheduling_overload_day')]
+
+
+class SchedulingState(OwnedModel):
+    """Daily maintenance state, deliberately outside user undo snapshots."""
+    last_global_date = models.DateField(null=True, blank=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=['user'], name='uniq_scheduling_state_user')]

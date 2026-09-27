@@ -114,3 +114,15 @@ export function redoPlanningAction() {
     .post('planning/items/redo/')
     .then((res) => res.data)
 }
+
+export function updateTimelineCapacity(payload) {
+  return apiClient.patch('planning/timeline/capacity/', payload).then((res) => res.data)
+}
+
+export function updateTimelineOverload(payload) {
+  return apiClient.post('planning/timeline/overload/', payload).then((res) => res.data)
+}
+
+export function rescheduleTimeline() {
+  return apiClient.post('planning/timeline/reschedule/').then((res) => res.data)
+}

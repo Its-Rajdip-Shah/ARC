@@ -9,8 +9,11 @@ from django.db import transaction
 
 from planning.models import (
     AssignmentDetail,
+    DurationCategory,
     PlanningHistoryEntry,
     PlanningItem,
+    SchedulingOverload,
+    SchedulingPreference,
 )
 
 MAX_HISTORY_ENTRIES = 100
@@ -39,6 +42,8 @@ def serialize_item(item):
             if item.scheduled_date else None
         ),
         "duration_category": item.duration_category,
+        "schedule_is_manual": item.schedule_is_manual,
+        "priority_restore_context": item.priority_restore_context,
         "priority_position": item.priority_position,
         "is_completed": item.is_completed,
         "canvas_object_type": item.canvas_object_type,
@@ -91,19 +96,20 @@ def capture_scope(user, queryset):
 # SMALL STATE CAPTURES
 # ---------------------------------------------------------------------------
 
-def capture_priority(user):
-    """Capture only active priority membership/order.
+def capture_priority(user, *, include_unpositioned=False):
+    """Capture priority membership/order.
 
-    Used when an operation can renumber the global priority list.
+    Include null positions and restoration anchors when eligibility can change,
+    so undo restores both active membership and future reopening behaviour.
     """
 
-    return list(
-        PlanningItem.objects
-        .filter(user=user)
-        .exclude(priority_position=None)
-        .order_by("priority_position", "id")
-        .values("id", "priority_position")
-    )
+    items = PlanningItem.objects.filter(user=user)
+    if not include_unpositioned:
+        items = items.exclude(priority_position=None)
+    fields = ["id", "priority_position"]
+    if include_unpositioned:
+        fields.append("priority_restore_context")
+    return list(items.order_by("priority_position", "id").values(*fields))
 
 
 def capture_siblings(user, parent_id):
@@ -115,6 +121,25 @@ def capture_siblings(user, parent_id):
         .order_by("sibling_order", "id")
         .values("id", "parent_id", "sibling_order")
     )
+
+
+def capture_leaf_order(user):
+    """Snapshot only synchronizable leaf slots, never parent relationships."""
+    from planning.services.leaf_order_sync import leaves
+
+    return list(leaves(user).order_by('pk').values('id', 'sibling_order'))
+
+
+def _restore_leaf_order(user, states):
+    """Restore explicit leaf slots without allowing container writes."""
+    from planning.services.leaf_order_sync import leaves
+
+    wanted = {state['id']: state['sibling_order'] for state in states}
+    items = list(leaves(user).filter(pk__in=wanted))
+    for item in items:
+        item.sibling_order = wanted[item.pk]
+    if items:
+        PlanningItem.objects.bulk_update(items, ['sibling_order'])
 
 
 # ---------------------------------------------------------------------------
@@ -311,7 +336,9 @@ def _restore_item_states(user, states):
             "start_date": state["start_date"],
             "due_date": state["due_date"],
             "scheduled_date": state["scheduled_date"],
-            "duration_category": state["duration_category"],
+            "duration_category": state.get("duration_category") or DurationCategory.MIN_20_TO_60,
+            "schedule_is_manual": state.get("schedule_is_manual", False),
+            "priority_restore_context": state.get("priority_restore_context", {}),
             "priority_position": state["priority_position"],
             "is_completed": state["is_completed"],
             "canvas_object_type": state["canvas_object_type"],
@@ -367,7 +394,7 @@ def _restore_priority(user, states):
         return
 
     wanted = {
-        state["id"]: state["priority_position"]
+        state["id"]: state
         for state in states
     }
 
@@ -384,16 +411,18 @@ def _restore_priority(user, states):
     changed = []
 
     for item in items:
-        position = wanted[item.pk]
-
-        if item.priority_position != position:
+        state = wanted[item.pk]
+        position = state["priority_position"]
+        context = state.get("priority_restore_context", item.priority_restore_context)
+        if item.priority_position != position or item.priority_restore_context != context:
             item.priority_position = position
+            item.priority_restore_context = context
             changed.append(item)
 
     if changed:
         PlanningItem.objects.bulk_update(
             changed,
-            ["priority_position"],
+            ["priority_position", "priority_restore_context"],
         )
 
 
@@ -432,8 +461,33 @@ def _restore_siblings(user, states):
         )
 
 
-def _apply_delta(user, state):
+def _apply_delta(user, state, action_type):
     """Apply one operation-scoped state payload."""
+
+    if action_type == "PRIORITY":
+        # Ignore legacy whole-hierarchy 'siblings' snapshots. New checkpoints
+        # explicitly name leaf slots, and restoration cannot write containers.
+        _restore_priority(user, state.get("priority"))
+        _restore_leaf_order(user, state.get("leaf_siblings", []))
+        return
+
+    if action_type == "SCHEDULE":
+        _restore_priority(user, state.get('priority'))
+        _restore_leaf_order(user, state.get('leaf_siblings', []))
+        for row in state.get('schedule', []):
+            PlanningItem.objects.filter(user=user, pk=row['id']).update(
+                scheduled_date=row['scheduled_date'], schedule_is_manual=row['schedule_is_manual'],
+                priority_restore_context=row['priority_restore_context'],
+            )
+        SchedulingOverload.objects.filter(user=user).delete()
+        SchedulingOverload.objects.bulk_create([
+            SchedulingOverload(user=user, **row) for row in state.get('overload', [])
+        ])
+        if state.get('capacity'):
+            SchedulingPreference.objects.update_or_create(user=user, defaults=state['capacity'][0])
+        else:
+            SchedulingPreference.objects.filter(user=user).delete()
+        return
 
     # Soft-delete / restore existing rows in one bulk UPDATE.
     soft_delete = state.get("soft_delete")
@@ -487,7 +541,7 @@ def undo(user):
     if entry is None:
         return None
 
-    _apply_delta(user, entry.before_state)
+    _apply_delta(user, entry.before_state, entry.action_type)
 
     entry.is_undone = True
     entry.save(update_fields=["is_undone"])
@@ -510,7 +564,7 @@ def redo(user):
     if entry is None:
         return None
 
-    _apply_delta(user, entry.after_state)
+    _apply_delta(user, entry.after_state, entry.action_type)
 
     entry.is_undone = False
     entry.save(update_fields=["is_undone"])

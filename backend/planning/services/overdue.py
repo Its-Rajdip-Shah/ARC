@@ -1,6 +1,6 @@
 """Recent and Backlog classification for missed deadlines (FR-12).
 
-Only fixed-date work can be overdue. An adaptive task has no due_date, so it
+Only fixed-date work can be overdue. Work without a due_date
 rolls forward under FR-11 and can never appear here; that is the distinction
 the Overdue View exists to make.
 """

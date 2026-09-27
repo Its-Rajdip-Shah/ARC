@@ -10,7 +10,7 @@ from django.db import transaction
 from planning.models import PlanningItem
 from planning.queries import MAX_DEPTH, ancestor_ids, descendant_ids
 
-from . import priority
+from . import scheduling
 
 
 def validate_parent(item, new_parent):
@@ -58,6 +58,11 @@ def set_parent(item, new_parent):
 
     reindex_siblings(item.user, old_parent)
     reindex_siblings(item.user, new_parent)
+
+    # Moving an item can change leaf eligibility for both its old and new parent.
+    scheduling.schedule(item.user)
+
+    item.refresh_from_db(fields=['priority_position'])
     return item
 
 
@@ -97,7 +102,7 @@ def complete_subtree(item):
     """
     ids = [item.pk] + descendant_ids(item.user_id, item.pk)
     PlanningItem.objects.visible().filter(user_id=item.user_id, pk__in=ids).update(is_completed=True)
-    priority.release_positions(item.user, ids)
+    scheduling.schedule(item.user)
     item.is_completed = True
     return ids
 
@@ -112,6 +117,6 @@ def reopen(item):
     """
     PlanningItem.objects.visible().filter(pk=item.pk).update(is_completed=False)
     item.is_completed = False
+    scheduling.schedule(item.user)
     item.refresh_from_db(fields=['priority_position'])
-    priority.restore_position(item)
     return item

@@ -9,9 +9,9 @@ called from here.
 from datetime import datetime, timedelta
 from decimal import Decimal
 
-from django.core.cache import cache
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
+from django.db.models import Exists, OuterRef
 from django.utils import timezone
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import (
@@ -29,9 +29,14 @@ from rest_framework.views import APIView
 
 from core.mixins import UserScopedMixin
 from planning import queries
-from planning.models import AssignmentDetail, ItemType, PlanningItem, Tag, Timezone
+from planning.models import AssignmentDetail, ItemType, PlanningItem, SchedulingOverload, Tag, Timezone
 from planning.serializers import (
     AssignmentDetailSerializer,
+    ScheduleMoveSerializer,
+    ScheduleResultSerializer,
+    ScheduleReplaceSerializer,
+    ScheduleCapacitySerializer,
+    ScheduleOverloadSerializer,
     CompleteSerializer,
     MarkGroupSerializer,
     MarksReorderSerializer,
@@ -46,11 +51,8 @@ from planning.serializers import (
     TimelineItemSerializer,
     TimezoneSerializer,
 )
-from planning.services import hierarchy, overdue, priority, scheduling
+from planning.services import hierarchy, leaf_order_sync, overdue, priority, scheduling
 from planning.services import history
-
-#: How long to trust that today's adaptive sweep has already run for a user.
-ROLL_FORWARD_CACHE_SECONDS = 60 * 60 * 12
 
 
 def _as_400(exc):
@@ -86,18 +88,8 @@ def _root_lookup(user):
 
 
 def ensure_scheduled(user):
-    """Run the FR-11 sweep at most once a day per user.
-
-    A scheduled job is the intended driver, but a deployment without one
-    should still show sensible adaptive dates, so the first timeline read of
-    the day catches up. The cache key keeps that cost off every other request.
-    """
-    today = timezone.localdate()
-    key = f'arc:rolled:{user.pk}:{today.isoformat()}'
-    if cache.get(key):
-        return
-    scheduling.roll_forward_adaptive(user, today)
-    cache.set(key, True, ROLL_FORWARD_CACHE_SECONDS)
+    """Re-evaluate current capacity and eligibility; same-day changes matter."""
+    return scheduling.daily_schedule(user, timezone.localdate())
 
 
 class TagViewSet(UserScopedMixin, viewsets.ModelViewSet):
@@ -191,7 +183,7 @@ class PlanningItemViewSet(UserScopedMixin, viewsets.ModelViewSet):
     @transaction.atomic
     def perform_create(self, serializer):
         # Creating an item may change the global priority ordering.
-        priority_before = history.capture_priority(self.request.user)
+        priority_before = history.capture_priority(self.request.user, include_unpositioned=True)
 
         instance = serializer.save(user=self.request.user)
 
@@ -199,7 +191,7 @@ class PlanningItemViewSet(UserScopedMixin, viewsets.ModelViewSet):
             self.request.user,
             [instance.pk],
         )
-        priority_after = history.capture_priority(self.request.user)
+        priority_after = history.capture_priority(self.request.user, include_unpositioned=True)
 
         history.record_checkpoint(
             self.request.user,
@@ -250,22 +242,7 @@ class PlanningItemViewSet(UserScopedMixin, viewsets.ModelViewSet):
         ]
 
         siblings_before = history.capture_siblings(user, parent_id)
-        priority_before = history.capture_priority(user)
-
-        # Release active priority positions before hiding the subtree.
-        #
-        # complete_subtree-style descendants can also hold priority
-        # positions, so release every affected row that currently has one.
-        priority_items = list(
-            PlanningItem.objects.filter(
-                user=user,
-                pk__in=subtree_ids,
-                priority_position__isnull=False,
-            ).order_by("-priority_position")
-        )
-
-        for priority_item in priority_items:
-            priority.release_position(priority_item)
+        priority_before = history.capture_priority(user, include_unpositioned=True)
 
         # The original rows, PKs, hierarchy, tags and assignment details
         # remain intact while DELETE is undoable.
@@ -274,10 +251,13 @@ class PlanningItemViewSet(UserScopedMixin, viewsets.ModelViewSet):
             pk__in=subtree_ids,
         ).update(is_deleted=True)
 
+        # Deleting a child can make its parent priority-eligible.
+        scheduling.schedule(user)
+
         hierarchy.reindex_siblings(user, parent)
 
         siblings_after = history.capture_siblings(user, parent_id)
-        priority_after = history.capture_priority(user)
+        priority_after = history.capture_priority(user, include_unpositioned=True)
 
         history.record_checkpoint(
             user,
@@ -346,6 +326,7 @@ class PlanningItemViewSet(UserScopedMixin, viewsets.ModelViewSet):
         serializer = MoveSerializer(data=request.data, context={'request': request})
         serializer.is_valid(raise_exception=True)
 
+        priority_before = history.capture_priority(request.user, include_unpositioned=True)
         old_parent_id = item.parent_id
         new_parent_id = serializer.validated_data['parent_id']
 
@@ -379,6 +360,8 @@ class PlanningItemViewSet(UserScopedMixin, viewsets.ModelViewSet):
                     sibling.sibling_order = sibling_order
                     sibling.save(update_fields=['sibling_order'])
 
+        leaf_order_sync.from_planner(item)
+        scheduling.schedule(request.user)
         item.refresh_from_db()
 
         siblings_after = []
@@ -387,11 +370,18 @@ class PlanningItemViewSet(UserScopedMixin, viewsets.ModelViewSet):
                 history.capture_siblings(request.user, parent_id)
             )
 
+        before = {'siblings': siblings_before}
+        after = {'siblings': siblings_after}
+        priority_after = history.capture_priority(request.user, include_unpositioned=True)
+        if priority_before != priority_after:
+            before['priority'] = priority_before
+            after['priority'] = priority_after
+
         history.record_checkpoint(
             request.user,
             'MOVE',
-            {'siblings': siblings_before},
-            {'siblings': siblings_after},
+            before,
+            after,
         )
 
         return Response(self.get_serializer(item).data)
@@ -426,7 +416,7 @@ class PlanningItemViewSet(UserScopedMixin, viewsets.ModelViewSet):
             request.user,
             affected_ids,
         )
-        priority_before = history.capture_priority(request.user)
+        priority_before = history.capture_priority(request.user, include_unpositioned=True)
 
         if serializer.validated_data['completed']:
             affected = hierarchy.complete_subtree(item)
@@ -438,7 +428,7 @@ class PlanningItemViewSet(UserScopedMixin, viewsets.ModelViewSet):
             request.user,
             affected_ids,
         )
-        priority_after = history.capture_priority(request.user)
+        priority_after = history.capture_priority(request.user, include_unpositioned=True)
 
         history.record_checkpoint(
             request.user,
@@ -530,19 +520,42 @@ class PriorityReorderView(APIView):
     """FR-09: POST /api/planning/priority/reorder/"""
 
     @extend_schema(request=ReorderSerializer, responses=PriorityRowSerializer(many=True))
+    @transaction.atomic
     def post(self, request):
         serializer = ReorderSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+
+        before = {
+            'priority': history.capture_priority(request.user),
+            'leaf_siblings': history.capture_leaf_order(request.user),
+        }
+
         try:
-            items = priority.reorder(
+            priority.reorder(
                 request.user,
                 serializer.validated_data['item_id'],
                 serializer.validated_data['new_position'],
             )
+            leaf_order_sync.from_priority(request.user)
+            scheduling.schedule(request.user)
         except DjangoValidationError as exc:
             raise _as_400(exc)
-        # The whole renumbered list comes back, so an optimistic client can
-        # reconcile against it instead of guessing what moved.
+
+        after = {
+            'priority': history.capture_priority(request.user),
+            'leaf_siblings': history.capture_leaf_order(request.user),
+        }
+
+        history.record_checkpoint(
+            request.user,
+            'PRIORITY',
+            before,
+            after,
+        )
+
+        items = list(priority.ordered(request.user))
+
+        # Return the authoritative global priority order.
         return Response(_priority_rows(request.user, items))
 
 
@@ -557,6 +570,9 @@ class TimelineView(APIView):
         responses=inline_serializer(
             'TimelineResponse',
             {
+                'conflicts': serializers.ListField(child=serializers.DictField()),
+                'capacities': serializers.DictField(child=serializers.IntegerField()),
+                'overload': serializers.ListField(child=serializers.DictField()),
                 'range': serializers.DictField(child=serializers.DateField()),
                 'timezones': TimezoneSerializer(many=True),
                 'groups': inline_serializer(
@@ -571,18 +587,23 @@ class TimelineView(APIView):
         ),
     )
     def get(self, request):
-        ensure_scheduled(request.user)
-
         today = timezone.localdate()
         start = _date_param(request, 'from', today - timedelta(days=7))
         end = _date_param(request, 'to', today + timedelta(days=28))
         if end < start:
             raise ValidationError({'to': 'The end of the range precedes its start.'})
+        schedule_result = ensure_scheduled(request.user)
 
         items = list(
             PlanningItem.objects.for_user(request.user)
             .actionable()
             .in_window(start, end)
+            .annotate(
+                has_children=Exists(
+                    PlanningItem.objects.filter(parent_id=OuterRef('pk'))
+                )
+            )
+            .select_related('assignment_detail')
             .order_by('id')
         )
 
@@ -592,12 +613,17 @@ class TimelineView(APIView):
             root = roots[item.pk]
             grouped.setdefault(root['id'], (root, []))[1].append(item)
 
+        parents = queries.parent_map(request.user.pk)
+        meta = dict(PlanningItem.objects.for_user(request.user).values_list('pk', 'title'))
+        paths = {item.pk: [{'id': pk, 'title': meta[pk]} for pk in reversed(queries.ancestor_chain(parents, item.pk))]
+                 for item in items}
         groups = []
         for root, members in grouped.values():
-            members.sort(key=lambda i: (i.due_date or i.scheduled_date, i.pk))
+            members.sort(key=lambda i: (i.scheduled_date is None, i.scheduled_date or end,
+                                       i.priority_position is None, i.priority_position or 0, i.pk))
             groups.append({
                 'root': root,
-                'items': TimelineItemSerializer(members, many=True).data,
+                'items': TimelineItemSerializer(members, many=True, context={'paths': paths}).data,
             })
         groups.sort(key=lambda group: group['root']['title'])
 
@@ -609,6 +635,11 @@ class TimelineView(APIView):
             'range': {'from': start.isoformat(), 'to': end.isoformat()},
             'timezones': TimezoneSerializer(zones, many=True).data,
             'groups': groups,
+            'conflicts': schedule_result['conflicts'],
+            'capacities': scheduling.capacities(request.user),
+            'overload': list(SchedulingOverload.objects.filter(
+                user=request.user, date__range=(start, end),
+            ).order_by('date').values('date', 'allowed')),
         })
 
 
@@ -736,3 +767,63 @@ class MarksReorderView(APIView):
                 AssignmentDetail.objects.bulk_update(changed, ['marks_position'])
 
         return Response({'reordered': len(ordered_ids)})
+
+
+class ScheduleMoveView(APIView):
+    @extend_schema(request=ScheduleMoveSerializer, responses={200: ScheduleResultSerializer, 409: ScheduleResultSerializer})
+    def post(self, request):
+        serializer = ScheduleMoveSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        try:
+            result = scheduling.move_to_date(request.user, data['item_id'], data['date'], allow_overload=data['allow_overload'])
+        except scheduling.SchedulingConflict as exc:
+            return Response({'conflicts': exc.conflicts}, status=409)
+        return Response(result)
+
+
+class ScheduleReplaceView(APIView):
+    @extend_schema(request=ScheduleReplaceSerializer, responses={200: ScheduleResultSerializer, 409: ScheduleResultSerializer})
+    def post(self, request):
+        serializer = ScheduleReplaceSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            result = scheduling.replace(request.user, **serializer.validated_data)
+        except scheduling.SchedulingConflict as exc:
+            return Response({'conflicts': exc.conflicts}, status=409)
+        return Response(result)
+
+
+class ScheduleCapacityView(APIView):
+    @extend_schema(responses=serializers.DictField(child=serializers.IntegerField()))
+    def get(self, request):
+        return Response(scheduling.capacities(request.user))
+
+    @extend_schema(request=ScheduleCapacitySerializer, responses={200: ScheduleResultSerializer, 409: ScheduleResultSerializer})
+    def patch(self, request):
+        serializer = ScheduleCapacitySerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            result = scheduling.configure(request.user, capacity=serializer.validated_data)
+        except scheduling.SchedulingConflict as exc:
+            return Response({'conflicts': exc.conflicts}, status=409)
+        return Response(result)
+
+
+class ScheduleOverloadView(APIView):
+    @extend_schema(request=ScheduleOverloadSerializer, responses={200: ScheduleResultSerializer, 409: ScheduleResultSerializer})
+    def post(self, request):
+        serializer = ScheduleOverloadSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        try:
+            result = scheduling.configure(request.user, day=data['date'], overloaded=data['allowed'])
+        except scheduling.SchedulingConflict as exc:
+            return Response({'conflicts': exc.conflicts}, status=409)
+        return Response(result)
+
+
+class ScheduleRescheduleView(APIView):
+    @extend_schema(request=None, responses=ScheduleResultSerializer)
+    def post(self, request):
+        return Response(scheduling.reschedule(request.user))

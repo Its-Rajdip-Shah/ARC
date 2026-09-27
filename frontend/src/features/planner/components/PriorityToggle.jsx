@@ -8,19 +8,15 @@ export default function PriorityToggle({ isOpen, onToggle }) {
       aria-label={isOpen ? 'Close priority view' : 'Open priority view'}
       title={isOpen ? 'Close priority' : 'Open priority'}
       className={`
-        fixed top-1/2 z-40
+        fixed right-0 top-1/2 z-40 rounded-l-arc-control
         flex h-[34px] w-[50px] -translate-y-1/2
         items-center justify-center
         bg-arc-accent text-arc-bg
         shadow-md
-        transition-[left,right,border-radius] duration-300 ease-out
+        transition-colors duration-150
         focus-visible:outline-2 focus-visible:outline-offset-2
         focus-visible:outline-white
-        ${
-          isOpen
-            ? 'left-arc-sidebar rounded-r-arc-control'
-            : 'right-0 rounded-l-arc-control'
-        }
+
       `}
     >
       <span className="text-[25px] leading-none" aria-hidden="true">

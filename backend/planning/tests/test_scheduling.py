@@ -1,4 +1,4 @@
-"""Adaptive roll-forward (FR-11).
+"""Global capacity roll-forward.
 
 The clock is frozen throughout so that "yesterday" and "today" mean something
 stable, and so the idempotency tests can run the sweep twice inside one day.
@@ -9,7 +9,7 @@ from datetime import date, timedelta
 import pytest
 from freezegun import freeze_time
 
-from planning.models import ItemType, PlanningItem
+from planning.models import ItemType, PlanningItem, SchedulingPreference
 from planning.services import priority, scheduling
 
 pytestmark = pytest.mark.django_db
@@ -61,13 +61,13 @@ def test_a_future_date_is_left_alone(user, make_item, root):
 
 
 @freeze_time(FROZEN)
-def test_a_task_with_a_real_deadline_is_never_scheduled(user, make_item, root):
+def test_a_task_with_an_expired_deadline_recovers_last_legal_date(user, make_item, root):
     fixed = make_item(user, 'fixed', parent=root, due_date=days(-5))
 
     scheduling.roll_forward_adaptive(user, TODAY)
 
     fixed.refresh_from_db()
-    assert fixed.scheduled_date is None
+    assert fixed.scheduled_date == fixed.due_date
 
 
 @freeze_time(FROZEN)
@@ -134,6 +134,7 @@ def test_an_overdue_task_is_rescheduled_rather_than_marked_overdue(user, make_it
 
 @freeze_time(FROZEN)
 def test_a_collision_pushes_the_lower_priority_task_along(user, make_item, root):
+    SchedulingPreference.objects.create(user=user, minutes_20_to_60=1)
     first = make_item(user, 'first', parent=root, scheduled_date=days(-1))
     second = make_item(user, 'second', parent=root, scheduled_date=TODAY)
     priority.assign_initial_position(first)
@@ -146,6 +147,7 @@ def test_a_collision_pushes_the_lower_priority_task_along(user, make_item, root)
 
 @freeze_time(FROZEN)
 def test_a_collision_cascades_down_a_whole_run(user, make_item, root):
+    SchedulingPreference.objects.create(user=user, minutes_20_to_60=1)
     made = []
     for index, offset in enumerate([-1, 0, 1, 2]):
         item = make_item(user, f'task-{index}', parent=root, scheduled_date=days(offset))
@@ -165,6 +167,7 @@ def test_a_collision_cascades_down_a_whole_run(user, make_item, root):
 @freeze_time(FROZEN)
 def test_priority_order_decides_who_moves(user, make_item, root):
     """Both tasks want today; the one lower down the Priority View yields."""
+    SchedulingPreference.objects.create(user=user, minutes_20_to_60=1)
     low = make_item(user, 'low', parent=root, scheduled_date=TODAY)
     high = make_item(user, 'high', parent=root, scheduled_date=TODAY)
     priority.assign_initial_position(low)
@@ -177,8 +180,9 @@ def test_priority_order_decides_who_moves(user, make_item, root):
 
 
 @freeze_time(FROZEN)
-def test_collisions_are_resolved_per_root_not_globally(user, make_item):
-    """Two different courses may both have work on the same day."""
+def test_collisions_are_resolved_globally_across_roots(user, make_item):
+    """Different roots share the same user capacity."""
+    SchedulingPreference.objects.create(user=user, minutes_20_to_60=1)
     first_root = make_item(user, 'course-a', ItemType.GOAL)
     second_root = make_item(user, 'course-b', ItemType.GOAL)
     a = make_item(user, 'a-task', parent=first_root, scheduled_date=TODAY)
@@ -188,11 +192,12 @@ def test_collisions_are_resolved_per_root_not_globally(user, make_item):
 
     scheduling.roll_forward_adaptive(user, TODAY)
 
-    assert schedule_of(user) == {'a-task': TODAY, 'b-task': TODAY}
+    assert schedule_of(user) == {'a-task': TODAY, 'b-task': days(1)}
 
 
 @freeze_time(FROZEN)
 def test_a_deeply_nested_task_groups_by_its_root(user, make_item, root):
+    SchedulingPreference.objects.create(user=user, minutes_20_to_60=1)
     mid = make_item(user, 'mid', ItemType.GOAL, parent=root)
     deep = make_item(user, 'deep', parent=mid, scheduled_date=TODAY)
     shallow = make_item(user, 'shallow', parent=root, scheduled_date=TODAY)

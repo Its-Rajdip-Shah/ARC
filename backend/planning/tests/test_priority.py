@@ -142,13 +142,13 @@ def test_releasing_twice_is_harmless(user, tasks):
     assert len(positions(user)) == 4
 
 
-def test_restoring_appends_to_the_end(user, tasks):
+def test_restoring_returns_to_the_previous_relative_position(user, tasks):
     priority.release_position(tasks[0])
     tasks[0].refresh_from_db()
 
     priority.restore_position(tasks[0])
 
-    assert titles(user) == ['t2', 't3', 't4', 't5', 't1']
+    assert titles(user) == ['t1', 't2', 't3', 't4', 't5']
 
 
 def test_releasing_many_positions_at_once_renumbers_the_rest(user, tasks):

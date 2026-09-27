@@ -222,9 +222,9 @@ def test_a_resync_leaves_the_users_own_edits_alone(connection, user):
     )
 
 
-def test_an_assignment_with_no_due_date_becomes_adaptive(connection, user):
+def test_an_assignment_with_no_due_date_preserves_missing_deadline(connection, user):
     """AGENTS.md: never invent missing Canvas data. No due_at means no
-    deadline, so FR-11 takes over rather than ARC guessing one."""
+    deadline; execution scheduling must not invent one."""
     stub = StubCanvas(
         courses=[{'id': 11, 'course_code': 'ELEC3609'}],
         assignments={11: [{'id': 501, 'name': 'Ungraded survey', 'due_at': None}]},
@@ -233,7 +233,7 @@ def test_an_assignment_with_no_due_date_becomes_adaptive(connection, user):
 
     item = PlanningItem.objects.get(canvas_object_id='501')
     assert item.due_date is None
-    assert item.is_adaptive is True
+    assert item.has_deadline is False
 
 
 def test_missing_canvas_fields_do_not_break_the_import(connection, user):
@@ -391,3 +391,36 @@ def test_another_users_sync_logs_are_invisible(api_for, other_user, connection):
     """FR-03."""
     sync.run_sync(connection, client=StubCanvas())
     assert api_for(other_user).get('/api/canvas/sync-logs/').data['count'] == 0
+
+
+def test_existing_assignment_regains_eligible_priority_with_deadline(connection, user):
+    from planning.services import priority
+
+    stub = StubCanvas(
+        courses=[{'id': 11, 'course_code': 'ELEC3609'}],
+        assignments={11: [{'id': 501, 'name': 'Quiz', 'due_at': '2026-10-01T12:00:00Z'}]},
+    )
+    sync.run_sync(connection, client=stub)
+    item = PlanningItem.objects.get(user=user, canvas_object_id='501')
+    PlanningItem.objects.filter(pk=item.pk).update(priority_position=None)
+    sync.run_sync(connection, client=stub)
+    item.refresh_from_db()
+    assert item.has_deadline is True
+    assert item.pk in priority.ordered(user).values_list('pk', flat=True)
+
+
+def test_sync_schedules_each_course_batch_once(connection, user):
+    from unittest.mock import patch
+    from planning.services import scheduling
+
+    client = StubCanvas(courses=[{'id': 1}], assignments={1: [
+        {'id': 100, 'name': 'One'}, {'id': 101, 'name': 'Two'},
+    ]})
+    with patch.object(scheduling, 'schedule', wraps=scheduling.schedule) as run:
+        log = sync.run_sync(connection, client)
+        assert log.status == SyncStatus.SUCCESS
+        assert run.call_count == 1
+        assert run.call_args.kwargs.get('mode', 'minimal') == 'minimal'
+    items = PlanningItem.objects.for_user(user).priority_eligible()
+    assert items.count() == 2
+    assert not items.filter(scheduled_date=None).exists()

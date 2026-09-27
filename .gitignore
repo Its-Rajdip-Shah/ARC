@@ -17,3 +17,24 @@ dist/
 
 # OS
 .DS_Store
+
+# Local secrets / environments
+.env
+.env.*
+!.env.example
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Frontend
+node_modules/
+dist/
+
+# macOS
+.DS_Store

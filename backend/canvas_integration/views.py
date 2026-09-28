@@ -41,7 +41,22 @@ class CanvasConnectionView(GenericAPIView):
         existing = CanvasConnection.objects.filter(user=request.user).first()
         serializer = self.get_serializer(existing, data=request.data)
         serializer.is_valid(raise_exception=True)
-        connection = serializer.save(user=request.user)
+
+        token = serializer.validated_data['api_token_encrypted']
+        client = CanvasClient(settings.CANVAS_BASE_URL, token)
+        try:
+            profile = client.whoami()
+        except CanvasError as exc:
+            return Response(
+                {'ok': False, 'detail': str(exc), 'status': exc.status},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        connection = serializer.save(
+            user=request.user,
+            canvas_user_id=str(profile.get('id') or '') or None,
+        )
+        connection.last_sync = SyncLog.objects.filter(user=request.user).first()
         return Response(
             self.get_serializer(connection).data,
             status=status.HTTP_200_OK if existing else status.HTTP_201_CREATED,

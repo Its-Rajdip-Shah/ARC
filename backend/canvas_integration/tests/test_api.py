@@ -116,16 +116,19 @@ def test_the_connection_is_a_404_before_it_is_created(client):
     assert client.get('/api/canvas/connection/').status_code == 404
 
 
-def test_put_creates_the_connection(client, user):
+def test_put_creates_the_connection(client, user, canvas_returns):
+    canvas_returns(StubCanvas())
     response = client.put(
         '/api/canvas/connection/', {'api_token': TOKEN}, format='json'
     )
     assert response.status_code == 201, response.data
     assert CanvasConnection.objects.filter(user=user).count() == 1
+    assert response.data['canvas_user_id'] == '4242'
 
 
-def test_put_again_replaces_rather_than_duplicates(client, user, connection):
+def test_put_again_replaces_rather_than_duplicates(client, user, connection, canvas_returns):
     """FR-04: one connection per user, so re-pasting a token is a replacement."""
+    canvas_returns(StubCanvas())
     response = client.put(
         '/api/canvas/connection/', {'api_token': 'a-brand-new-canvas-token'}, format='json'
     )
@@ -133,6 +136,28 @@ def test_put_again_replaces_rather_than_duplicates(client, user, connection):
     assert CanvasConnection.objects.filter(user=user).count() == 1
     connection.refresh_from_db()
     assert connection.api_token_encrypted == 'a-brand-new-canvas-token'
+
+
+def test_put_rejects_a_dead_token_without_saving(client, user, canvas_returns):
+    canvas_returns(StubCanvas(fail_on='whoami'))
+    response = client.put(
+        '/api/canvas/connection/', {'api_token': TOKEN}, format='json'
+    )
+    assert response.status_code == 502
+    assert response.data['ok'] is False
+    assert not CanvasConnection.objects.filter(user=user).exists()
+
+
+def test_put_keeps_the_old_token_when_the_new_one_fails(
+    client, user, connection, canvas_returns
+):
+    canvas_returns(StubCanvas(fail_on='whoami'))
+    response = client.put(
+        '/api/canvas/connection/', {'api_token': 'a-brand-new-canvas-token'}, format='json'
+    )
+    assert response.status_code == 502
+    connection.refresh_from_db()
+    assert connection.api_token_encrypted == TOKEN
 
 
 def test_the_api_token_never_comes_back_out(client, connection):

@@ -10,7 +10,9 @@ FR-04: every attempt writes a SyncLog row, successful or not, which is what
 lets the Connection screen report the last successful sync and the last error.
 """
 
+from collections import defaultdict
 from datetime import datetime
+from decimal import Decimal, InvalidOperation
 
 from django.conf import settings
 from django.db import transaction
@@ -40,6 +42,39 @@ def _course_title(course):
     return course.get('course_code') or course.get('name') or 'Untitled Canvas course'
 
 
+def _as_decimal(value):
+    if value is None:
+        return None
+    try:
+        return Decimal(str(value))
+    except (InvalidOperation, ValueError):
+        return None
+
+
+def _group_point_totals(assignments):
+    totals = defaultdict(lambda: Decimal('0'))
+    for assignment in assignments:
+        group_id = assignment.get('assignment_group_id')
+        points = _as_decimal(assignment.get('points_possible'))
+        if group_id is None or points is None or points <= 0:
+            continue
+        totals[group_id] += points
+    return totals
+
+
+def _weight_percent(assignment, groups_by_id, point_totals):
+    """Share of the group's course weight, or None if Canvas omitted inputs."""
+    group = groups_by_id.get(assignment.get('assignment_group_id'))
+    if group is None:
+        return None
+    group_weight = _as_decimal(group.get('group_weight'))
+    points = _as_decimal(assignment.get('points_possible'))
+    total = point_totals.get(assignment.get('assignment_group_id'))
+    if group_weight is None or points is None or not total:
+        return None
+    return (group_weight * points / total).quantize(Decimal('0.01'))
+
+
 def _import_course(user, client, course, counts):
     """Upsert one course and its assignments.
 
@@ -47,6 +82,11 @@ def _import_course(user, client, course, counts):
     never holds a write transaction open against Postgres.
     """
     assignments = client.assignments(course['id'])
+    groups = client.assignment_groups(course['id'])
+    groups_by_id = {
+        group['id']: group for group in groups if group.get('id') is not None
+    }
+    point_totals = _group_point_totals(assignments)
 
     with transaction.atomic():
         priority._lock(user)
@@ -65,11 +105,17 @@ def _import_course(user, client, course, counts):
         for assignment in assignments:
             if assignment.get('id') is None:
                 continue
-            _import_assignment(user, root, assignment, counts)
+            _import_assignment(
+                user,
+                root,
+                assignment,
+                counts,
+                weight=_weight_percent(assignment, groups_by_id, point_totals),
+            )
         lifecycle.finish(user)
 
 
-def _import_assignment(user, root, assignment, counts):
+def _import_assignment(user, root, assignment, counts, weight=None):
     assignment_id = str(assignment['id'])
     due_date = _as_date(assignment.get('due_at'))
 
@@ -87,11 +133,12 @@ def _import_assignment(user, root, assignment, counts):
         },
     )
 
-    # Canvas exposes points_possible, not a percentage of the unit, so ARC
-    # cannot derive weight_percent and leaves it for the user to fill in.
+    detail_defaults = {'submission_url': assignment.get('html_url') or None}
+    if weight is not None:
+        detail_defaults['weight_percent'] = weight
     AssignmentDetail.objects.update_or_create(
         planning_item=item,
-        defaults={'submission_url': assignment.get('html_url') or None},
+        defaults=detail_defaults,
     )
 
     if not item.is_completed:

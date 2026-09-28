@@ -336,6 +336,67 @@ def test_canvas_gives_no_weighting_so_none_is_recorded(connection):
     assert detail.mark_achieved is None
 
 
+def test_group_weight_is_split_by_assignment_points(connection, user):
+    stub = StubCanvas(
+        courses=[{'id': 11, 'course_code': 'ELEC3609'}],
+        assignments={
+            11: [
+                {
+                    'id': 501,
+                    'name': 'Quiz',
+                    'points_possible': 10,
+                    'assignment_group_id': 1,
+                },
+                {
+                    'id': 502,
+                    'name': 'Report',
+                    'points_possible': 30,
+                    'assignment_group_id': 1,
+                },
+            ]
+        },
+        assignment_groups={11: [{'id': 1, 'group_weight': 40}]},
+    )
+    sync.run_sync(connection, client=stub)
+
+    quiz = AssignmentDetail.objects.get(planning_item__canvas_object_id='501')
+    report = AssignmentDetail.objects.get(planning_item__canvas_object_id='502')
+    assert quiz.weight_percent == Decimal('10.00')
+    assert report.weight_percent == Decimal('30.00')
+    assert PlanningItem.objects.filter(user=user).count() == 3
+
+
+def test_missing_group_weight_does_not_clobber_a_local_weight(connection, user):
+    first = StubCanvas(
+        courses=[{'id': 11, 'course_code': 'ELEC3609'}],
+        assignments={
+            11: [{
+                'id': 501,
+                'name': 'Quiz',
+                'points_possible': 10,
+                'assignment_group_id': 1,
+            }]
+        },
+        assignment_groups={11: [{'id': 1, 'group_weight': 25}]},
+    )
+    sync.run_sync(connection, client=first)
+    item = PlanningItem.objects.get(canvas_object_id='501')
+    item.is_completed = True
+    item.save(update_fields=['is_completed'])
+
+    sync.run_sync(
+        connection,
+        client=StubCanvas(
+            courses=[{'id': 11, 'course_code': 'ELEC3609'}],
+            assignments={11: [{'id': 501, 'name': 'Quiz', 'points_possible': 10}]},
+        ),
+    )
+    item.refresh_from_db()
+    detail = AssignmentDetail.objects.get(planning_item=item)
+    assert item.is_completed is True
+    assert detail.weight_percent == Decimal('25.00')
+
+
 def test_sync_records_a_success_log(connection, user):
     """FR-04."""
     log = sync.run_sync(connection, client=StubCanvas())

@@ -12,7 +12,7 @@ import pytest
 from django.contrib.auth import get_user_model
 
 from canvas_integration import sync, views
-from canvas_integration.client import CanvasError
+from canvas_integration.client import CanvasClient, CanvasError
 from canvas_integration.models import CanvasConnection, SyncLog, SyncStatus
 from planning.models import AssignmentDetail, CanvasObjectType, ItemType, PlanningItem
 
@@ -26,9 +26,19 @@ TOKEN = 'canvas-token-that-is-long-enough'
 class StubCanvas:
     """Stands in for CanvasClient. Records calls so tests can assert on them."""
 
-    def __init__(self, courses=None, assignments=None, profile=None, fail_on=None):
+    def __init__(
+        self,
+        courses=None,
+        assignments=None,
+        profile=None,
+        fail_on=None,
+        assignment_groups=None,
+        submissions=None,
+    ):
         self._courses = courses or []
         self._assignments = assignments or {}
+        self._assignment_groups = assignment_groups or {}
+        self._submissions = submissions or {}
         self._profile = profile or {'id': 4242, 'name': 'Alice Example'}
         self._fail_on = fail_on
         self.assignment_calls = []
@@ -49,6 +59,35 @@ class StubCanvas:
         self._maybe_fail('assignments')
         self.assignment_calls.append(course_id)
         return self._assignments.get(course_id, [])
+
+    def assignment_groups(self, course_id):
+        self._maybe_fail('assignment_groups')
+        return self._assignment_groups.get(course_id, [])
+
+    def submissions_self(self, course_id):
+        self._maybe_fail('submissions')
+        return self._submissions.get(course_id, [])
+
+
+class _FakeResponse:
+    def __init__(self, payload, status=200, link=None):
+        self._payload = payload
+        self.status_code = status
+        self.ok = 200 <= status < 300
+        self.headers = {'Link': link} if link else {}
+
+    def json(self):
+        return self._payload
+
+
+class _FakeSession:
+    def __init__(self, responses):
+        self._responses = list(responses)
+        self.calls = []
+
+    def get(self, url, headers=None, params=None, timeout=None):
+        self.calls.append({'url': url, 'params': params})
+        return self._responses.pop(0)
 
 
 @pytest.fixture
@@ -142,6 +181,37 @@ def test_the_canvas_endpoints_refuse_an_anonymous_request(db, api):
     assert api.get('/api/canvas/connection/').status_code == 401
     assert api.post('/api/canvas/sync/').status_code == 401
     assert api.get('/api/canvas/sync-logs/').status_code == 401
+
+
+# --- Client -----------------------------------------------------------------
+
+def test_courses_asks_canvas_for_the_enrolment_term():
+    session = _FakeSession([_FakeResponse([])])
+    CanvasClient('https://canvas.test', TOKEN, session=session).courses()
+    params = session.calls[0]['params']
+    assert params['include[]'] == 'term'
+    assert params['enrollment_state'] == 'active'
+
+
+def test_list_gets_follow_canvas_next_links():
+    page1 = _FakeResponse(
+        [{'id': 1}],
+        link='<https://canvas.test/api/v1/courses?page=2>; rel="next"',
+    )
+    page2 = _FakeResponse([{'id': 2}])
+    session = _FakeSession([page1, page2])
+    rows = CanvasClient('https://canvas.test', TOKEN, session=session).assignment_groups(9)
+    assert [row['id'] for row in rows] == [1, 2]
+    assert session.calls[1]['url'] == 'https://canvas.test/api/v1/courses?page=2'
+    assert session.calls[1]['params'] is None
+
+
+def test_submissions_self_requests_the_token_holder_only():
+    session = _FakeSession([_FakeResponse([])])
+    CanvasClient('https://canvas.test', TOKEN, session=session).submissions_self(11)
+    call = session.calls[0]
+    assert call['url'].endswith('/courses/11/students/submissions')
+    assert call['params']['student_ids[]'] == 'self'
 
 
 # --- Sync -------------------------------------------------------------------

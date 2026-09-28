@@ -7,7 +7,21 @@ import {
   useSyncCanvas,
   useTestCanvasConnection,
 } from '../../hooks/useCanvas'
+import { useSchedulerSettings } from '../../hooks/useSchedulerSettings'
 import { errorMessage, formatInstant } from '../../lib/errors'
+
+const FLAVOURS = [
+  {
+    value: 'lock-in',
+    title: 'Locked-In',
+    description: 'Push harder toward deadlines and use available time more aggressively.',
+  },
+  {
+    value: 'monk',
+    title: 'Monk',
+    description: 'Prefer a calmer schedule with lower daily intensity where deadlines allow it.',
+  },
+]
 
 const TABS = [
   { id: 'integration', label: 'Integration' },
@@ -209,6 +223,73 @@ function IntegrationPanel() {
   )
 }
 
+function AccountPanel() {
+  const settings = useSchedulerSettings()
+  const selected = settings.data?.flavour ?? null
+  const [banner, setBanner] = useState(null)
+
+  async function choose(flavour) {
+    if (flavour === selected) return
+    setBanner(null)
+    try {
+      await settings.setFlavour(flavour)
+    } catch {
+      setBanner({
+        tone: 'error',
+        text: 'Scheduler preference could not be saved.',
+      })
+    }
+  }
+
+  return (
+    <section className="space-y-4 rounded-[15px] border border-[#4a496b] bg-arc-panel p-5">
+      <h2 className="text-lg font-semibold">Scheduler intensity</h2>
+      <p className="text-sm text-arc-text-secondary">
+        Locked-In and Monk use the same setting as Timeline. Changing it here
+        reschedules your plan.
+      </p>
+
+      {settings.isPending && (
+        <p className="text-sm text-arc-text-muted">Loading scheduler settings…</p>
+      )}
+
+      {settings.isError && (
+        <p className="text-sm text-arc-danger-light" role="alert">
+          Scheduler settings could not load.
+        </p>
+      )}
+
+      {banner && (
+        <p className="rounded-[10px] bg-arc-danger/20 px-3 py-2 text-sm text-arc-danger-light">
+          {banner.text}
+        </p>
+      )}
+
+      <div className="grid gap-2 sm:grid-cols-2">
+        {FLAVOURS.map((mode) => (
+          <button
+            key={mode.value}
+            type="button"
+            aria-pressed={selected === mode.value}
+            disabled={settings.saving || settings.isPending}
+            onClick={() => choose(mode.value)}
+            className={`rounded-[10px] border px-4 py-3 text-left disabled:opacity-60 ${
+              selected === mode.value
+                ? 'border-arc-accent bg-arc-accent/15'
+                : 'border-[#4a496b]'
+            }`}
+          >
+            <strong className="block text-arc-text">{mode.title}</strong>
+            <span className="mt-1 block text-sm text-arc-text-secondary">
+              {mode.description}
+            </span>
+          </button>
+        ))}
+      </div>
+    </section>
+  )
+}
+
 export default function SettingsPage() {
   const [tab, setTab] = useState('integration')
 
@@ -244,11 +325,7 @@ export default function SettingsPage() {
         ))}
       </div>
 
-      {tab === 'integration' ? (
-        <IntegrationPanel />
-      ) : (
-        <p className="text-sm text-arc-text-muted">Scheduler flavour.</p>
-      )}
+      {tab === 'integration' ? <IntegrationPanel /> : <AccountPanel />}
     </div>
   )
 }

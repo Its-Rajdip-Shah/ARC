@@ -16,6 +16,7 @@ from planning.models import (
     ItemType,
     PlanningItem,
     PlanningItemTag,
+    SchedulingState,
     Tag,
     Timezone,
 )
@@ -64,6 +65,42 @@ class AssignmentDetailSerializer(serializers.ModelSerializer):
         fields = ['weight_percent', 'mark_achieved', 'submission_url', 'marks_position']
 
 
+class TimelineNavigationItemSerializer(serializers.ModelSerializer):
+    """Small canonical item index used by Timeline search/navigation.
+
+    Deliberately independent of the visible date window and DRF list
+    pagination.  It exposes canonical facts only; no scheduler assumptions.
+    """
+
+    parent = serializers.IntegerField(
+        source='parent_id',
+        allow_null=True,
+        read_only=True,
+    )
+    tags = TagSerializer(
+        many=True,
+        read_only=True,
+    )
+
+    class Meta:
+        model = PlanningItem
+        fields = [
+            'id',
+            'parent',
+            'item_type',
+            'title',
+            'description',
+            'start_date',
+            'due_date',
+            'scheduled_date',
+            'completed_display_date',
+            'manual_requested_date',
+            'duration_category',
+            'is_completed',
+            'tags',
+        ]
+
+
 class PlanningItemSerializer(serializers.ModelSerializer):
     tags = TagSerializer(many=True, read_only=True)
     tag_ids = UserScopedPrimaryKeyRelatedField(
@@ -74,20 +111,24 @@ class PlanningItemSerializer(serializers.ModelSerializer):
         queryset=PlanningItem.objects.all(), required=False, allow_null=True
     )
     assignment_detail = AssignmentDetailSerializer(required=False, allow_null=True)
-    is_adaptive = serializers.BooleanField(read_only=True)
+    has_deadline = serializers.BooleanField(read_only=True)
 
     class Meta:
         model = PlanningItem
         fields = [
             'id', 'parent', 'item_type', 'title', 'description', 'sibling_order',
-            'start_date', 'due_date', 'scheduled_date', 'duration_category',
-            'priority_position', 'is_completed', 'is_adaptive',
+            'start_date', 'due_date', 'scheduled_date', 'execution_rank',
+            'completed_display_date', 'manual_requested_date',
+            'duration_category', 'percent_completed',
+            'priority_position', 'is_completed', 'has_deadline',
             'canvas_object_type', 'canvas_object_id',
             'tags', 'tag_ids', 'assignment_detail',
             'created_at', 'updated_at',
         ]
         read_only_fields = [
-            'priority_position', 'scheduled_date', 'canvas_object_type',
+            'priority_position', 'scheduled_date', 'execution_rank',
+            'completed_display_date', 'manual_requested_date',
+            'percent_completed', 'canvas_object_type',
             'canvas_object_id', 'created_at', 'updated_at',
         ]
 
@@ -124,45 +165,31 @@ class PlanningItemSerializer(serializers.ModelSerializer):
         return value
 
     def create(self, validated_data):
-        from planning.services import priority
-
+        from planning.services import domain_commands
         detail = validated_data.pop('assignment_detail', None)
         tags = validated_data.pop('tags', None)
         user = validated_data.pop('user')
-
-        parent = validated_data.get('parent')
-        validated_data.setdefault(
-            'sibling_order',
-            PlanningItem.objects.filter(user=user, parent=parent).count() + 1,
-        )
-
-        item = PlanningItem.objects.create(user=user, **validated_data)
+        item = domain_commands.create_item(user, **validated_data)
 
         if detail:
             AssignmentDetail.objects.create(planning_item=item, **detail)
         if tags:
             self._set_tags(item, tags)
 
-        # FR-09: a new active task joins the global order immediately.
-        priority.assign_initial_position(item)
-        item.refresh_from_db()
         return item
 
     def update(self, instance, validated_data):
+        from django.db import transaction
+        from planning.services import domain_commands
         detail = validated_data.pop('assignment_detail', serializers.empty)
         tags = validated_data.pop('tags', serializers.empty)
         validated_data.pop('user', None)
-
-        for field, value in validated_data.items():
-            setattr(instance, field, value)
-        instance.save()
-
-        if detail is not serializers.empty:
-            self._set_detail(instance, detail)
-        if tags is not serializers.empty:
-            self._set_tags(instance, tags)
-
-        instance.refresh_from_db()
+        with transaction.atomic():
+            instance = domain_commands.update_item(instance, validated_data)
+            if detail is not serializers.empty:
+                self._set_detail(instance, detail)
+            if tags is not serializers.empty:
+                self._set_tags(instance, tags)
         return instance
 
     def _set_detail(self, item, detail):
@@ -247,33 +274,61 @@ class CompleteSerializer(serializers.Serializer):
     completed = serializers.BooleanField(default=True)
 
 
+class SchedulerAllocationProjectionSerializer(serializers.Serializer):
+    """One persisted disposable split-session projection."""
+
+    percentage = serializers.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+    )
+    scheduled_date = serializers.DateField()
+    execution_rank = serializers.IntegerField()
+
+
 class TimelineItemSerializer(serializers.ModelSerializer):
     """A dated item on the Timeline (FR-10, FR-11)."""
 
-    date_source = serializers.SerializerMethodField()
-    effective_date = serializers.SerializerMethodField()
+    tags = TagSerializer(many=True, read_only=True)
+    overdue = serializers.SerializerMethodField()
+    submission_url = serializers.CharField(source='assignment_detail.submission_url', read_only=True, allow_null=True, default=None)
+    hierarchy_path = serializers.SerializerMethodField()
+    has_children = serializers.SerializerMethodField()
+    allocations = serializers.SerializerMethodField()
 
     class Meta:
         model = PlanningItem
         fields = [
-            'id', 'title', 'item_type', 'start_date', 'due_date', 'scheduled_date',
-            'duration_category', 'is_completed', 'priority_position',
-            'date_source', 'effective_date',
+            'id', 'parent', 'title', 'description', 'item_type', 'start_date', 'due_date',
+            'scheduled_date', 'execution_rank', 'completed_display_date',
+            'manual_requested_date', 'duration_category',
+            'is_completed', 'priority_position', 'tags', 'overdue', 'submission_url',
+            'hierarchy_path', 'has_children', 'allocations',
         ]
 
-    @extend_schema_field(serializers.ChoiceField(choices=['fixed', 'adaptive']))
-    def get_date_source(self, item):
-        """Tells the client whether the date is a real deadline or an ARC
-        suggestion, which is what lets the Timeline style them differently."""
-        return 'adaptive' if item.due_date is None else 'fixed'
+    @extend_schema_field(serializers.BooleanField())
+    def get_overdue(self, item):
+        from django.utils import timezone
+        return bool(not item.is_completed and item.due_date and item.due_date < timezone.localdate())
 
-    @extend_schema_field(serializers.DateField(allow_null=True))
-    def get_effective_date(self, item):
-        """The date to draw the item on. isoformat() because a method field
-        does no coercion of its own, and every neighbouring date here is
-        already a string."""
-        date = item.due_date or item.scheduled_date
-        return date.isoformat() if date else None
+    @extend_schema_field(serializers.ListField(child=serializers.DictField()))
+    def get_hierarchy_path(self, item):
+        return self.context.get('paths', {}).get(item.pk, [])
+
+    @extend_schema_field(serializers.BooleanField())
+    def get_has_children(self, item):
+        return bool(getattr(item, 'has_children', False))
+
+    @extend_schema_field(
+        SchedulerAllocationProjectionSerializer(many=True)
+    )
+    def get_allocations(self, item):
+        return self.context.get(
+            'allocations_by_item',
+            {},
+        ).get(
+            item.pk,
+            [],
+        )
 
 
 class OverdueEntrySerializer(serializers.Serializer):
@@ -306,3 +361,179 @@ class MarkGroupSerializer(serializers.Serializer):
 
 class MarksReorderSerializer(serializers.Serializer):
     ordered_ids = serializers.ListField(child=serializers.IntegerField(), allow_empty=False)
+
+
+class ScheduleMoveSerializer(serializers.Serializer):
+    item_id = serializers.IntegerField()
+    date = serializers.DateField()
+    allow_overload = serializers.BooleanField(default=False)
+
+
+class ScheduleAnchorSerializer(serializers.Serializer):
+    """Explicit Timeline anchor command with user-authorised resolutions."""
+
+    item_id = serializers.IntegerField()
+    date = serializers.DateField(
+        required=False,
+        allow_null=True,
+    )
+    remove = serializers.BooleanField(default=False)
+    change_deadline = serializers.BooleanField(default=False)
+    change_release = serializers.BooleanField(default=False)
+    allow_overload = serializers.BooleanField(default=False)
+    acknowledge_dependency_block = serializers.BooleanField(
+        default=False,
+    )
+
+    def validate(self, attrs):
+        if not attrs.get('remove') and attrs.get('date') is None:
+            raise serializers.ValidationError({
+                'date': 'Choose an anchor date.',
+            })
+
+        return attrs
+
+
+class ScheduleReplaceSerializer(serializers.Serializer):
+    replacement_id = serializers.IntegerField()
+    displaced_id = serializers.IntegerField()
+    allow_overload = serializers.BooleanField(default=False)
+
+
+class ScheduleOverloadSerializer(serializers.Serializer):
+    date = serializers.DateField()
+    allowed = serializers.BooleanField()
+
+
+
+class SchedulerEngineAllocationSerializer(serializers.Serializer):
+    item_id = serializers.IntegerField()
+    scheduled_date = serializers.DateField()
+    hours = serializers.DecimalField(
+        max_digits=12,
+        decimal_places=4,
+    )
+    percentage = serializers.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+    )
+    execution_rank = serializers.IntegerField()
+
+
+class SchedulerEstimateSerializer(serializers.Serializer):
+    item_id = serializers.IntegerField()
+    total_hours = serializers.DecimalField(
+        max_digits=12,
+        decimal_places=4,
+    )
+    source = serializers.CharField()
+
+
+class SchedulerDayLoadSerializer(serializers.Serializer):
+    scheduled_date = serializers.DateField()
+    hours = serializers.DecimalField(
+        max_digits=12,
+        decimal_places=4,
+    )
+    status = serializers.CharField()
+
+
+class SchedulerPeriodLoadSerializer(serializers.Serializer):
+    period = serializers.CharField()
+    hours = serializers.DecimalField(
+        max_digits=12,
+        decimal_places=4,
+    )
+    status = serializers.CharField()
+
+
+class SchedulerDiagnosticSerializer(serializers.Serializer):
+    code = serializers.CharField()
+    detail = serializers.CharField()
+
+
+class SchedulerRuntimeSerializer(serializers.Serializer):
+    """Derived scheduler state returned to the frontend."""
+
+    configured = serializers.BooleanField()
+    flavour = serializers.CharField(
+        allow_null=True,
+    )
+
+    engine_version = serializers.CharField(required=False)
+    input_contract_version = serializers.CharField(required=False)
+    output_contract_version = serializers.CharField(required=False)
+
+    iterations = serializers.IntegerField(required=False)
+    evaluations = serializers.IntegerField(required=False)
+    termination_reason = serializers.CharField(required=False)
+
+    compatibility_conflicts = serializers.ListField(
+        child=serializers.DictField(),
+        required=False,
+    )
+    engine_conflicts = serializers.ListField(
+        child=serializers.CharField(),
+        required=False,
+    )
+    diagnostics = SchedulerDiagnosticSerializer(
+        many=True,
+        required=False,
+    )
+
+    allocation_count = serializers.IntegerField(required=False)
+
+    allocations = SchedulerEngineAllocationSerializer(
+        many=True,
+        required=False,
+    )
+    estimates = SchedulerEstimateSerializer(
+        many=True,
+        required=False,
+    )
+    daily_load = SchedulerDayLoadSerializer(
+        many=True,
+        required=False,
+    )
+    weekly_load = SchedulerPeriodLoadSerializer(
+        many=True,
+        required=False,
+    )
+    monthly_load = SchedulerPeriodLoadSerializer(
+        many=True,
+        required=False,
+    )
+
+    objective = serializers.DictField(required=False)
+
+
+class ScheduleResultSerializer(serializers.Serializer):
+    changed_ids = serializers.ListField(
+        child=serializers.IntegerField(),
+        required=False,
+    )
+    conflicts = serializers.ListField(
+        child=serializers.DictField(),
+    )
+    scheduler = SchedulerRuntimeSerializer(required=False)
+
+
+class SchedulerSettingsSerializer(serializers.Serializer):
+    """Frontend-facing scheduler configuration.
+
+    ``null`` is a valid and deliberate state: the user has not chosen a V1
+    scheduler flavour yet.
+    """
+
+    flavour = serializers.ChoiceField(
+        choices=SchedulingState.SchedulerFlavour.choices,
+        allow_null=True,
+    )
+    configured = serializers.BooleanField(read_only=True)
+
+
+class SchedulerSettingsUpdateSerializer(serializers.Serializer):
+    flavour = serializers.ChoiceField(
+        choices=SchedulingState.SchedulerFlavour.choices,
+        allow_null=True,
+    )

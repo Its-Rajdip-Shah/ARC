@@ -20,7 +20,7 @@ from django.utils.dateparse import parse_datetime
 from canvas_integration.client import CanvasClient, CanvasError
 from canvas_integration.models import SyncLog, SyncStatus
 from planning.models import AssignmentDetail, CanvasObjectType, ItemType, PlanningItem
-from planning.services import priority
+from planning.services import scheduling, priority, lifecycle
 
 
 def _as_date(value):
@@ -49,6 +49,7 @@ def _import_course(user, client, course, counts):
     assignments = client.assignments(course['id'])
 
     with transaction.atomic():
+        priority._lock(user)
         root, created = PlanningItem.objects.update_or_create(
             user=user,
             canvas_object_type=CanvasObjectType.COURSE,
@@ -65,6 +66,7 @@ def _import_course(user, client, course, counts):
             if assignment.get('id') is None:
                 continue
             _import_assignment(user, root, assignment, counts)
+        lifecycle.finish(user)
 
 
 def _import_assignment(user, root, assignment, counts):
@@ -92,15 +94,10 @@ def _import_assignment(user, root, assignment, counts):
         defaults={'submission_url': assignment.get('html_url') or None},
     )
 
-    if created:
-        counts['assignments_created'] += 1
-        priority.assign_initial_position(item)
-    else:
-        counts['assignments_updated'] += 1
-        if due_date is None and item.priority_position is None and not item.is_completed:
-            # An assignment that lost its Canvas due date becomes adaptive, so
-            # it needs a place in the order (FR-09, FR-11).
-            priority.assign_initial_position(item)
+    if not item.is_completed:
+        lifecycle.reopen_ancestors(item)
+
+    counts['assignments_created' if created else 'assignments_updated'] += 1
 
 
 def run_sync(connection, client=None):

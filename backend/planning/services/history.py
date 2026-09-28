@@ -9,8 +9,12 @@ from django.db import transaction
 
 from planning.models import (
     AssignmentDetail,
+    DurationCategory,
     PlanningHistoryEntry,
     PlanningItem,
+    SchedulerAllocation,
+    SchedulingOverload,
+    SchedulingState,
 )
 
 MAX_HISTORY_ENTRIES = 100
@@ -38,7 +42,17 @@ def serialize_item(item):
             item.scheduled_date.isoformat()
             if item.scheduled_date else None
         ),
+        "completed_display_date": (
+            item.completed_display_date.isoformat()
+            if item.completed_display_date
+            else None
+        ),
         "duration_category": item.duration_category,
+        "manual_requested_date": item.manual_requested_date.isoformat() if item.manual_requested_date else None,
+        "expired_manual_requested_date": item.expired_manual_requested_date.isoformat() if item.expired_manual_requested_date else None,
+        "percent_completed": str(item.percent_completed),
+        "progress_segments": [{'id': r.pk, 'percentage': str(r.percentage), 'scheduled_date': r.scheduled_date.isoformat() if r.scheduled_date else None, 'completed_at': r.completed_at.isoformat() if r.completed_at else None} for r in item.progress_segments.order_by('pk')],
+        "priority_restore_context": item.priority_restore_context,
         "priority_position": item.priority_position,
         "is_completed": item.is_completed,
         "canvas_object_type": item.canvas_object_type,
@@ -91,19 +105,20 @@ def capture_scope(user, queryset):
 # SMALL STATE CAPTURES
 # ---------------------------------------------------------------------------
 
-def capture_priority(user):
-    """Capture only active priority membership/order.
+def capture_priority(user, *, include_unpositioned=False):
+    """Capture priority membership/order.
 
-    Used when an operation can renumber the global priority list.
+    Include null positions and restoration anchors when eligibility can change,
+    so undo restores both active membership and future reopening behaviour.
     """
 
-    return list(
-        PlanningItem.objects
-        .filter(user=user)
-        .exclude(priority_position=None)
-        .order_by("priority_position", "id")
-        .values("id", "priority_position")
-    )
+    items = PlanningItem.objects.filter(user=user)
+    if not include_unpositioned:
+        items = items.exclude(priority_position=None)
+    fields = ["id", "priority_position"]
+    if include_unpositioned:
+        fields.append("priority_restore_context")
+    return list(items.order_by("priority_position", "id").values(*fields))
 
 
 def capture_siblings(user, parent_id):
@@ -115,6 +130,25 @@ def capture_siblings(user, parent_id):
         .order_by("sibling_order", "id")
         .values("id", "parent_id", "sibling_order")
     )
+
+
+def capture_leaf_order(user):
+    """Snapshot only synchronizable leaf slots, never parent relationships."""
+    from planning.services.leaf_order_sync import leaves
+
+    return list(leaves(user).order_by('pk').values('id', 'sibling_order'))
+
+
+def _restore_leaf_order(user, states):
+    """Restore explicit leaf slots without allowing container writes."""
+    from planning.services.leaf_order_sync import leaves
+
+    wanted = {state['id']: state['sibling_order'] for state in states}
+    items = list(leaves(user).filter(pk__in=wanted))
+    for item in items:
+        item.sibling_order = wanted[item.pk]
+    if items:
+        PlanningItem.objects.bulk_update(items, ['sibling_order'])
 
 
 # ---------------------------------------------------------------------------
@@ -204,6 +238,7 @@ def _garbage_collect_discarded_entries(user, entries):
 # HISTORY RECORDING
 # ---------------------------------------------------------------------------
 
+@transaction.atomic
 def record_checkpoint(
     user,
     action_type,
@@ -214,6 +249,13 @@ def record_checkpoint(
 
     if before_state == after_state:
         return None
+    if 'items' in before_state and 'items' in after_state:
+        before_state, after_state = dict(before_state), dict(after_state)
+        old = {row['id']: row for row in before_state['items']}
+        new = {row['id']: row for row in after_state['items']}
+        changed = {pk for pk in old.keys() | new.keys() if old.get(pk) != new.get(pk)}
+        before_state['items'] = [row for row in before_state['items'] if row['id'] in changed]
+        after_state['items'] = [row for row in after_state['items'] if row['id'] in changed]
 
     # Standard undo semantics:
     #
@@ -311,8 +353,15 @@ def _restore_item_states(user, states):
             "start_date": state["start_date"],
             "due_date": state["due_date"],
             "scheduled_date": state["scheduled_date"],
-            "duration_category": state["duration_category"],
-            "priority_position": state["priority_position"],
+            "completed_display_date": state.get(
+                "completed_display_date"
+            ),
+            "duration_category": _historical_duration(state.get("duration_category")),
+            "manual_requested_date": state.get('manual_requested_date'),
+            "expired_manual_requested_date": state.get("expired_manual_requested_date"),
+            "percent_completed": state.get('percent_completed', 0),
+            "priority_restore_context": state.get("priority_restore_context", {}),
+            "priority_position": None,
             "is_completed": state["is_completed"],
             "canvas_object_type": state["canvas_object_type"],
             "canvas_object_id": state["canvas_object_id"],
@@ -342,7 +391,15 @@ def _restore_item_states(user, states):
     for state in states:
         item = existing[state["id"]]
 
+        from planning.models import ProgressSegment, Tag
+        if Tag.objects.filter(user=user, pk__in=state['tag_ids']).count() != len(state['tag_ids']):
+            from django.core.exceptions import ValidationError
+            raise ValidationError('History references unavailable tags.')
         item.tags.set(state["tag_ids"])
+        if 'progress_segments' in state:
+            item.progress_segments.all().delete()
+            for record in state['progress_segments']:
+                ProgressSegment.objects.create(item=item, is_completed=True, **record)
 
         detail = state["assignment_detail"]
 
@@ -367,7 +424,7 @@ def _restore_priority(user, states):
         return
 
     wanted = {
-        state["id"]: state["priority_position"]
+        state["id"]: state
         for state in states
     }
 
@@ -384,17 +441,17 @@ def _restore_priority(user, states):
     changed = []
 
     for item in items:
-        position = wanted[item.pk]
-
-        if item.priority_position != position:
+        state = wanted[item.pk]
+        position = state["priority_position"]
+        context = state.get("priority_restore_context", item.priority_restore_context)
+        if item.priority_position != position or item.priority_restore_context != context:
             item.priority_position = position
+            item.priority_restore_context = context
             changed.append(item)
 
     if changed:
-        PlanningItem.objects.bulk_update(
-            changed,
-            ["priority_position"],
-        )
+        PlanningItem.objects.filter(pk__in=[r.pk for r in changed]).update(priority_position=None)
+        PlanningItem.objects.bulk_update(changed, ["priority_position", "priority_restore_context"])
 
 
 def _restore_siblings(user, states):
@@ -432,16 +489,104 @@ def _restore_siblings(user, states):
         )
 
 
-def _apply_delta(user, state):
+def _apply_delta(user, state, action_type):
     """Apply one operation-scoped state payload."""
+
+    if action_type == "PRIORITY":
+        # Ignore legacy whole-hierarchy 'siblings' snapshots. New checkpoints
+        # explicitly name leaf slots, and restoration cannot write containers.
+        _restore_priority(user, state.get("priority"))
+        _restore_leaf_order(user, state.get("leaf_siblings", []))
+        return
+
+    if action_type == "SCHEDULE":
+        _restore_priority(user, state.get('priority'))
+        _restore_leaf_order(
+            user,
+            state.get('leaf_siblings', []),
+        )
+
+        for row in state.get('schedule', []):
+            values = {
+                'scheduled_date': row['scheduled_date'],
+                'manual_requested_date':
+                    row.get('manual_requested_date'),
+                'priority_restore_context':
+                    row['priority_restore_context'],
+            }
+
+            if 'execution_rank' in row:
+                values['execution_rank'] = row[
+                    'execution_rank'
+                ]
+
+            PlanningItem.objects.filter(
+                user=user,
+                pk=row['id'],
+            ).update(**values)
+
+        if 'scheduler_allocations' in state:
+            SchedulerAllocation.objects.filter(
+                item__user=user,
+            ).delete()
+
+            SchedulerAllocation.objects.bulk_create([
+                SchedulerAllocation(
+                    item_id=row['item_id'],
+                    percentage=row['percentage'],
+                    scheduled_date=row['scheduled_date'],
+                    execution_rank=row['execution_rank'],
+                )
+                for row in state.get(
+                    'scheduler_allocations',
+                    [],
+                )
+            ])
+
+        if 'scheduler_runtime' in state:
+            scheduler_state, _ = (
+                SchedulingState.objects.get_or_create(
+                    user=user,
+                )
+            )
+
+            scheduler_state.scheduler_runtime = state[
+                'scheduler_runtime'
+            ]
+
+            scheduler_state.save(
+                update_fields=['scheduler_runtime']
+            )
+
+        SchedulingOverload.objects.filter(
+            user=user,
+        ).delete()
+
+        SchedulingOverload.objects.bulk_create([
+            SchedulingOverload(
+                user=user,
+                **row,
+            )
+            for row in state.get(
+                'overload',
+                [],
+            )
+        ])
+
+        return
 
     # Soft-delete / restore existing rows in one bulk UPDATE.
     soft_delete = state.get("soft_delete")
     if soft_delete:
-        PlanningItem.objects.filter(
-            user=user,
-            pk__in=soft_delete["ids"],
-        ).update(is_deleted=soft_delete["value"])
+        from planning.services import deletion
+        ids = set(soft_delete['ids'])
+        roots = PlanningItem.objects.filter(user=user, pk__in=ids).exclude(parent_id__in=ids)
+        for root in list(roots) + list(PlanningItem.objects.filter(user=user, pk__in=ids).exclude(pk__in=roots.values("pk"))):
+            root.refresh_from_db()
+            if soft_delete['value']:
+                deletion.delete_subtree(root)
+            else:
+                deletion.restore_subtree(root)
 
     # Delete rows that should not exist in this state.
     delete_ids = state.get("delete_ids", [])
@@ -487,7 +632,7 @@ def undo(user):
     if entry is None:
         return None
 
-    _apply_delta(user, entry.before_state)
+    _validated_delta(user, entry.before_state, entry.action_type, entry.after_state)
 
     entry.is_undone = True
     entry.save(update_fields=["is_undone"])
@@ -510,7 +655,7 @@ def redo(user):
     if entry is None:
         return None
 
-    _apply_delta(user, entry.after_state)
+    _validated_delta(user, entry.after_state, entry.action_type, entry.before_state)
 
     entry.is_undone = False
     entry.save(update_fields=["is_undone"])
@@ -525,3 +670,59 @@ def history_status(user):
         "can_undo": history.filter(is_undone=False).exists(),
         "can_redo": history.filter(is_undone=True).exists(),
     }
+
+
+def _validated_delta(user, state, action_type, expected):
+    from planning.services import lifecycle, priority, scheduling
+    from django.utils import timezone
+    priority._lock(user)
+    from copy import deepcopy
+    from django.core.exceptions import ValidationError
+    state = deepcopy(state)
+    expected_items = {row['id']: row for row in expected.get('items', [])}
+    disposable = {'scheduled_date', 'priority_position', 'priority_restore_context'}
+    for target in state.get('items', []):
+        source = expected_items.get(target['id'])
+        if source is not None:
+            source = dict(source)
+            source['duration_category'] = _historical_duration(source.get('duration_category'))
+        target['duration_category'] = _historical_duration(target.get('duration_category'))
+        current = PlanningItem.objects.filter(user=user, pk=target['id']).first()
+        if source is None or current is None:
+            continue
+        actual = serialize_item(current)
+        for key, value in list(target.items()):
+            if key in disposable or key == 'id':
+                continue
+            if source.get(key) != value:
+                if actual.get(key) != source.get(key):
+                    raise ValidationError('Undo conflicts with a later canonical edit.')
+            else:
+                target[key] = actual.get(key, value)
+    if state.get('delete_ids'):
+        ids = set(state['delete_ids'])
+        if PlanningItem.objects.filter(user=user, parent_id__in=ids).exclude(pk__in=ids).exists():
+            raise ValidationError('Undo creation would delete later child work.')
+    _apply_delta(user, state, action_type)
+    lifecycle.validate_graph(user)
+    if action_type != 'SCHEDULE':
+        priority.reconcile(user)
+    scheduling._expire_past_manual_anchors(user, timezone.localdate())
+    # Restore proposals for schedule-only undo; subsequent scheduler runs may
+    # replace them. Other lifecycle inverses immediately rebuild projections.
+    if action_type != 'SCHEDULE':
+        lifecycle.finish(user)
+
+
+def _historical_duration(value):
+    """Decode persisted pre-0006 history, never expose obsolete enum aliases."""
+    from django.core.exceptions import ValidationError
+    value = {
+        'UNDER_20_MIN': DurationCategory.UNDER_20_MINUTES,
+        'MIN_20_TO_60': DurationCategory.UNDER_1_HOUR,
+        'OVER_60_MIN': DurationCategory.UNDER_4_HOURS,
+        None: DurationCategory.UNDER_1_HOUR,
+    }.get(value, value)
+    if value not in DurationCategory.values:
+        raise ValidationError('History contains an unknown duration category.')
+    return value

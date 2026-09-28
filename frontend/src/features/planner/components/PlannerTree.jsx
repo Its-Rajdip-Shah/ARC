@@ -431,17 +431,11 @@ export default function PlannerTree({
       moveItem(id, payload),
 
     onSuccess: async () => {
-      await queryClient.invalidateQueries({
-        queryKey: ['planning', 'tree'],
-      })
-
-      await queryClient.invalidateQueries({
-        queryKey: ['planning', 'priority'],
-      })
-
-      await queryClient.invalidateQueries({
-        queryKey: ['planning', 'history'],
-      })
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['planning', 'tree'] }),
+        queryClient.invalidateQueries({ queryKey: ['planning', 'priority'], refetchType: 'all' }),
+        queryClient.invalidateQueries({ queryKey: ['planning', 'history'] }),
+      ])
     },
   })
 

@@ -6,7 +6,7 @@ question is only meaningful when the two datasets are indistinguishable by
 content alone.
 
 The data also covers each branch the Phase 4 services care about: fixed dates
-that are overdue within the Recent window and beyond it into Backlog, adaptive
+that are overdue within the Recent window and beyond it into Backlog, scheduled
 items carrying a scheduled_date and no deadline, completed items holding no
 priority position, and an assignment left unmarked so FR-14 can tell "no mark"
 apart from "zero".
@@ -20,6 +20,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from canvas_integration.models import CanvasConnection, SyncLog, SyncStatus
+from planning.services import scheduling
 from planning.models import (
     AssignmentDetail,
     CanvasObjectType,
@@ -176,6 +177,8 @@ class Command(BaseCommand):
             item.priority_position = position
         PlanningItem.objects.bulk_update(ordered, ['priority_position'])
 
+        scheduling.schedule(user)
+
         # Only alice gets Canvas, so the "never connected" path stays covered.
         if user.email == DEMO_USERS[0]:
             CanvasConnection.objects.create(
@@ -195,7 +198,7 @@ class Command(BaseCommand):
                 error_message='Canvas returned 401: invalid access token.',
             )
 
-    def _item(self, user, item_type, title, parent=None, duration=None, **fields):
+    def _item(self, user, item_type, title, parent=None, duration='MIN_20_TO_60', **fields):
         siblings = PlanningItem.objects.filter(user=user, parent=parent).count()
         return PlanningItem.objects.create(
             user=user,
@@ -233,7 +236,7 @@ class Command(BaseCommand):
                 f'  {user.email}: {items.count()} items, '
                 f'{items.recent_overdue(today).count()} recent overdue, '
                 f'{items.backlog(today).count()} backlog, '
-                f'{items.active().actionable().adaptive().count()} adaptive, '
+                f'{items.active().actionable().without_deadline().count()} without a deadline, '
                 f'priorities {positions}'
             )
 

@@ -5,11 +5,8 @@ densely from 1, and no two share a number. Completed and non-actionable items
 hold NULL. Keeping that invariant is entirely this module's job; the database
 backs it up with uniq_user_priority_position.
 
-That constraint is DEFERRABLE INITIALLY DEFERRED, which is what makes the
-renumbering below straightforward: a reorder walks positions through states
-that contain duplicates, and only the committed result has to be unique. An
-immediate constraint would force each write to dodge its neighbour, usually by
-shifting everything into a temporary offset range and back again.
+The unique constraint is immediate on every supported database. Atomic
+permutations temporarily release affected slots before assigning final values.
 """
 
 from django.contrib.auth import get_user_model
@@ -47,7 +44,7 @@ def assign_initial_position(task):
     Does nothing for goals, completed items, or a task that already holds a
     position, so it is safe to call from a save path.
     """
-    if not task.is_actionable or task.is_completed or task.priority_position is not None:
+    if not PlanningItem.objects.filter(pk=task.pk, user=task.user).priority_eligible().exists() or task.priority_position is not None:
         return task.priority_position
 
     _lock(task.user)
@@ -70,8 +67,150 @@ def renumber(user):
             item.priority_position = position
             changed.append(item)
     if changed:
-        PlanningItem.objects.bulk_update(changed, ['priority_position'])
+        _write_positions(changed)
     return items
+
+
+def _remember_departures(user, departing_ids):
+    rows = list(PlanningItem.objects.filter(user=user, priority_position__isnull=False)
+                .order_by('priority_position', 'pk'))
+    # Include temporarily absent neighbours when capturing a later departure.
+    # Otherwise A leaving while B is blocked forgets that A preceded B.
+    dormant = PlanningItem.objects.filter(user=user, priority_position=None).order_by('pk')
+    for row in dormant:
+        if row.priority_restore_context:
+            _insert_restored(rows, row)
+    ids = [row.pk for row in rows]
+    changed = []
+    for index, row in enumerate(rows):
+        if row.pk in departing_ids:
+            row.priority_restore_context = {'before': ids[:index], 'after': ids[index + 1:]}
+            changed.append(row)
+    if changed:
+        PlanningItem.objects.bulk_update(changed, ['priority_restore_context'])
+
+
+def _insert_restored(ordered_items, item):
+    context = item.priority_restore_context
+    ids = [row.pk for row in ordered_items]
+    following = next((pk for pk in context.get('after', []) if pk in ids), None)
+    preceding = next((pk for pk in reversed(context.get('before', [])) if pk in ids), None)
+    index = ids.index(following) if following is not None else (ids.index(preceding) + 1 if preceding is not None else len(ids))
+    ordered_items.insert(index, item)
+
+
+def _inherit_departing_descendant_context(user, item, departing):
+    """Give a newly exposed frontier ancestor its descendant's vacated slot.
+
+    Existing restore history always wins. Otherwise, if a departing frontier
+    item belongs to this item's descendant branch, inherit that item's saved
+    neighbour anchors. This works for arbitrary hierarchy depth.
+    """
+    if item.priority_restore_context:
+        return
+
+    by_id = {
+        row.pk: row
+        for row in PlanningItem.objects.filter(user=user).only(
+            'pk', 'parent_id', 'priority_restore_context'
+        )
+    }
+
+    candidates = []
+
+    for row in departing:
+        current = row
+        distance = 0
+
+        while current.parent_id is not None:
+            distance += 1
+
+            if current.parent_id == item.pk:
+                candidates.append((distance, row.pk, row))
+                break
+
+            current = by_id.get(current.parent_id)
+            if current is None:
+                break
+
+    if not candidates:
+        return
+
+    # Nearest descendant wins; PK makes ties deterministic.
+    _, _, source = min(candidates)
+
+    item.priority_restore_context = dict(source.priority_restore_context or {})
+    item.save(update_fields=['priority_restore_context'])
+
+
+@transaction.atomic
+def reconcile(user):
+    """Make stored priority positions match current priority eligibility.
+
+    Existing eligible tasks keep their relative order. Newly eligible tasks
+    return near surviving anchors, or join the end without prior context.
+    Ineligible tasks lose their position. The final order is
+    dense from 1..n.
+    """
+    _lock(user)
+
+    eligible_ids = set(
+        PlanningItem.objects.for_user(user)
+        .priority_eligible()
+        .values_list('pk', flat=True)
+    )
+
+    departing_ids = set(PlanningItem.objects.filter(user=user, priority_position__isnull=False)
+                        .exclude(pk__in=eligible_ids).values_list('pk', flat=True))
+    _remember_departures(user, departing_ids)
+
+    # Capture departing rows after their neighbour contexts have been stored.
+    # A newly exposed ancestor can inherit the frontier neighbourhood vacated
+    # by a descendant from the same hierarchy branch.
+    departing = list(
+        PlanningItem.objects.filter(user=user, pk__in=departing_ids)
+        .only('pk', 'parent_id', 'priority_restore_context')
+    )
+
+    # Remove positions from tasks that are no longer eligible.
+    PlanningItem.objects.filter(
+        user_id=user.pk,
+        priority_position__isnull=False,
+    ).exclude(pk__in=eligible_ids).update(priority_position=None)
+
+    # Preserve the relative order of existing eligible tasks.
+    positioned = list(
+        PlanningItem.objects.filter(
+            user_id=user.pk,
+            pk__in=eligible_ids,
+            priority_position__isnull=False,
+        ).order_by('priority_position', 'id')
+    )
+
+    # Restore prior neighbours when possible; genuinely new work joins the end.
+    unpositioned = list(
+        PlanningItem.objects.filter(
+            user_id=user.pk,
+            pk__in=eligible_ids,
+            priority_position=None,
+        ).order_by('id')
+    )
+
+    ordered_items = positioned
+    for item in unpositioned:
+        _inherit_departing_descendant_context(user, item, departing)
+        _insert_restored(ordered_items, item)
+
+    changed = []
+    for position, item in enumerate(ordered_items, start=1):
+        if item.priority_position != position:
+            item.priority_position = position
+            changed.append(item)
+
+    if changed:
+        _write_positions(changed)
+
+    return ordered_items
 
 
 @transaction.atomic
@@ -98,9 +237,8 @@ def reorder(user, item_id, new_position):
             item.priority_position = position
             changed.append(item)
     if changed:
-        # Passes through duplicate positions; legal only because the unique
-        # constraint is deferred to COMMIT.
-        PlanningItem.objects.bulk_update(changed, ['priority_position'])
+        # Apply an atomic permutation without transient duplicate positions.
+        _write_positions(changed)
 
     return items
 
@@ -110,6 +248,7 @@ def release_position(task):
     """Drop a task out of the order, on completion or before deletion."""
     if task.priority_position is None:
         return
+    _remember_departures(task.user, {task.pk})
     task.priority_position = None
     task.save(update_fields=['priority_position'])
     renumber(task.user)
@@ -117,7 +256,8 @@ def release_position(task):
 
 @transaction.atomic
 def release_positions(user, item_ids):
-    """release_position for a whole subtree, in two statements."""
+    """Remember and release priority for a whole subtree together."""
+    _remember_departures(user, set(item_ids))
     PlanningItem.objects.filter(user=user, pk__in=item_ids).exclude(
         priority_position=None
     ).update(priority_position=None)
@@ -126,7 +266,16 @@ def release_positions(user, item_ids):
 
 @transaction.atomic
 def restore_position(task):
-    """Return a re-opened task to the order, at the end."""
+    """Return reopened work near its surviving priority neighbours."""
     if task.priority_position is not None:
         return task.priority_position
-    return assign_initial_position(task)
+    reconcile(task.user)
+    task.refresh_from_db(fields=['priority_position'])
+    return task.priority_position
+
+
+def _write_positions(items):
+    """Release affected slots before assigning a permutation on either DB."""
+    if items:
+        PlanningItem.objects.filter(pk__in=[item.pk for item in items]).update(priority_position=None)
+        PlanningItem.objects.bulk_update(items, ['priority_position'])

@@ -51,6 +51,38 @@ Frontend wiring for the console is in [ARCHITECTURE.md — Custom staff console]
 - Node.js 20+ and npm
 - PostgreSQL, with a database (default name `arc_db`)
 - Git
+  - Required for normal repository use and because the ARC scheduler
+    dependency is installed from a commit-pinned Git repository.
+
+## Scheduler dependency reproducibility
+
+The production scheduler is not copied into this repository.
+
+The backend installs the authoritative `arc-scheduler` package from the exact
+Git commit pinned in `backend/requirements.txt`.
+
+Current frozen scheduler package:
+
+    ARC-Scheduler-Arena
+    commit 17b33d1db1a24dc96dbd9845a1bfe52290c7f5d4
+    tag v1.0.0
+
+Installing backend dependencies therefore retrieves the exact scheduler
+implementation used by this branch:
+
+    python -m pip install -r backend/requirements.txt
+
+Do not replace the commit pin with an unpinned branch such as `main`.
+
+Required contracts:
+
+- `docs/scheduler_contract.md`
+- `docs/timeline_contract.md`
+
+Implementation references:
+
+- `docs/scheduler.md`
+- `docs/timelineview.md`
 
 ## First-time setup
 
@@ -58,7 +90,7 @@ Frontend wiring for the console is in [ARCHITECTURE.md — Custom staff console]
 
 ```powershell
 git clone <repo-url>
-cd Fri-16-19-11
+cd arc
 ```
 
 New work goes on `feature/<feature-name>`, not `main`. See [`AGENTS.md`](AGENTS.md).
@@ -100,7 +132,7 @@ python manage.py seed_demo
 
 ```powershell
 cd frontend
-npm install
+npm ci
 copy .env.example .env.local
 ```
 
@@ -112,52 +144,106 @@ VITE_API_BASE_URL=http://127.0.0.1:8000/api
 
 No trailing `/api/v1`. Vite only exposes `VITE_*` variables.
 
-## Run the app
+## Verify a fresh local setup
 
-Use **two terminals**. Always use the backend venv Python, not the system interpreter (missing `pyotp` / `django-environ` will break `manage.py shell` and `runserver`).
+After installing both sides and configuring environment files:
 
-**Terminal A — API** (`http://127.0.0.1:8000`):
+Backend:
 
-```powershell
-cd backend
-.\.venv\Scripts\Activate.ps1
-python manage.py runserver
-```
+    cd backend
+    python manage.py check
+    python manage.py makemigrations --check --dry-run
+    python -m pytest
 
-**Terminal B — SPA** (`http://localhost:5173`):
+Frontend:
 
-```powershell
-cd frontend
-npm run dev
-```
+    cd frontend
+    npm run lint
+    npm run build
+    node --test src/features/timeline/timelineActions.test.js
+    node --test src/features/timeline/timelineRendering.test.js
 
-| URL | What you get |
-| --- | --- |
-| http://localhost:5173/ | Phase 6 connection ping (student API handshake) |
-| http://localhost:5173/admin/login | Custom staff sign-in |
-| http://localhost:5173/admin | Staff overview (requires `is_admin` session) |
-| http://localhost:5173/admin/users | Account lock / search |
-| http://127.0.0.1:8000/api/docs/ | Swagger UI for the API |
-| http://127.0.0.1:8000/admin/ | **Do not use.** Django's built-in admin is not the product surface. |
+For fresh clones, prefer `npm ci` over `npm install`; it installs exactly from
+the committed `package-lock.json`.
 
-If staff login shows **Network Error**, the Vite app is up but Django is not reachable at `VITE_API_BASE_URL`. Start `runserver` in the venv first.
+### Backend environment
 
-## Admin accounts
+ARC requires PostgreSQL. SQLite is intentionally unsupported because ARC uses
+database behaviour that SQLite cannot reproduce correctly.
 
-Staff sign-in is a **separate** two-step flow ([FR-15](FR_TRACEABILITY.md#fr-15--separate-administrator-entry)):
+Create your local environment file:
 
-1. `POST /api/auth/admin/login/` with email + password
-2. `POST /api/auth/admin/login/mfa/` with a six-digit TOTP
+    cd backend
+    cp .env.example .env
 
-A student password is rejected (`not_an_administrator`). The React form at `/admin/login` does not fall back to student login and does not open Django admin.
+On Windows PowerShell:
 
-An account can use that screen only if **all** of the following are true in Postgres:
+    cd backend
+    Copy-Item .env.example .env
 
-- `is_admin = true`
-- `is_locked = false`
-- a TOTP secret is stored (`totp_secret_encrypted` non-empty → `mfa_enabled`)
+Generate a Django secret:
 
-Accounts live **only in the database** pointed at by your `DATABASE_URL`. Creating a user on your laptop does not create it for teammates, and it is not stored in git.
+    python -c "from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())"
+
+Paste it after `SECRET_KEY=`.
+
+Generate the ARC field-encryption key:
+
+    python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+
+Paste it after `ARC_FIELD_ENCRYPTION_KEY=`.
+
+Do not commit `backend/.env`.
+
+#### PostgreSQL database
+
+The default development database name is:
+
+    arc_db
+
+There are two normal local connection styles.
+
+**macOS/Linux with a local PostgreSQL role matching your OS username**
+
+For installations such as Homebrew PostgreSQL, this is often enough:
+
+    createdb arc_db
+
+Then use:
+
+    DATABASE_URL=postgres:///arc_db
+
+This uses the local PostgreSQL role associated with your operating-system user
+and does not require storing a database password in `.env`.
+
+**Password-authenticated PostgreSQL / Windows**
+
+Create a developer role and database using a PostgreSQL administrator account.
+For example, in `psql`:
+
+    CREATE ROLE arc_dev WITH LOGIN PASSWORD 'choose-a-local-password';
+    CREATE DATABASE arc_db OWNER arc_dev;
+
+Then use:
+
+    DATABASE_URL=postgres://arc_dev:YOUR_PASSWORD@localhost:5432/arc_db
+
+If the password contains reserved URL characters, percent-encode them.
+
+Each developer may use their own local PostgreSQL credentials. Database
+credentials are machine-local and must never be committed.
+
+After configuring the database:
+
+    python manage.py migrate
+
+Optional demo data:
+
+    python manage.py seed_demo
+
+The encryption key is different from the database password. Existing shared or
+deployed databases must keep their original `ARC_FIELD_ENCRYPTION_KEY`, because
+changing that key makes previously encrypted values unreadable.
 
 ### Do not create users in pgAdmin
 

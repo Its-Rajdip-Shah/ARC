@@ -2,15 +2,14 @@
 
 Covers FR-05 to FR-14. The self-referencing PlanningItem table holds roots,
 goals, tasks and assignments in one hierarchy; the rules that operate on it
-(cycle detection, priority ordering, adaptive scheduling) live in
+(cycle detection, priority ordering, execution scheduling) live in
 planning/services/ in Phase 4 rather than here.
 """
 
 from datetime import timedelta
 
 from django.db import models
-from django.db.models import F, Q
-from django.db.models.functions import Coalesce
+from django.db.models import Count, F, Q
 
 from core.models import OwnedModel, TimestampedModel
 
@@ -31,9 +30,35 @@ RECENT_OVERDUE_DAYS = 7
 
 
 class DurationCategory(models.TextChoices):
-    UNDER_20_MIN = 'UNDER_20_MIN', 'Under 20 minutes'
-    MIN_20_TO_60 = 'MIN_20_TO_60', '20 to 60 minutes'
-    OVER_60_MIN = 'OVER_60_MIN', 'Over 60 minutes'
+    # Frozen ARC duration semantics.
+    #
+    # Atomic / one-day:
+    #   <20m, <1h, <4h
+    #
+    # Splittable:
+    #   <8h, <16h, >16h
+    #
+    # The labels are intentionally simple while the enum values provide
+    # mutually-exclusive semantic buckets to the domain.
+    UNDER_20_MINUTES = 'UNDER_20_MINUTES', 'Under 20 minutes'
+    UNDER_1_HOUR = 'UNDER_1_HOUR', 'Under 1 hour'
+    UNDER_4_HOURS = 'UNDER_4_HOURS', 'Under 4 hours'
+    UNDER_8_HOURS = 'UNDER_8_HOURS', 'Under 8 hours'
+    UNDER_16_HOURS = 'UNDER_16_HOURS', 'Under 16 hours'
+    OVER_16_HOURS = 'OVER_16_HOURS', 'Over 16 hours'
+
+
+ATOMIC_DURATION_CATEGORIES = (
+    DurationCategory.UNDER_20_MINUTES,
+    DurationCategory.UNDER_1_HOUR,
+    DurationCategory.UNDER_4_HOURS,
+)
+
+SPLITTABLE_DURATION_CATEGORIES = (
+    DurationCategory.UNDER_8_HOURS,
+    DurationCategory.UNDER_16_HOURS,
+    DurationCategory.OVER_16_HOURS,
+)
 
 
 class CanvasObjectType(models.TextChoices):
@@ -75,12 +100,35 @@ class PlanningItemQuerySet(models.QuerySet):
     def active(self):
         return self.filter(is_completed=False)
 
+    def priority_eligible(self):
+        """Incomplete actionable items with no incomplete visible children."""
+        return (
+            self.actionable()
+            .active()
+            .visible()
+            .annotate(
+                incomplete_child_count=Count(
+                    'children',
+                    filter=Q(
+                        children__is_completed=False,
+                        children__is_deleted=False,
+                    ),
+                )
+            )
+            .filter(incomplete_child_count=0)
+            .exclude(
+                blocked_by_dependencies__prerequisite__is_completed=False,
+                blocked_by_dependencies__prerequisite__is_deleted=False,
+            )
+            .distinct()
+        )
+
     def fixed(self):
         """Items with a real deadline. Only these can become overdue."""
         return self.filter(due_date__isnull=False)
 
-    def adaptive(self):
-        """Items with no deadline, carrying a temporary scheduled_date instead."""
+    def without_deadline(self):
+        """Items without a deadline, independent of their execution date."""
         return self.filter(due_date__isnull=True)
 
     def overdue(self, today):
@@ -95,16 +143,20 @@ class PlanningItemQuerySet(models.QuerySet):
         return self.overdue(today).filter(due_date__lt=cutoff)
 
     def in_window(self, start, end):
-        """Items whose date span overlaps [start, end], for FR-10's filter.
+        """Execution sessions or factual constraints intersecting the window.
 
-        An item occupies start_date..due_date when it has fixed dates, and a
-        single day at scheduled_date when it is adaptive.
+        A splittable item remains visible when any disposable scheduler
+        allocation intersects the requested Timeline window, even when its
+        summary scheduled_date points at an earlier first session.
         """
-        return (
-            self.annotate(window_end=Coalesce('due_date', 'scheduled_date'))
-            .annotate(window_start=Coalesce('start_date', 'window_end'))
-            .filter(window_start__lte=end, window_end__gte=start)
-        )
+        return self.filter(
+            Q(scheduled_date__range=(start, end))
+            | Q(completed_display_date__range=(start, end))
+            | Q(scheduler_allocations__scheduled_date__range=(start, end))
+            | Q(start_date__range=(start, end))
+            | Q(due_date__range=(start, end))
+            | Q(start_date__lte=end, due_date__gte=start)
+        ).distinct()
 
     def search(self, term):
         """FR-08: match on title, description or attached tag name."""
@@ -133,11 +185,43 @@ class PlanningItem(OwnedModel, TimestampedModel):
     sibling_order = models.PositiveIntegerField(default=1)
     start_date = models.DateField(null=True, blank=True)
     due_date = models.DateField(null=True, blank=True)
-    # Temporary ARC-assigned date for adaptive items; FR-11 moves this
-    # forward, and never touches due_date.
+    # Planned execution date, independent of release/deadline constraints.
     scheduled_date = models.DateField(null=True, blank=True)
+    execution_rank = models.PositiveIntegerField(null=True, blank=True)
+
+    # Durable Timeline presentation history for completed work.
+    #
+    # The scheduler never reads or writes this field. It does not express
+    # release/deadline/priority/manual intent. It simply preserves the
+    # Timeline location at which a task became completed after disposable
+    # scheduled_date is legitimately cleared by later scheduler runs.
+    completed_display_date = models.DateField(
+        null=True,
+        blank=True,
+    )
+
+    # Canonical user date intent lives exclusively in manual_requested_date.
+    # This is deliberately distinct from
+    # scheduled_date, which is a disposable scheduler proposal.
+    manual_requested_date = models.DateField(null=True, blank=True)
+    # Last missed explicit intent, retained for recovery after hard expiry.
+    expired_manual_requested_date = models.DateField(null=True, blank=True)
+
+    priority_restore_context = models.JSONField(default=dict, blank=True)
+
     duration_category = models.CharField(
-        max_length=12, choices=DurationCategory.choices, null=True, blank=True
+        max_length=20,
+        choices=DurationCategory.choices,
+        default=DurationCategory.UNDER_1_HOUR,
+    )
+
+    # Canonical confirmed progress for splittable work. Atomic categories do
+    # not use partial-progress semantics and therefore remain at zero until
+    # completed.
+    percent_completed = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        default=0,
     )
     priority_position = models.PositiveIntegerField(null=True, blank=True)
     is_completed = models.BooleanField(default=False)
@@ -145,6 +229,15 @@ class PlanningItem(OwnedModel, TimestampedModel):
     # Once no history entry can restore the deletion, history GC may
     # permanently remove the row.
     is_deleted = models.BooleanField(default=False, db_index=True)
+
+    # Durable lifecycle context used by validated delete/restore.
+    #
+    # This is deliberately canonical history rather than scheduler state:
+    # deletion may suspend hierarchy/dependency/anchor relationships and a
+    # later restore must validate those original relationships against the
+    # world as it exists at restore time.
+    deletion_restore_context = models.JSONField(default=dict, blank=True)
+
     canvas_object_type = models.CharField(
         max_length=10, choices=CanvasObjectType.choices, null=True, blank=True
     )
@@ -159,18 +252,11 @@ class PlanningItem(OwnedModel, TimestampedModel):
         db_table = 'planning_items'
         ordering = ['sibling_order', 'id']
         constraints = [
-            # FR-09: one global priority order per user, each active task in
-            # exactly one row. No condition= is needed because Postgres treats
-            # NULLs as distinct, so any number of completed or non-actionable
-            # items can sit at NULL. Deferring the check to COMMIT is what lets
-            # the Phase 4 reorder renumber rows in a single bulk_update instead
-            # of shuffling them through a temporary offset range; a condition=
-            # would rule deferral out, since Postgres cannot defer a partial
-            # index.
+            # Immediate uniqueness is enforced on SQLite and PostgreSQL.
+            # Priority commands release affected slots before a permutation.
             models.UniqueConstraint(
                 fields=['user', 'priority_position'],
                 name='uniq_user_priority_position',
-                deferrable=models.Deferrable.DEFERRED,
             ),
             # FR-05: re-syncing Canvas updates these rows instead of
             # duplicating them.
@@ -189,6 +275,10 @@ class PlanningItem(OwnedModel, TimestampedModel):
                 condition=Q(priority_position__gte=1) | Q(priority_position__isnull=True),
                 name='planning_item_priority_position_positive',
             ),
+            models.CheckConstraint(
+                condition=Q(percent_completed__gte=0) & Q(percent_completed__lte=100),
+                name='planning_item_percent_completed_range',
+            ),
         ]
 
     def __str__(self):
@@ -199,9 +289,119 @@ class PlanningItem(OwnedModel, TimestampedModel):
         return self.item_type in ACTIONABLE_TYPES
 
     @property
-    def is_adaptive(self):
-        """True when ARC schedules this item rather than a real deadline."""
-        return self.due_date is None
+    def has_deadline(self):
+        """Whether this item has a factual deadline constraint."""
+        return self.due_date is not None
+
+
+class PlanningDependency(models.Model):
+    """Canonical completion-based hard precedence edge.
+
+    prerequisite -> dependent means dependent work cannot become executable
+    until the prerequisite is complete.
+
+    This relation is intentionally independent from hierarchy and priority.
+    """
+
+    prerequisite = models.ForeignKey(
+        PlanningItem,
+        on_delete=models.CASCADE,
+        related_name='required_by_dependencies',
+    )
+    dependent = models.ForeignKey(
+        PlanningItem,
+        on_delete=models.CASCADE,
+        related_name='blocked_by_dependencies',
+    )
+
+    class Meta:
+        db_table = 'planning_dependencies'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['prerequisite', 'dependent'],
+                name='uniq_planning_dependency_edge',
+            ),
+            models.CheckConstraint(
+                condition=~Q(prerequisite=F('dependent')),
+                name='planning_dependency_no_self_edge',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.prerequisite_id} -> {self.dependent_id}'
+
+
+class SchedulerAllocation(models.Model):
+    """Disposable scheduler-owned allocation proposal.
+
+    This is NOT canonical progress and is NOT a semantic PlanningItem child.
+    Rows may be freely destroyed/rebuilt whenever ARC reschedules.
+
+    Only explicit user confirmation converts an allocation into durable
+    ProgressSegment history and changes PlanningItem.percent_completed.
+    """
+
+    item = models.ForeignKey(
+        PlanningItem,
+        on_delete=models.CASCADE,
+        related_name='scheduler_allocations',
+    )
+    percentage = models.DecimalField(max_digits=5, decimal_places=2)
+    scheduled_date = models.DateField()
+    execution_rank = models.PositiveIntegerField(default=1)
+
+    class Meta:
+        db_table = 'planning_scheduler_allocations'
+        ordering = ['scheduled_date', 'execution_rank', 'id']
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(percentage__gt=0) & Q(percentage__lte=100),
+                name='scheduler_allocation_percentage_range',
+            ),
+        ]
+
+    def __str__(self):
+        return (
+            f'{self.item_id}: {self.percentage}% '
+            f'on {self.scheduled_date}'
+        )
+
+
+class ProgressSegment(models.Model):
+    """Durable canonical history for confirmed splittable-work progress.
+
+    A ProgressSegment is never a scheduler proposal and never participates in
+    the PlanningItem hierarchy. Disposable future proposals live exclusively
+    in SchedulerAllocation.
+    """
+
+    item = models.ForeignKey(
+        PlanningItem,
+        on_delete=models.CASCADE,
+        related_name='progress_segments',
+    )
+    percentage = models.DecimalField(max_digits=5, decimal_places=2)
+    scheduled_date = models.DateField(null=True, blank=True)
+    is_completed = models.BooleanField(default=False)
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = 'planning_progress_segments'
+        ordering = ['scheduled_date', 'id']
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(percentage__gt=0) & Q(percentage__lte=100),
+                name='progress_segment_percentage_range',
+            ),
+            models.CheckConstraint(
+                condition=Q(is_completed=True),
+                name='progress_segment_must_be_confirmed',
+            ),
+        ]
+
+    def __str__(self):
+        state = 'confirmed' if self.is_completed else 'proposed'
+        return f'{self.item_id}: {self.percentage}% ({state})'
 
 
 class PlanningHistoryEntry(OwnedModel):
@@ -218,6 +418,8 @@ class PlanningHistoryEntry(OwnedModel):
         DELETE = 'DELETE', 'Delete'
         MOVE = 'MOVE', 'Move'
         COMPLETE = 'COMPLETE', 'Complete'
+        PRIORITY = 'PRIORITY', 'Priority'
+        SCHEDULE = 'SCHEDULE', 'Schedule'
 
     id = models.BigAutoField(primary_key=True)
     action_type = models.CharField(max_length=10, choices=ActionType.choices)
@@ -320,3 +522,51 @@ class Timezone(OwnedModel):
 
     def __str__(self):
         return f'{self.title} ({self.start_date} to {self.end_date})'
+
+
+class SchedulingOverload(OwnedModel):
+    """An explicit permission to exceed normal capacity on one calendar date."""
+    date = models.DateField()
+    allowed = models.BooleanField(default=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=['user', 'date'], name='uniq_scheduling_overload_day')]
+
+
+class SchedulingState(OwnedModel):
+    """Per-user scheduler configuration and daily maintenance state.
+
+    This state is deliberately outside planner undo snapshots.  Scheduler
+    flavour is a planning preference, not an authentication/account property.
+    A null flavour means the user has not explicitly chosen a V1 scheduler
+    behaviour yet.
+    """
+
+    class SchedulerFlavour(models.TextChoices):
+        LOCK_IN = 'lock-in', 'Lock-in'
+        MONK = 'monk', 'Monk'
+
+    last_global_date = models.DateField(null=True, blank=True)
+
+    scheduler_flavour = models.CharField(
+        max_length=16,
+        choices=SchedulerFlavour.choices,
+        null=True,
+        blank=True,
+    )
+
+    # Disposable serialized V1 output used by read-only Timeline requests.
+    # This is never canonical planning state and may be replaced whenever ARC
+    # reschedules.
+    scheduler_runtime = models.JSONField(
+        default=dict,
+        blank=True,
+    )
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['user'],
+                name='uniq_scheduling_state_user',
+            )
+        ]

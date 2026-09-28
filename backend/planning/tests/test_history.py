@@ -22,6 +22,47 @@ def checkpoint(user, action, before, after):
     return history.record_checkpoint(user, action, before, after)
 
 
+@pytest.mark.parametrize("action_type", ["PRIORITY", "MOVE"])
+def test_legacy_priority_history_ignores_siblings_but_move_restores_them(user, action_type):
+    first = make_item(user, "First", sibling_order=10)
+    second = make_item(user, "Second", sibling_order=20)
+    PlanningItem.objects.filter(pk=first.pk).update(priority_position=2)
+    PlanningItem.objects.filter(pk=second.pk).update(priority_position=1)
+    before = {
+        "priority": [
+            {"id": first.pk, "priority_position": 1},
+            {"id": second.pk, "priority_position": 2},
+        ],
+        "siblings": [
+            {"id": first.pk, "parent_id": None, "sibling_order": 2},
+            {"id": second.pk, "parent_id": None, "sibling_order": 1},
+        ],
+    }
+    after = {
+        "priority": history.capture_priority(user),
+        "siblings": [
+            {"id": first.pk, "parent_id": None, "sibling_order": 1},
+            {"id": second.pk, "parent_id": None, "sibling_order": 2},
+        ],
+    }
+    entry = checkpoint(user, action_type, before, after)
+
+    for restore, expected, undone in [(history.undo, before, True), (history.redo, after, False)]:
+        assert restore(user).pk == entry.pk
+        assert history.capture_priority(user) == expected["priority"]
+        first.refresh_from_db()
+        second.refresh_from_db()
+        assert (first.parent_id, second.parent_id) == (None, None)
+        assert (first.sibling_order, second.sibling_order) == (
+            (10, 20) if action_type == "PRIORITY" else
+            tuple(state["sibling_order"] for state in expected["siblings"])
+        )
+        entry.refresh_from_db()
+        assert entry.is_undone is undone
+        assert entry.before_state == before
+        assert entry.after_state == after
+
+
 def test_update_undo_redo(user):
     item = make_item(user, "Before")
 

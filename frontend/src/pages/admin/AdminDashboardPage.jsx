@@ -97,8 +97,8 @@ export default function AdminDashboardPage() {
               <dd className="text-slate-100">{data?.planning_items?.completed ?? '—'}</dd>
             </div>
             <div className="flex justify-between text-slate-400">
-              <dt>Adaptive</dt>
-              <dd className="text-slate-100">{data?.planning_items?.adaptive ?? '—'}</dd>
+              <dt>No deadline</dt>
+              <dd className="text-slate-100">{data?.planning_items?.without_deadline ?? '—'}</dd>
             </div>
           </dl>
         </article>

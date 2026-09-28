@@ -97,7 +97,7 @@ class PlatformStatsView(APIView):
                     item_type__in=[ItemType.TASK, ItemType.ASSIGNMENT],
                 ),
             ),
-            adaptive=Count('id', filter=Q(due_date__isnull=True, is_completed=False)),
+            without_deadline=Count('id', filter=Q(due_date__isnull=True, is_completed=False)),
         )
 
         stats = {
@@ -114,7 +114,7 @@ class PlatformStatsView(APIView):
                 'total': item_counts['total'],
                 'completed': item_counts['completed'],
                 'overdue': item_counts['overdue'],
-                'adaptive': item_counts['adaptive'],
+                'without_deadline': item_counts['without_deadline'],
                 'by_type': {
                     row['item_type']: row['count']
                     for row in PlanningItem.objects.values('item_type')

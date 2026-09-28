@@ -142,13 +142,13 @@ def test_releasing_twice_is_harmless(user, tasks):
     assert len(positions(user)) == 4
 
 
-def test_restoring_appends_to_the_end(user, tasks):
+def test_restoring_returns_to_the_previous_relative_position(user, tasks):
     priority.release_position(tasks[0])
     tasks[0].refresh_from_db()
 
     priority.restore_position(tasks[0])
 
-    assert titles(user) == ['t2', 't3', 't4', 't5', 't1']
+    assert titles(user) == ['t1', 't2', 't3', 't4', 't5']
 
 
 def test_releasing_many_positions_at_once_renumbers_the_rest(user, tasks):
@@ -173,17 +173,12 @@ def test_renumber_repairs_a_sparse_order(user, tasks):
 # --------------------------------------------------------------------------
 
 def test_the_database_refuses_a_duplicate_position(user, tasks):
-    """Because the constraint is deferred, the duplicate is tolerated until
-    the check runs. Forcing it early is the only way to observe the rejection
-    from inside a transaction, and it doubles as proof that the deferral in
-    the migration is real."""
+    """Duplicate active positions fail on both supported database engines."""
     with pytest.raises(IntegrityError):
         with transaction.atomic():
             PlanningItem.objects.filter(pk=tasks[0].pk).update(
                 priority_position=tasks[1].priority_position
             )
-            with connection.cursor() as cursor:
-                cursor.execute('SET CONSTRAINTS ALL IMMEDIATE')
 
 
 def test_the_database_allows_many_null_positions(user, make_item):

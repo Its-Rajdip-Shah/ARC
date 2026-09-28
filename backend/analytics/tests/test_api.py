@@ -200,7 +200,7 @@ def test_stats_count_planning_items_across_all_users(client, member, admin, make
     items = client.get('/api/admin/stats/').data['planning_items']
     assert items['total'] == 3
     assert items['completed'] == 1
-    assert items['adaptive'] == 2  # the goal has no due date either
+    assert items['without_deadline'] == 2  # the goal has no due date either
     assert items['by_type'] == {ItemType.GOAL: 1, ItemType.TASK: 2}
 
 

@@ -5,7 +5,7 @@ import PriorityPanel from './components/PriorityPanel'
 import PriorityToggle from './components/PriorityToggle'
 import CreatePlanningItemPanel from './components/CreatePlanningItemPanel'
 import { usePlanningTree } from '../../hooks/usePlanningTree'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useIsMutating, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   getHistoryStatus,
   undoPlanningAction,
@@ -79,6 +79,7 @@ function loadToolbarPreferences() {
 export default function PlannerPage() {
 
   const queryClient = useQueryClient()
+  const priorityReordering = useIsMutating({ mutationKey: ['planning', 'priority', 'reorder'] }) > 0
 
   const historyQuery = useQuery({
     queryKey: ['planning', 'history'],
@@ -137,7 +138,7 @@ export default function PlannerPage() {
   })
 
   const historyBusy =
-    undoMutation.isPending || redoMutation.isPending
+    undoMutation.isPending || redoMutation.isPending || priorityReordering
 
   const canUndo =
     Boolean(historyQuery.data?.can_undo) && !historyBusy
@@ -168,6 +169,7 @@ export default function PlannerPage() {
   const [showOverdue, setShowOverdue] = useState(false)
 
   function handleNavigateToRoot(rootId) {
+    setIsPriorityOpen(false)
     // A filtered view may currently hide the requested root.
     setSearchQuery('')
     setShowOverdue(false)
@@ -215,6 +217,8 @@ export default function PlannerPage() {
   const { data: planningTree, isLoading, isError } = usePlanningTree()
 
   function togglePriority() {
+    closePanel()
+    setHoveredItemId(null)
     setIsPriorityOpen((current) => !current)
   }
 
@@ -340,7 +344,7 @@ export default function PlannerPage() {
           {isLoading && <p>Loading planner...</p>}
           {isError && <p>Could not load planner.</p>}
 
-          {!isLoading && !isError && (
+          {!isLoading && !isError && !isPriorityOpen && (
             <>
             <div className="
               sticky top-[80px] z-20 mb-2 flex h-[38px]
@@ -529,7 +533,14 @@ export default function PlannerPage() {
         </div>
       )}
 
-      <PriorityPanel isOpen={isPriorityOpen} />
+      <PriorityPanel
+        isOpen={isPriorityOpen}
+        canUndo={canUndo}
+        canRedo={canRedo}
+        historyBusy={historyBusy}
+        onUndo={() => undoMutation.mutate()}
+        onRedo={() => redoMutation.mutate()}
+      />
 
       <PriorityToggle
         isOpen={isPriorityOpen}

@@ -1241,7 +1241,9 @@ a.timeline-marker::after { content: ""; position: absolute; inset: -7px -2px; }
 }
 
 .scheduler-aura-hover,
-.scheduler-aura-scheduling,
+.scheduler-aura-scheduling {
+  opacity: .88;
+}
 
 .scheduler-aura-blob {
   position: absolute;

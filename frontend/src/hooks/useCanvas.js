@@ -38,7 +38,7 @@ export function useDeleteCanvasConnection() {
   return useMutation({
     mutationFn: deleteCanvasConnection,
     onSuccess: () => {
-      queryClient.removeQueries({ queryKey: ['canvas', 'connection'] })
+      queryClient.setQueryData(['canvas', 'connection'], null)
     },
   })
 }
@@ -51,8 +51,10 @@ export function useSyncCanvas() {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: syncCanvas,
-    onSuccess: () => {
+    onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ['canvas'] })
+    },
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['planning'] })
     },
   })

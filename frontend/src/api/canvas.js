@@ -1,7 +1,10 @@
 import { apiClient } from '../lib/apiClient'
 
 export function getCanvasConnection() {
-  return apiClient.get('canvas/connection/').then((res) => res.data)
+  return apiClient.get('canvas/connection/').then((res) => res.data).catch((error) => {
+    if (error?.response?.status === 404) return null
+    throw error
+  })
 }
 
 export function saveCanvasConnection(payload) {

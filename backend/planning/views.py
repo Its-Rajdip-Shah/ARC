@@ -42,6 +42,7 @@ from planning.models import (
 from planning.serializers import (
     AssignmentDetailSerializer,
     ScheduleMoveSerializer,
+    ScheduleAnchorSerializer,
     ScheduleResultSerializer,
     ScheduleReplaceSerializer,
     ScheduleOverloadSerializer,
@@ -60,9 +61,10 @@ from planning.serializers import (
     RootRefSerializer,
     TagSerializer,
     TimelineItemSerializer,
+    TimelineNavigationItemSerializer,
     TimezoneSerializer,
 )
-from planning.services import hierarchy, leaf_order_sync, overdue, priority, scheduling
+from planning.services import dependencies, hierarchy, leaf_order_sync, overdue, priority, progress, scheduling
 from planning.services import deletion, history
 
 
@@ -412,10 +414,37 @@ class PlanningItemViewSet(UserScopedMixin, viewsets.ModelViewSet):
         priority_before = history.capture_priority(request.user, include_unpositioned=True)
 
         if serializer.validated_data['completed']:
-            affected = hierarchy.complete_subtree(item)
+            affected = hierarchy.complete_subtree(
+                item,
+            )
         else:
-            hierarchy.reopen(item)
-            affected = [item.pk]
+            # Splittable work carries canonical confirmed progress.
+            # Its inverse is DUR-009's local progress reversal rather than
+            # bypassing hierarchy.reopen's invariant.
+            latest_segment = (
+                item.progress_segments
+                .order_by(
+                    '-completed_at',
+                    '-pk',
+                )
+                .first()
+            )
+
+            if (
+                item.percent_completed
+                and latest_segment
+            ):
+                progress.reopen_segment(
+                    latest_segment,
+                )
+            else:
+                hierarchy.reopen(
+                    item,
+                )
+
+            affected = [
+                item.pk,
+            ]
 
         items_after = history.capture_items(
             request.user,
@@ -552,6 +581,34 @@ class PriorityReorderView(APIView):
         return Response(_priority_rows(request.user, items))
 
 
+class TimelineNavigationView(APIView):
+    """Global Timeline task index.
+
+    Search, anchor navigation and conflict labels must not depend on the
+    currently visible date window or generic list pagination.
+    """
+
+    @extend_schema(
+        responses=TimelineNavigationItemSerializer(many=True),
+    )
+    def get(self, request):
+        items = (
+            PlanningItem.objects
+            .for_user(request.user)
+            .actionable()
+            .select_related('parent')
+            .prefetch_related('tags')
+            .order_by('id')
+        )
+
+        return Response(
+            TimelineNavigationItemSerializer(
+                items,
+                many=True,
+            ).data
+        )
+
+
 class TimelineView(APIView):
     """FR-10, FR-11, FR-13: GET /api/planning/timeline/?from=&to="""
 
@@ -567,6 +624,9 @@ class TimelineView(APIView):
                 'scheduler': SchedulerRuntimeSerializer(),
                 'capacities': serializers.DictField(child=serializers.IntegerField()),
                 'overload': serializers.ListField(child=serializers.DictField()),
+                'overload_dates': serializers.ListField(
+                    child=serializers.DateField(),
+                ),
                 'range': serializers.DictField(child=serializers.DateField()),
                 'timezones': TimezoneSerializer(many=True),
                 'groups': inline_serializer(
@@ -598,6 +658,7 @@ class TimelineView(APIView):
                 )
             )
             .select_related('assignment_detail')
+            .prefetch_related('tags')
             .order_by('id')
         )
 
@@ -671,6 +732,21 @@ class TimelineView(APIView):
             'overload': list(SchedulingOverload.objects.filter(
                 user=request.user, date__range=(start, end),
             ).order_by('date').values('date', 'allowed')),
+            'overload_dates': [
+                day.isoformat()
+                for day in (
+                    SchedulingOverload.objects
+                    .filter(
+                        user=request.user,
+                        allowed=True,
+                    )
+                    .order_by('date')
+                    .values_list(
+                        'date',
+                        flat=True,
+                    )
+                )
+            ],
         })
 
 
@@ -857,6 +933,189 @@ class SchedulerSettingsView(APIView):
         return Response({
             'flavour': state.scheduler_flavour,
             'configured': state.scheduler_flavour is not None,
+        })
+
+
+class ScheduleAnchorView(APIView):
+    """Explicit anchor/unanchor boundary for Timeline interactions.
+
+    Authoritative state transitions remain in planning.services.scheduling.
+    This view only translates situations requiring a human decision into a
+    stable frontend-facing 409 response.
+    """
+
+    @extend_schema(request=ScheduleAnchorSerializer)
+    def post(self, request):
+        serializer = ScheduleAnchorSerializer(
+            data=request.data,
+        )
+        serializer.is_valid(raise_exception=True)
+
+        data = serializer.validated_data
+
+        item = (
+            PlanningItem.objects
+            .for_user(request.user)
+            .filter(
+                pk=data['item_id'],
+                is_deleted=False,
+            )
+            .first()
+        )
+
+        if item is None:
+            return Response(
+                {'detail': 'Planning item not found.'},
+                status=404,
+            )
+
+        if data['remove']:
+            item = scheduling.remove_anchor(item)
+
+            return Response({
+                'item_id': item.pk,
+                'manual_requested_date': None,
+                'scheduled_date': item.scheduled_date,
+                'start_date': item.start_date,
+                'due_date': item.due_date,
+                'removed': True,
+            })
+
+        day = data['date']
+
+        # Past placement has no valid override.
+        if day < timezone.localdate():
+            return Response(
+                {
+                    'conflicts': [
+                        {
+                            'item_id': item.pk,
+                            'code': 'past_date',
+                        },
+                    ],
+                    'decisions': [],
+                },
+                status=409,
+            )
+
+        conflicts = []
+        decisions = []
+
+        if (
+            item.due_date
+            and day > item.due_date
+            and not data['change_deadline']
+        ):
+            conflicts.append({
+                'item_id': item.pk,
+                'code': 'after_deadline',
+            })
+
+            decisions.append({
+                'code': 'change_deadline',
+                'label': (
+                    'Move the deadline to the anchor '
+                    'date and continue'
+                ),
+            })
+
+        if (
+            item.start_date
+            and day < item.start_date
+            and not data['change_release']
+        ):
+            conflicts.append({
+                'item_id': item.pk,
+                'code': 'before_release',
+            })
+
+            decisions.append({
+                'code': 'change_release',
+                'label': (
+                    'Move the release date to the '
+                    'anchor date and continue'
+                ),
+            })
+
+        # Dependencies remain hard.  The user may acknowledge that the
+        # anchor is only future date intent; this never overrides precedence.
+        if (
+            dependencies.is_blocked(item)
+            and not data['acknowledge_dependency_block']
+        ):
+            conflicts.append({
+                'item_id': item.pk,
+                'code': 'blocked_dependency',
+            })
+
+            decisions.append({
+                'code': 'acknowledge_dependency_block',
+                'label': (
+                    'Keep this as future date intent '
+                    'while the dependency is blocked'
+                ),
+            })
+
+        if conflicts:
+            return Response(
+                {
+                    'conflicts': conflicts,
+                    'decisions': decisions,
+                },
+                status=409,
+            )
+
+        try:
+            item = scheduling.set_anchor(
+                item,
+                day,
+                change_deadline=data['change_deadline'],
+                change_release=data['change_release'],
+                allow_overload=data['allow_overload'],
+            )
+
+        except DjangoValidationError as exc:
+            messages = getattr(
+                exc,
+                'messages',
+                [str(exc)],
+            )
+
+            if any(
+                'overload' in str(message).lower()
+                for message in messages
+            ):
+                return Response(
+                    {
+                        'conflicts': [
+                            {
+                                'item_id': item.pk,
+                                'code': 'capacity_exceeded',
+                            },
+                        ],
+                        'decisions': [
+                            {
+                                'code': 'allow_overload',
+                                'label': (
+                                    'Allow overload on this '
+                                    'date and continue'
+                                ),
+                            },
+                        ],
+                    },
+                    status=409,
+                )
+
+            raise _as_400(exc)
+
+        return Response({
+            'item_id': item.pk,
+            'manual_requested_date':
+                item.manual_requested_date,
+            'scheduled_date': item.scheduled_date,
+            'start_date': item.start_date,
+            'due_date': item.due_date,
+            'removed': False,
         })
 
 

@@ -65,6 +65,42 @@ class AssignmentDetailSerializer(serializers.ModelSerializer):
         fields = ['weight_percent', 'mark_achieved', 'submission_url', 'marks_position']
 
 
+class TimelineNavigationItemSerializer(serializers.ModelSerializer):
+    """Small canonical item index used by Timeline search/navigation.
+
+    Deliberately independent of the visible date window and DRF list
+    pagination.  It exposes canonical facts only; no scheduler assumptions.
+    """
+
+    parent = serializers.IntegerField(
+        source='parent_id',
+        allow_null=True,
+        read_only=True,
+    )
+    tags = TagSerializer(
+        many=True,
+        read_only=True,
+    )
+
+    class Meta:
+        model = PlanningItem
+        fields = [
+            'id',
+            'parent',
+            'item_type',
+            'title',
+            'description',
+            'start_date',
+            'due_date',
+            'scheduled_date',
+            'completed_display_date',
+            'manual_requested_date',
+            'duration_category',
+            'is_completed',
+            'tags',
+        ]
+
+
 class PlanningItemSerializer(serializers.ModelSerializer):
     tags = TagSerializer(many=True, read_only=True)
     tag_ids = UserScopedPrimaryKeyRelatedField(
@@ -81,7 +117,8 @@ class PlanningItemSerializer(serializers.ModelSerializer):
         model = PlanningItem
         fields = [
             'id', 'parent', 'item_type', 'title', 'description', 'sibling_order',
-            'start_date', 'due_date', 'scheduled_date', 'execution_rank', 'manual_requested_date',
+            'start_date', 'due_date', 'scheduled_date', 'execution_rank',
+            'completed_display_date', 'manual_requested_date',
             'duration_category', 'percent_completed',
             'priority_position', 'is_completed', 'has_deadline',
             'canvas_object_type', 'canvas_object_id',
@@ -89,7 +126,8 @@ class PlanningItemSerializer(serializers.ModelSerializer):
             'created_at', 'updated_at',
         ]
         read_only_fields = [
-            'priority_position', 'scheduled_date', 'execution_rank', 'manual_requested_date',
+            'priority_position', 'scheduled_date', 'execution_rank',
+            'completed_display_date', 'manual_requested_date',
             'percent_completed', 'canvas_object_type',
             'canvas_object_id', 'created_at', 'updated_at',
         ]
@@ -250,6 +288,7 @@ class SchedulerAllocationProjectionSerializer(serializers.Serializer):
 class TimelineItemSerializer(serializers.ModelSerializer):
     """A dated item on the Timeline (FR-10, FR-11)."""
 
+    tags = TagSerializer(many=True, read_only=True)
     overdue = serializers.SerializerMethodField()
     submission_url = serializers.CharField(source='assignment_detail.submission_url', read_only=True, allow_null=True, default=None)
     hierarchy_path = serializers.SerializerMethodField()
@@ -259,10 +298,11 @@ class TimelineItemSerializer(serializers.ModelSerializer):
     class Meta:
         model = PlanningItem
         fields = [
-            'id', 'parent', 'title', 'item_type', 'start_date', 'due_date', 'scheduled_date',
-            'execution_rank', 'duration_category', 'is_completed', 'priority_position',
-            'overdue', 'submission_url', 'hierarchy_path', 'has_children',
-            'allocations',
+            'id', 'parent', 'title', 'description', 'item_type', 'start_date', 'due_date',
+            'scheduled_date', 'execution_rank', 'completed_display_date',
+            'manual_requested_date', 'duration_category',
+            'is_completed', 'priority_position', 'tags', 'overdue', 'submission_url',
+            'hierarchy_path', 'has_children', 'allocations',
         ]
 
     @extend_schema_field(serializers.BooleanField())
@@ -327,6 +367,31 @@ class ScheduleMoveSerializer(serializers.Serializer):
     item_id = serializers.IntegerField()
     date = serializers.DateField()
     allow_overload = serializers.BooleanField(default=False)
+
+
+class ScheduleAnchorSerializer(serializers.Serializer):
+    """Explicit Timeline anchor command with user-authorised resolutions."""
+
+    item_id = serializers.IntegerField()
+    date = serializers.DateField(
+        required=False,
+        allow_null=True,
+    )
+    remove = serializers.BooleanField(default=False)
+    change_deadline = serializers.BooleanField(default=False)
+    change_release = serializers.BooleanField(default=False)
+    allow_overload = serializers.BooleanField(default=False)
+    acknowledge_dependency_block = serializers.BooleanField(
+        default=False,
+    )
+
+    def validate(self, attrs):
+        if not attrs.get('remove') and attrs.get('date') is None:
+            raise serializers.ValidationError({
+                'date': 'Choose an anchor date.',
+            })
+
+        return attrs
 
 
 class ScheduleReplaceSerializer(serializers.Serializer):

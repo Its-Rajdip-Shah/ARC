@@ -42,6 +42,11 @@ def serialize_item(item):
             item.scheduled_date.isoformat()
             if item.scheduled_date else None
         ),
+        "completed_display_date": (
+            item.completed_display_date.isoformat()
+            if item.completed_display_date
+            else None
+        ),
         "duration_category": item.duration_category,
         "manual_requested_date": item.manual_requested_date.isoformat() if item.manual_requested_date else None,
         "expired_manual_requested_date": item.expired_manual_requested_date.isoformat() if item.expired_manual_requested_date else None,
@@ -348,6 +353,9 @@ def _restore_item_states(user, states):
             "start_date": state["start_date"],
             "due_date": state["due_date"],
             "scheduled_date": state["scheduled_date"],
+            "completed_display_date": state.get(
+                "completed_display_date"
+            ),
             "duration_category": _historical_duration(state.get("duration_category")),
             "manual_requested_date": state.get('manual_requested_date'),
             "expired_manual_requested_date": state.get("expired_manual_requested_date"),

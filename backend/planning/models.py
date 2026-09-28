@@ -151,6 +151,7 @@ class PlanningItemQuerySet(models.QuerySet):
         """
         return self.filter(
             Q(scheduled_date__range=(start, end))
+            | Q(completed_display_date__range=(start, end))
             | Q(scheduler_allocations__scheduled_date__range=(start, end))
             | Q(start_date__range=(start, end))
             | Q(due_date__range=(start, end))
@@ -187,6 +188,17 @@ class PlanningItem(OwnedModel, TimestampedModel):
     # Planned execution date, independent of release/deadline constraints.
     scheduled_date = models.DateField(null=True, blank=True)
     execution_rank = models.PositiveIntegerField(null=True, blank=True)
+
+    # Durable Timeline presentation history for completed work.
+    #
+    # The scheduler never reads or writes this field. It does not express
+    # release/deadline/priority/manual intent. It simply preserves the
+    # Timeline location at which a task became completed after disposable
+    # scheduled_date is legitimately cleared by later scheduler runs.
+    completed_display_date = models.DateField(
+        null=True,
+        blank=True,
+    )
 
     # Canonical user date intent lives exclusively in manual_requested_date.
     # This is deliberately distinct from

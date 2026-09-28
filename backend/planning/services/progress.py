@@ -194,7 +194,14 @@ def reopen_segment(segment: ProgressSegment):
         _decimal(item.percent_completed) - _decimal(segment.percentage),
     )
     item.is_completed = False
-    item.save(update_fields=["percent_completed", "is_completed"])
+    item.completed_display_date = None
+    item.save(
+        update_fields=[
+            "percent_completed",
+            "is_completed",
+            "completed_display_date",
+        ]
+    )
 
     # Reversed records leave active accounting; no unconfirmed proposal rows.
     from . import lifecycle

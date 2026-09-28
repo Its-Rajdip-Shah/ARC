@@ -1,16 +1,64 @@
-# React + Vite
+# ARC Frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+React/Vite frontend for ARC.
 
-Currently, two official plugins are available:
+For full project setup and architecture documentation, start with the
+repository root `README.md` and the files under `docs/`.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## Requirements
 
-## React Compiler
+- Node.js 20+
+- npm
+- ARC backend running locally
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## Install
 
-## Expanding the Oxlint configuration
+From `frontend/`:
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and Oxlint's TypeScript related rules in your project.
+    npm ci
+    cp .env.example .env.local
+
+On Windows PowerShell:
+
+    npm ci
+    Copy-Item .env.example .env.local
+
+Default local API configuration:
+
+    VITE_API_BASE_URL=http://127.0.0.1:8000/api
+
+## Development
+
+    npm run dev
+
+Vite serves ARC at:
+
+    http://localhost:5173
+
+## Verification
+
+    npm run lint
+    npm run build
+
+Timeline tests:
+
+    node --test src/features/timeline/timelineActions.test.js
+    node --test src/features/timeline/timelineRendering.test.js
+
+## Optional real-browser Timeline test
+
+The real-browser layout test is disabled by default.
+
+Set:
+
+    TIMELINE_BROWSER_TESTS=1
+    CHROME_BIN=<path-to-a-Chromium-compatible-browser>
+
+The source code must not assume a machine-specific browser path.
+
+## Timeline / scheduler documentation
+
+- `../docs/timelineview.md`
+- `../docs/timeline_contract.md`
+- `../docs/scheduler.md`
+- `../docs/scheduler_contract.md`

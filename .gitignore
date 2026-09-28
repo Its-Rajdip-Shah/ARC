@@ -1,40 +1,41 @@
-# Environment / secrets
-.env
-*.env
-.env.local
-!.env.example
-
-# Python & Django
-venv/
-.venv/
-__pycache__/
-*.py[cod]
-db.sqlite3
-
-# Node & Frontend
-node_modules/
-dist/
-
-# OS
-.DS_Store
-
-# Local secrets / environments
+# Secrets / machine-local configuration
 .env
 .env.*
 !.env.example
+*.local
 
-# Python
+# Python / Django
 .venv/
 venv/
 __pycache__/
-*.pyc
+*.py[cod]
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+db.sqlite3
 
-# Frontend
+# Node / Vite
 node_modules/
 dist/
+dist-ssr/
+.npm/
 
-# macOS
+# IDE / editor
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Operating-system files
 .DS_Store
+Thumbs.db
+
+# Local diagnostic / scratch archives
+*.zip

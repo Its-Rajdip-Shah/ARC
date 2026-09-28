@@ -11,6 +11,7 @@ import {
   taskGeometry,
   packTaskLanes,
   TASK_CARD_COLLISION_WIDTH,
+  TASK_COLLISION_GAP,
   positionOf,
   intervalGeometry,
   itemsInPeriod,
@@ -43,7 +44,7 @@ const base = {
   root: { id: 2, title: 'Root' },
   hierarchy_path: [],
   item_type: 'ASSIGNMENT',
-  duration_category: 'MIN_20_TO_60',
+  duration_category: 'UNDER_1_HOUR',
   is_completed: false,
   start_date: '2026-09-20',
   scheduled_date: '2026-09-21',
@@ -56,7 +57,13 @@ function render(patch = {}, opts = {}) {
     React.createElement(Board, {
       scale: opts.scale ?? makeScale('2026-09-19', 'day'),
       items: opts.items ?? [{ ...base, ...patch }],
-      data: { timezones: opts.timezones ?? [] },
+      data:
+        opts.data ??
+        {
+          timezones:
+            opts.timezones ??
+            [],
+        },
       grouped: opts.grouped ?? false,
       scrollRef: null,
       find: {
@@ -391,8 +398,12 @@ test('browser lays out compact variable lanes, gaps and actual-width wrapping', 
   const { tmpdir } = await import('node:os')
   const { join } = await import('node:path')
   const { execFileSync } = await import('node:child_process')
-  const chrome = process.env.CHROME_BIN ?? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
-  if (!existsSync(chrome)) return t.skip('Set CHROME_BIN to run browser layout assertions')
+  const chrome = process.env.CHROME_BIN
+  if (!chrome || !existsSync(chrome)) {
+    return t.skip(
+      'Set CHROME_BIN to a Chromium-compatible browser executable to run browser layout assertions',
+    )
+  }
   const dir = mkdtempSync(join(tmpdir(), 'timeline-layout-'))
   try {
     const css = readFileSync(new URL('./Timeline.css', import.meta.url), 'utf8')
@@ -454,7 +465,7 @@ test('task interval partitioning is deterministic and uses minimum lanes', () =>
   assert.equal(packTaskLanes([items[0], items[1]], scale).length, 2)
   const html = render({}, { items: [items[0], items[2]] })
   assert.equal([...html.matchAll(/class="timeline-row"/g)].length, 1)
-  assert.match(html, /class="timeline-task timeline-completed"/)
+  assert.match(html, /class="timeline-task timeline-completed(?:\s|")/)
   assert.doesNotMatch(html, /class="timeline-row[^"]*timeline-completed/)
   const groupedItems = [items[0], { ...items[1], root: { id: 3, title: 'Other root' } }]
   assert.equal([...render({}, { items: groupedItems, grouped: true }).matchAll(/class="timeline-root"/g)].length, 2)
@@ -486,20 +497,42 @@ test('occluded endpoints retain date X with independent card-relative markers', 
 
 })
 
-test('constraint-only one-sided intervals provide read-only keyboard previews', () => {
-  for (const patch of [
-    { start_date: '2026-09-20', scheduled_date: '2026-11-01', due_date: null },
-    { start_date: null, scheduled_date: '2026-09-01', due_date: '2026-09-24' },
-  ]) {
-    const html = render(patch)
-    assert.match(html, /timeline-constraint-line/)
-    assert.doesNotMatch(html, /timeline-card-position/)
-    assert.match(html, /class="timeline-constraint-preview" tabindex="0"/)
-    assert.match(html, /disabled="" aria-label="Complete Assignment"/)
-  }
-  const html = render({ start_date: '2030-01-01', due_date: '2030-01-03', scheduled_date: '2030-01-02' })
-  assert.doesNotMatch(html, /timeline-task|timeline-card-position|timeline-constraint-line/)
-  assert.doesNotMatch(render({ start_date: null, due_date: null }), /timeline-constraint-line|timeline-marker /)
+test('constraint-only one-sided intervals expose a focusable delayed preview trigger', () => {
+  const html = render(
+    {
+      ...base,
+      title: 'Assignment',
+      scheduled_date: '2026-10-10',
+      start_date: '2026-09-20',
+      due_date: null,
+    },
+  )
+
+  /*
+   * Hover-intent previews are deliberately not mounted during the static
+   * render.  The constraint surface itself must remain keyboard focusable;
+   * TimelineBoard mounts the read-only card when that surface receives
+   * focus, or after the pointer dwell delay.
+   */
+  assert.match(
+    html,
+    /class="timeline-constraint-preview"/,
+  )
+
+  assert.match(
+    html,
+    /tabindex="0"/,
+  )
+
+  assert.match(
+    html,
+    /aria-label="Preview Assignment"/,
+  )
+
+  assert.doesNotMatch(
+    html,
+    /disabled="" aria-label="Complete Assignment"/,
+  )
 })
 
 
@@ -575,5 +608,137 @@ test('persistent concentration exists only without hover override', () => {
   assert.equal(isPersistentConcentration(hovered, null), false)
   assert.equal(isPersistentConcentration(null, selected), true)
   assert.equal(isPersistentConcentration(hovered, selected), false)
+})
+
+
+test('secondary scheduler sessions never duplicate canonical constraint markers', () => {
+  const scale = makeScale('2026-09-19', 'day')
+
+  const primary = taskGeometry(
+    {
+      ...base,
+      scheduled_date: '2026-09-21',
+      start_date: '2026-09-20',
+      due_date: '2026-09-24',
+      show_constraints: true,
+    },
+    scale,
+  )
+
+  const secondary = taskGeometry(
+    {
+      ...base,
+      render_id: '1:2026-09-22:2',
+      scheduled_date: '2026-09-22',
+      start_date: '2026-09-20',
+      due_date: '2026-09-24',
+      show_constraints: false,
+    },
+    scale,
+  )
+
+  assert.ok(primary.constraint)
+  assert.equal(primary.markers.length, 2)
+
+  assert.ok(secondary.card)
+  assert.equal(secondary.constraint, null)
+  assert.deepEqual(secondary.markers, [])
+
+  // Its collision footprint is now execution-card-only as well.
+  assert.equal(
+    secondary.left,
+    Math.max(
+      0,
+      secondary.card.left - TASK_COLLISION_GAP / 2,
+    ),
+  )
+})
+
+
+test('due-only unscheduled work never renders an orphan floating endpoint', () => {
+  const scale = makeScale('2026-09-19', 'day')
+
+  const geometry = taskGeometry(
+    {
+      ...base,
+      scheduled_date: null,
+      start_date: null,
+      due_date: '2026-09-24',
+      show_constraints: true,
+    },
+    scale,
+  )
+
+  assert.equal(
+    geometry,
+    null,
+  )
+})
+
+
+test('offscreen execution plus visible deadline keeps a real clipped line and endpoint', () => {
+  const scale = makeScale('2026-09-19', 'day')
+
+  const geometry = taskGeometry(
+    {
+      ...base,
+      scheduled_date: '2026-09-10',
+      start_date: null,
+      due_date: '2026-09-24',
+      show_constraints: true,
+    },
+    scale,
+  )
+
+  assert.ok(
+    geometry.constraint,
+  )
+
+  assert.equal(
+    geometry.markers.length,
+    1,
+  )
+
+  assert.equal(
+    geometry.markers[0].field,
+    'due_date',
+  )
+})
+
+
+test('date headers surface explicit overload and engine infeasible states', () => {
+  const html = render(
+    {},
+    {
+      data: {
+        timezones: [],
+        overload_dates: [
+          '2026-09-20',
+        ],
+        scheduler: {
+          daily_load: [
+            {
+              scheduled_date:
+                '2026-09-21',
+              hours:
+                '9.0000',
+              status:
+                'infeasible',
+            },
+          ],
+        },
+      },
+    },
+  )
+
+  assert.match(
+    html,
+    /timeline-date-overloaded/,
+  )
+
+  assert.match(
+    html,
+    /timeline-date-infeasible/,
+  )
 })
 

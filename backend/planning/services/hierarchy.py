@@ -118,18 +118,72 @@ def complete_subtree(item, *, reconcile=True):
     from django.utils import timezone
     original = item
     item = lifecycle.active(item)
-    ids = [item.pk] + descendant_ids(item.user_id, item.pk)
-    for row in PlanningItem.objects.for_user(item.user).filter(pk__in=ids, is_completed=False, duration_category__in=SPLITTABLE_DURATION_CATEGORIES):
-        remaining = Decimal(100) - row.percent_completed
-        if remaining > 0:
-            ProgressSegment.objects.create(item=row, percentage=remaining, is_completed=True, completed_at=timezone.now())
-        row.percent_completed = 100
-        row.save(update_fields=["percent_completed"])
+    ids = [
+        item.pk,
+        *descendant_ids(
+            item.user_id,
+            item.pk,
+        ),
+    ]
+
+    incomplete_rows = list(
+        PlanningItem.objects
+        .for_user(item.user)
+        .filter(
+            pk__in=ids,
+            is_completed=False,
+        )
+        .order_by("pk")
+    )
+
+    completion_day = timezone.localdate()
+
+    for row in incomplete_rows:
+        # Presentation history only. Never consumed by scheduling.
+        row.completed_display_date = (
+            row.scheduled_date
+            or row.manual_requested_date
+            or row.due_date
+            or row.start_date
+            or completion_day
+        )
+
+        update_fields = [
+            "completed_display_date",
+        ]
+
+        if (
+            row.duration_category
+            in SPLITTABLE_DURATION_CATEGORIES
+        ):
+            remaining = (
+                Decimal(100)
+                - row.percent_completed
+            )
+
+            if remaining > 0:
+                ProgressSegment.objects.create(
+                    item=row,
+                    percentage=remaining,
+                    is_completed=True,
+                    completed_at=timezone.now(),
+                )
+
+            row.percent_completed = 100
+            update_fields.append(
+                "percent_completed"
+            )
+
+        row.save(
+            update_fields=update_fields
+        )
 
     PlanningItem.objects.visible().filter(
         user_id=item.user_id,
         pk__in=ids,
-    ).update(is_completed=True)
+    ).update(
+        is_completed=True,
+    )
 
     # Completion is a canonical frontier transition. Departing tasks must
     # lose their active positions while preserving restore neighbourhood,
@@ -158,7 +212,10 @@ def reopen(item, *, reconcile=True):
     PlanningItem.objects.visible().filter(
         pk=item.pk,
         user=item.user,
-    ).update(is_completed=False)
+    ).update(
+        is_completed=False,
+        completed_display_date=None,
+    )
 
     # Reopening may return this task to the frontier and may simultaneously
     # make an ancestor structural again. Restore canonical priority first.

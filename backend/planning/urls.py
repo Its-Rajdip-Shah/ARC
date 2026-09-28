@@ -25,6 +25,12 @@ urlpatterns = [
         views.SchedulerSettingsView.as_view(),
         name='scheduler-settings',
     ),
+    path(
+        'timeline/navigation/',
+        views.TimelineNavigationView.as_view(),
+        name='timeline-navigation',
+    ),
+    path('timeline/anchor/', views.ScheduleAnchorView.as_view(), name='schedule-anchor'),
     path('timeline/reschedule/', views.ScheduleRescheduleView.as_view(), name='schedule-reschedule'),
     path('timeline/move/', views.ScheduleMoveView.as_view(), name='schedule-move'),
     path('timeline/replace/', views.ScheduleReplaceView.as_view(), name='schedule-replace'),

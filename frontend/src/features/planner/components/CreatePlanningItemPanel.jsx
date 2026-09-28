@@ -435,9 +435,12 @@ export default function CreatePlanningItemPanel({
 
           <div className="flex gap-[5px]">
             {[
-              ['UNDER_20_MIN', '<20m'],
-              ['MIN_20_TO_60', '<1h'],
-              ['OVER_60_MIN', '>1h'],
+              ['UNDER_20_MINUTES', '<20m'],
+              ['UNDER_1_HOUR', '<1h'],
+              ['UNDER_4_HOURS', '<4h'],
+              ['UNDER_8_HOURS', '<8h'],
+              ['UNDER_16_HOURS', '<16h'],
+              ['OVER_16_HOURS', '>16h'],
             ].map(([value, label]) => (
               <button
                 key={value}

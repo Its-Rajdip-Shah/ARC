@@ -115,8 +115,24 @@ export function redoPlanningAction() {
     .then((res) => res.data)
 }
 
-export function updateTimelineCapacity(payload) {
-  return apiClient.patch('planning/timeline/capacity/', payload).then((res) => res.data)
+export function getSchedulerSettings() {
+  return apiClient.get('planning/scheduler/settings/').then((res) => res.data)
+}
+
+export function updateSchedulerSettings(payload) {
+  return apiClient.put('planning/scheduler/settings/', payload).then((res) => res.data)
+}
+
+export function getTimelineNavigation() {
+  return apiClient
+    .get('planning/timeline/navigation/')
+    .then((res) => res.data)
+}
+
+export function anchorTimelineItem(payload) {
+  return apiClient
+    .post('planning/timeline/anchor/', payload)
+    .then((res) => res.data)
 }
 
 export function updateTimelineOverload(payload) {

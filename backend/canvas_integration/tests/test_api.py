@@ -397,6 +397,48 @@ def test_missing_group_weight_does_not_clobber_a_local_weight(connection, user):
     assert detail.weight_percent == Decimal('25.00')
 
 
+def test_self_submission_score_becomes_a_percentage_mark(connection):
+    stub = StubCanvas(
+        courses=[{'id': 11, 'course_code': 'ELEC3609'}],
+        assignments={11: [{'id': 501, 'name': 'Quiz', 'points_possible': 10}]},
+        submissions={11: [{'assignment_id': 501, 'score': 8}]},
+    )
+    sync.run_sync(connection, client=stub)
+    detail = AssignmentDetail.objects.get(planning_item__canvas_object_id='501')
+    assert detail.mark_achieved == Decimal('80.00')
+
+
+def test_missing_canvas_score_leaves_a_local_mark_alone(connection):
+    stub = StubCanvas(
+        courses=[{'id': 11, 'course_code': 'ELEC3609'}],
+        assignments={11: [{'id': 501, 'name': 'Quiz', 'points_possible': 10}]},
+    )
+    sync.run_sync(connection, client=stub)
+    AssignmentDetail.objects.filter(planning_item__canvas_object_id='501').update(
+        mark_achieved='21.00'
+    )
+    sync.run_sync(connection, client=stub)
+    detail = AssignmentDetail.objects.get(planning_item__canvas_object_id='501')
+    assert detail.mark_achieved == Decimal('21.00')
+
+
+def test_a_canvas_score_replaces_the_stored_mark(connection):
+    first = StubCanvas(
+        courses=[{'id': 11, 'course_code': 'ELEC3609'}],
+        assignments={11: [{'id': 501, 'name': 'Quiz', 'points_possible': 10}]},
+        submissions={11: [{'assignment_id': 501, 'score': 5}]},
+    )
+    sync.run_sync(connection, client=first)
+    later = StubCanvas(
+        courses=[{'id': 11, 'course_code': 'ELEC3609'}],
+        assignments={11: [{'id': 501, 'name': 'Quiz', 'points_possible': 10}]},
+        submissions={11: [{'assignment_id': 501, 'score': 9}]},
+    )
+    sync.run_sync(connection, client=later)
+    detail = AssignmentDetail.objects.get(planning_item__canvas_object_id='501')
+    assert detail.mark_achieved == Decimal('90.00')
+
+
 def test_sync_records_a_success_log(connection, user):
     """FR-04."""
     log = sync.run_sync(connection, client=StubCanvas())

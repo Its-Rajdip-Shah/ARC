@@ -4,7 +4,9 @@ FR-05: a course becomes a root PlanningItem and each of its assignments
 becomes a child, matched on (canvas_object_type, canvas_object_id) so a
 re-sync updates rows instead of duplicating them. Whatever the user has
 changed locally is left alone: titles and dates come from Canvas, but the
-priority position, completion flag, tags and marks stay as the user left them.
+priority position, completion flag and tags stay as the user left them.
+Marks and weights are written only when Canvas supplies the inputs to
+compute them; a later Canvas score replaces a stored mark.
 
 FR-04: every attempt writes a SyncLog row, successful or not, which is what
 lets the Connection screen report the last successful sync and the last error.
@@ -75,6 +77,18 @@ def _weight_percent(assignment, groups_by_id, point_totals):
     return (group_weight * points / total).quantize(Decimal('0.01'))
 
 
+def _mark_percent(assignment, submissions_by_id):
+    """Percentage mark from a self-submission, or None if Canvas omitted it."""
+    submission = submissions_by_id.get(assignment.get('id'))
+    if submission is None:
+        return None
+    score = _as_decimal(submission.get('score'))
+    points = _as_decimal(assignment.get('points_possible'))
+    if score is None or points is None or points <= 0:
+        return None
+    return (score * Decimal('100') / points).quantize(Decimal('0.01'))
+
+
 def _import_course(user, client, course, counts):
     """Upsert one course and its assignments.
 
@@ -83,8 +97,14 @@ def _import_course(user, client, course, counts):
     """
     assignments = client.assignments(course['id'])
     groups = client.assignment_groups(course['id'])
+    submissions = client.submissions_self(course['id'])
     groups_by_id = {
         group['id']: group for group in groups if group.get('id') is not None
+    }
+    submissions_by_id = {
+        row['assignment_id']: row
+        for row in submissions
+        if row.get('assignment_id') is not None
     }
     point_totals = _group_point_totals(assignments)
 
@@ -111,11 +131,12 @@ def _import_course(user, client, course, counts):
                 assignment,
                 counts,
                 weight=_weight_percent(assignment, groups_by_id, point_totals),
+                mark=_mark_percent(assignment, submissions_by_id),
             )
         lifecycle.finish(user)
 
 
-def _import_assignment(user, root, assignment, counts, weight=None):
+def _import_assignment(user, root, assignment, counts, weight=None, mark=None):
     assignment_id = str(assignment['id'])
     due_date = _as_date(assignment.get('due_at'))
 
@@ -136,6 +157,8 @@ def _import_assignment(user, root, assignment, counts, weight=None):
     detail_defaults = {'submission_url': assignment.get('html_url') or None}
     if weight is not None:
         detail_defaults['weight_percent'] = weight
+    if mark is not None:
+        detail_defaults['mark_achieved'] = mark
     AssignmentDetail.objects.update_or_create(
         planning_item=item,
         defaults=detail_defaults,

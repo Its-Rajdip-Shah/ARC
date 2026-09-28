@@ -537,4 +537,3 @@ class SchedulerSettingsUpdateSerializer(serializers.Serializer):
         choices=SchedulingState.SchedulerFlavour.choices,
         allow_null=True,
     )
-

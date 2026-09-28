@@ -326,4 +326,3 @@ def test_same_day_timeline_read_reuses_cached_v1_runtime(
     assert run.call_count == 0
 
     assert first.json()["scheduler"] == second.json()["scheduler"]
-

@@ -47,7 +47,7 @@
 .timeline-row { position: relative; isolation: isolate; display: grid; align-items: center; min-height: 48px; padding-block: 8px; }
 .timeline-row-constrained { /* marker headroom comes from the row's normal 8px padding */ }
 .timeline-task { grid-area: 1 / 1; position: relative; min-height: 32px; pointer-events: none; }
-.timeline-task 
+.timeline-task
 /* Constraint endpoint colliding with its own execution card. */
 
 .timeline-card-marker {

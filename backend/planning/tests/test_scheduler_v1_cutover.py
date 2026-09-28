@@ -391,4 +391,3 @@ def test_v1_reschedule_undo_redo_restores_complete_disposable_state(
         ).scheduler_runtime
         == after_runtime
     )
-

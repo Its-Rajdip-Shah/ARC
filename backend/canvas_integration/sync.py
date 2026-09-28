@@ -23,7 +23,7 @@ from django.utils.dateparse import parse_datetime
 
 from canvas_integration.client import CanvasClient, CanvasError
 from canvas_integration.models import SyncLog, SyncStatus
-from planning.models import AssignmentDetail, CanvasObjectType, ItemType, PlanningItem
+from planning.models import AssignmentDetail, CanvasObjectType, ItemType, PlanningItem, Timezone
 from planning.services import scheduling, priority, lifecycle
 
 
@@ -89,6 +89,36 @@ def _mark_percent(assignment, submissions_by_id):
     return (score * Decimal('100') / points).quantize(Decimal('0.01'))
 
 
+def _term_window(course):
+    term = course.get('term') if isinstance(course.get('term'), dict) else {}
+    name = (term.get('name') or '').strip() or None
+    return {
+        'name': name,
+        'start': _as_date(term.get('start_at')),
+        'end': _as_date(term.get('end_at')),
+    }
+
+
+def _upsert_term_timezone(user, term):
+    if not term['name'] or term['start'] is None or term['end'] is None:
+        return
+    if term['end'] < term['start']:
+        return
+    existing = Timezone.objects.filter(user=user, title=term['name']).first()
+    if existing is None:
+        Timezone.objects.create(
+            user=user,
+            title=term['name'],
+            start_date=term['start'],
+            end_date=term['end'],
+        )
+        return
+    if (existing.start_date, existing.end_date) != (term['start'], term['end']):
+        existing.start_date = term['start']
+        existing.end_date = term['end']
+        existing.save(update_fields=['start_date', 'end_date'])
+
+
 def _import_course(user, client, course, counts):
     """Upsert one course and its assignments.
 
@@ -108,6 +138,8 @@ def _import_course(user, client, course, counts):
     }
     point_totals = _group_point_totals(assignments)
 
+    term = _term_window(course)
+
     with transaction.atomic():
         priority._lock(user)
         root, created = PlanningItem.objects.update_or_create(
@@ -118,8 +150,11 @@ def _import_course(user, client, course, counts):
                 'item_type': ItemType.GOAL,
                 'title': _course_title(course),
                 'parent': None,
+                'start_date': term['start'],
+                'due_date': term['end'],
             },
         )
+        _upsert_term_timezone(user, term)
         counts['courses_created' if created else 'courses_updated'] += 1
 
         for assignment in assignments:

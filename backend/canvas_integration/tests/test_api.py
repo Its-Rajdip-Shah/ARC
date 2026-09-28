@@ -14,7 +14,7 @@ from django.contrib.auth import get_user_model
 from canvas_integration import sync, views
 from canvas_integration.client import CanvasClient, CanvasError
 from canvas_integration.models import CanvasConnection, SyncLog, SyncStatus
-from planning.models import AssignmentDetail, CanvasObjectType, ItemType, PlanningItem
+from planning.models import AssignmentDetail, CanvasObjectType, ItemType, PlanningItem, Timezone
 
 pytestmark = pytest.mark.django_db
 
@@ -437,6 +437,42 @@ def test_a_canvas_score_replaces_the_stored_mark(connection):
     sync.run_sync(connection, client=later)
     detail = AssignmentDetail.objects.get(planning_item__canvas_object_id='501')
     assert detail.mark_achieved == Decimal('90.00')
+
+
+def test_course_term_dates_land_on_the_root_and_a_timezone(connection, user):
+    stub = StubCanvas(
+        courses=[{
+            'id': 11,
+            'course_code': 'ELEC3609',
+            'term': {
+                'name': 'Semester 2 2026',
+                'start_at': '2026-07-27T00:00:00Z',
+                'end_at': '2026-11-01T00:00:00Z',
+            },
+        }],
+        assignments={11: [{'id': 501, 'name': 'Quiz'}]},
+    )
+    sync.run_sync(connection, client=stub)
+    root = PlanningItem.objects.get(user=user, canvas_object_type=CanvasObjectType.COURSE)
+    assert root.start_date.isoformat() == '2026-07-27'
+    assert root.due_date.isoformat() == '2026-11-01'
+    zone = Timezone.objects.get(user=user, title='Semester 2 2026')
+    assert (zone.start_date, zone.end_date) == (root.start_date, root.due_date)
+
+    sync.run_sync(connection, client=stub)
+    assert Timezone.objects.filter(user=user, title='Semester 2 2026').count() == 1
+
+
+def test_a_course_without_a_term_does_not_invent_dates(connection, user):
+    stub = StubCanvas(
+        courses=[{'id': 11, 'course_code': 'ELEC3609'}],
+        assignments={11: [{'id': 501, 'name': 'Quiz'}]},
+    )
+    sync.run_sync(connection, client=stub)
+    root = PlanningItem.objects.get(user=user, canvas_object_type=CanvasObjectType.COURSE)
+    assert root.start_date is None
+    assert root.due_date is None
+    assert Timezone.objects.filter(user=user).count() == 0
 
 
 def test_sync_records_a_success_log(connection, user):

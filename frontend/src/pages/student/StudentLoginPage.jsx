@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom'
 import { login, verifyMfa } from '../../api/auth'
 import loginBackground from '../../assets/auth/login-background.png'
 import { useAuthStore } from '../../stores/authStore'
+import { errorMessage } from '../../lib/errors'
 
 export default function StudentLoginPage() {
   const navigate = useNavigate()
@@ -28,11 +29,7 @@ export default function StudentLoginPage() {
       setMfaToken(data.mfa_token)
       requestAnimationFrame(() => codeRefs.current[0]?.focus())
     } catch (err) {
-      setError(
-        err.response?.data?.detail ??
-          err.response?.data?.error ??
-          'Unable to log in.',
-      )
+      setError(errorMessage(err))
     } finally {
       setBusy(false)
     }
@@ -56,11 +53,7 @@ export default function StudentLoginPage() {
       setSession(session)
       navigate('/planner', { replace: true })
     } catch (err) {
-      setError(
-        err.response?.data?.detail ??
-          err.response?.data?.error ??
-          'Invalid authentication code.',
-      )
+      setError(errorMessage(err))
     } finally {
       setBusy(false)
     }

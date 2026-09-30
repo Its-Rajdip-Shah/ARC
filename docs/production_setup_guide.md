@@ -132,8 +132,8 @@ The install must also retrieve the pinned ARC scheduler package.
 Current frozen scheduler source:
 
     ARC-Scheduler-Arena
-    tag: v1.0.0
-    commit: 17b33d1db1a24dc96dbd9845a1bfe52290c7f5d4
+    package version: 1.0.0
+    commit: 0adf31715ae40aec6a93e15021c114e13241ad35
 
 ---
 

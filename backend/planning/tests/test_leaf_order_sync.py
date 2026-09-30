@@ -1,7 +1,7 @@
 """Leaf synchronization and reversible actions through the planning API."""
 import pytest
 from planning.models import ItemType, PlanningHistoryEntry, PlanningItem
-from planning.services import history
+from planning.services import history, scheduling
 
 pytestmark = pytest.mark.django_db
 
@@ -202,3 +202,59 @@ def test_leaf_between_interleaved_container_boundaries(user, api_for, make_item)
     assert response.status_code == 200, response.data
     assert [row['id'] for row in history.capture_priority(user)] == [a1.pk, a2.pk, leaf.pk, b1.pk, b2.pk]
     assert_roundtrip(client, user, before, state(user))
+
+
+def test_planner_reparent_runs_scheduler_once(
+    user,
+    api_for,
+    make_item,
+    monkeypatch,
+):
+    client = api_for(user)
+
+    left = make_item(
+        user,
+        'Left',
+        ItemType.GOAL,
+        sibling_order=1,
+    )
+
+    right = make_item(
+        user,
+        'Right',
+        ItemType.GOAL,
+        sibling_order=2,
+    )
+
+    moved = make_item(
+        user,
+        'Moved',
+        parent=left,
+        sibling_order=1,
+        priority_position=1,
+    )
+
+    calls = []
+    real_schedule = scheduling.schedule
+
+    def counted_schedule(*args, **kwargs):
+        calls.append((args, kwargs))
+        return real_schedule(*args, **kwargs)
+
+    monkeypatch.setattr(
+        scheduling,
+        'schedule',
+        counted_schedule,
+    )
+
+    response = client.post(
+        f'/api/planning/items/{moved.pk}/move/',
+        {
+            'parent_id': right.pk,
+            'sibling_order': 1,
+        },
+        format='json',
+    )
+
+    assert response.status_code == 200, response.data
+    assert len(calls) == 1

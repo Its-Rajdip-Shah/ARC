@@ -195,7 +195,7 @@ clear_do_today = return_to_automatic
 
 
 @transaction.atomic
-def reprioritise(user, item, new_position):
+def reprioritise(user, item, new_position, *, reconcile=True):
     """Explicit Focus reprioritisation crosses global Priority authority."""
 
     item_id = item.pk if isinstance(item, PlanningItem) else int(item)
@@ -204,7 +204,8 @@ def reprioritise(user, item, new_position):
 
     # Priority is canonical preference; scheduler consumes the resulting
     # canonical order but never owns it.
-    scheduling.schedule(user)
+    if reconcile:
+        scheduling.schedule(user)
     return result
 
 

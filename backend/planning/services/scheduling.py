@@ -1074,7 +1074,19 @@ def _finish(user, before, today, baseline):
 def _begin(user, today):
     priority._lock(user)
     before = _snapshot(user)
-    baseline = {(c['item_id'], c['code']) for c in schedule(user, today)['conflicts']}
+
+    # Timeline preflight needs only the established compatibility-conflict
+    # surface. For configured users, the public facade would additionally run
+    # the expensive frozen V1 optimiser before the canonical mutation, only to
+    # run V1 again in _finish(). Keep the exact legacy conflict contract here
+    # without performing that redundant pre-mutation V1 optimisation.
+    compatibility = _legacy_schedule(user, today)
+
+    baseline = {
+        (conflict['item_id'], conflict['code'])
+        for conflict in compatibility['conflicts']
+    }
+
     return before, baseline
 
 

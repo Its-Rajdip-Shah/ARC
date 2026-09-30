@@ -356,7 +356,11 @@ class PlanningItemViewSet(UserScopedMixin, viewsets.ModelViewSet):
             )
 
         try:
-            hierarchy.set_parent(item, new_parent_id)
+            hierarchy.set_parent(
+                item,
+                new_parent_id,
+                reconcile=False,
+            )
         except DjangoValidationError as exc:
             raise _as_400(exc)
 
@@ -365,7 +369,7 @@ class PlanningItemViewSet(UserScopedMixin, viewsets.ModelViewSet):
             item = hierarchy.set_sibling_order(item, order)
 
         leaf_order_sync.from_planner(item)
-        scheduling.schedule(request.user)
+        lifecycle.finish(request.user)
         item.refresh_from_db()
 
         siblings_after = []
@@ -876,6 +880,7 @@ class FocusReprioritiseView(APIView):
                 request.user,
                 item,
                 data['new_position'],
+                reconcile=False,
             )
             leaf_order_sync.from_priority(
                 request.user,

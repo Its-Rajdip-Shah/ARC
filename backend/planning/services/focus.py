@@ -15,15 +15,8 @@ from datetime import date
 
 from django.db import transaction
 from django.utils import timezone
-from planning.models import PlanningItem
+from planning.models import FocusState, PlanningDependency, PlanningItem
 from planning.services import dependencies, priority, scheduling
-
-
-# Current-focus selection is convenience/session state only.
-#
-# It intentionally does not live on PlanningItem. A future API/session layer
-# may persist this per session/device without changing planning semantics.
-_CURRENT_BY_USER: dict[int, int] = {}
 
 
 @dataclass(frozen=True)
@@ -50,7 +43,25 @@ def _ordered_candidates(user):
         )
     )
 
-    current_id = _CURRENT_BY_USER.get(user.pk)
+    current_id = (
+        FocusState.objects
+        .filter(user=user)
+        .values_list('current_item_id', flat=True)
+        .first()
+    )
+
+    blocked_ids = set(
+        PlanningDependency.objects
+        .filter(
+            dependent__user=user,
+            prerequisite__is_completed=False,
+            prerequisite__is_deleted=False,
+        )
+        .values_list(
+            'dependent_id',
+            flat=True,
+        )
+    )
 
     return sorted(
         (
@@ -63,7 +74,7 @@ def _ordered_candidates(user):
                 execution_rank=item.execution_rank,
                 is_current=item.pk == current_id,
             )
-            for item in rows if not dependencies.is_blocked(item)
+            for item in rows if item.pk not in blocked_ids
         ),
         key=lambda candidate: (
             candidate.scheduled_date,
@@ -92,7 +103,12 @@ def build(user, today=None):
         "today": today,
         "groups": dict(grouped),
         "candidates": candidates,
-        "current_item_id": _CURRENT_BY_USER.get(user.pk),
+        "current_item_id": (
+            FocusState.objects
+            .filter(user=user)
+            .values_list('current_item_id', flat=True)
+            .first()
+        ),
     }
 
 
@@ -118,10 +134,16 @@ def set_current(user, item):
     )
 
     if not exists:
-        _CURRENT_BY_USER.pop(user.pk, None)
+        clear_current(user)
         return None
 
-    _CURRENT_BY_USER[user.pk] = item_id
+    FocusState.objects.update_or_create(
+        user=user,
+        defaults={
+            'current_item_id': item_id,
+        },
+    )
+
     return reconcile_current(user)
 
 
@@ -130,7 +152,11 @@ set_current_focus = set_current
 
 
 def clear_current(user):
-    _CURRENT_BY_USER.pop(user.pk, None)
+    FocusState.objects.filter(
+        user=user,
+    ).update(
+        current_item=None,
+    )
 
 
 clear_current_focus = clear_current
@@ -193,16 +219,17 @@ def reconcile_current(user):
     dates, dependencies or any other planning fact.
     """
 
-    item_id = _CURRENT_BY_USER.get(user.pk)
-
-    if item_id is None:
-        return None
-
-    item = (
-        PlanningItem.objects
-        .filter(pk=item_id, user=user)
+    state = (
+        FocusState.objects
+        .filter(user=user)
+        .select_related('current_item')
         .first()
     )
+
+    if state is None or state.current_item_id is None:
+        return None
+
+    item = state.current_item
 
     executable = (
         item is not None
@@ -218,10 +245,13 @@ def reconcile_current(user):
     )
 
     if not executable:
-        _CURRENT_BY_USER.pop(user.pk, None)
+        state.current_item = None
+        state.save(
+            update_fields=['current_item'],
+        )
         return None
 
-    return item_id
+    return item.pk
 
 
 reconcile = reconcile_current

@@ -10,6 +10,7 @@ from django.db import transaction
 from planning.models import (
     AssignmentDetail,
     DurationCategory,
+    PlanningDependency,
     PlanningHistoryEntry,
     PlanningItem,
     SchedulerAllocation,
@@ -49,6 +50,7 @@ def serialize_item(item):
         ),
         "duration_category": item.duration_category,
         "manual_requested_date": item.manual_requested_date.isoformat() if item.manual_requested_date else None,
+        "manual_requested_order": item.manual_requested_order,
         "expired_manual_requested_date": item.expired_manual_requested_date.isoformat() if item.expired_manual_requested_date else None,
         "percent_completed": str(item.percent_completed),
         "progress_segments": [{'id': r.pk, 'percentage': str(r.percentage), 'scheduled_date': r.scheduled_date.isoformat() if r.scheduled_date else None, 'completed_at': r.completed_at.isoformat() if r.completed_at else None} for r in item.progress_segments.order_by('pk')],
@@ -358,6 +360,7 @@ def _restore_item_states(user, states):
             ),
             "duration_category": _historical_duration(state.get("duration_category")),
             "manual_requested_date": state.get('manual_requested_date'),
+            "manual_requested_order": state.get('manual_requested_order'),
             "expired_manual_requested_date": state.get("expired_manual_requested_date"),
             "percent_completed": state.get('percent_completed', 0),
             "priority_restore_context": state.get("priority_restore_context", {}),
@@ -511,6 +514,8 @@ def _apply_delta(user, state, action_type):
                 'scheduled_date': row['scheduled_date'],
                 'manual_requested_date':
                     row.get('manual_requested_date'),
+                'manual_requested_order':
+                    row.get('manual_requested_order'),
                 'priority_restore_context':
                     row['priority_restore_context'],
             }
@@ -572,6 +577,31 @@ def _apply_delta(user, state, action_type):
                 [],
             )
         ])
+
+        if 'dependencies' in state:
+            PlanningDependency.objects.filter(
+                prerequisite__user=user,
+                dependent__user=user,
+            ).delete()
+
+            PlanningDependency.objects.bulk_create([
+                PlanningDependency(
+                    prerequisite_id=
+                        row[
+                            'prerequisite_id'
+                        ],
+
+                    dependent_id=
+                        row[
+                            'dependent_id'
+                        ],
+                )
+                for row
+                in state.get(
+                    'dependencies',
+                    [],
+                )
+            ])
 
         return
 
@@ -703,15 +733,35 @@ def _validated_delta(user, state, action_type, expected):
         ids = set(state['delete_ids'])
         if PlanningItem.objects.filter(user=user, parent_id__in=ids).exclude(pk__in=ids).exists():
             raise ValidationError('Undo creation would delete later child work.')
-    _apply_delta(user, state, action_type)
-    lifecycle.validate_graph(user)
-    if action_type != 'SCHEDULE':
-        priority.reconcile(user)
-    scheduling._expire_past_manual_anchors(user, timezone.localdate())
-    # Restore proposals for schedule-only undo; subsequent scheduler runs may
-    # replace them. Other lifecycle inverses immediately rebuild projections.
-    if action_type != 'SCHEDULE':
-        lifecycle.finish(user)
+    _apply_delta(
+        user,
+        state,
+        action_type,
+    )
+
+    if action_type == 'SCHEDULE':
+        # Schedule checkpoints restore disposable proposals directly.
+        # Do not run the optimiser again while undoing an optimiser result.
+        lifecycle.validate_graph(
+            user
+        )
+
+        scheduling._expire_past_manual_anchors(
+            user,
+            timezone.localdate(),
+        )
+
+        return
+
+    # Canonical inverses must rebuild ARC projections and scheduling.
+    #
+    # lifecycle.finish() already performs graph validation, expired-anchor
+    # reconciliation, priority reconciliation, Focus reconciliation and the
+    # scheduler invocation. Running those steps here first duplicated a
+    # substantial part of every Undo/Redo request.
+    lifecycle.finish(
+        user
+    )
 
 
 def _historical_duration(value):

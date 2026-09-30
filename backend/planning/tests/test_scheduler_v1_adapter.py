@@ -5,6 +5,8 @@ from decimal import Decimal
 
 import pytest
 
+from django.utils import timezone
+
 from arc_scheduler import SchedulerFlavourV1
 
 from planning.models import (
@@ -341,3 +343,40 @@ def test_v1_builder_requires_explicit_valid_flavour(user):
             flavour="not-a-flavour",
             today=TODAY,
         )
+
+
+
+@pytest.mark.django_db
+def test_v1_adapter_forwards_manual_anchor_order(
+    user,
+    make_item,
+):
+    today = timezone.localdate()
+
+    item = make_item(
+        user,
+        'Manual ordered anchor',
+        duration_category=DurationCategory.UNDER_1_HOUR,
+    )
+
+    PlanningItem.objects.filter(
+        pk=item.pk,
+    ).update(
+        manual_requested_date=today,
+        manual_requested_order=2,
+    )
+
+    request = scheduler_v1.build_scheduler_input(
+        user,
+        today=today,
+        flavour=SchedulerFlavourV1.LOCK_IN,
+    )
+
+    scheduler_item = next(
+        row
+        for row in request.tasks
+        if row.item_id == item.pk
+    )
+
+    assert scheduler_item.anchor_date == today
+    assert scheduler_item.anchor_order == 2

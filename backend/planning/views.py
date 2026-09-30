@@ -6,6 +6,7 @@ than 403 (FR-03). The business rules live in planning/services and are only
 called from here.
 """
 
+from collections import Counter
 from datetime import datetime, timedelta
 from decimal import Decimal
 
@@ -31,6 +32,7 @@ from core.mixins import UserScopedMixin
 from planning import queries
 from planning.models import (
     AssignmentDetail,
+    DurationCategory,
     ItemType,
     PlanningItem,
     SchedulerAllocation,
@@ -50,6 +52,12 @@ from planning.serializers import (
     SchedulerSettingsSerializer,
     SchedulerSettingsUpdateSerializer,
     CompleteSerializer,
+    FocusCurrentSerializer,
+    FocusAnchorSerializer,
+    FocusAnchorBatchSerializer,
+    FocusDoTodaySerializer,
+    FocusProjectionSerializer,
+    FocusReprioritiseSerializer,
     MarkGroupSerializer,
     MarksReorderSerializer,
     MoveSerializer,
@@ -64,8 +72,9 @@ from planning.serializers import (
     TimelineNavigationItemSerializer,
     TimezoneSerializer,
 )
-from planning.services import dependencies, hierarchy, leaf_order_sync, overdue, priority, progress, scheduling
-from planning.services import deletion, history
+from planning.services import dependencies, focus, hierarchy, leaf_order_sync, overdue, priority, progress, scheduling
+from planning.services import deletion, history, lifecycle
+from planning.services.focus_buckets import focus_bucket_key
 
 
 def _as_400(exc):
@@ -413,10 +422,58 @@ class PlanningItemViewSet(UserScopedMixin, viewsets.ModelViewSet):
         )
         priority_before = history.capture_priority(request.user, include_unpositioned=True)
 
-        if serializer.validated_data['completed']:
-            affected = hierarchy.complete_subtree(
-                item,
-            )
+        completed = serializer.validated_data[
+            'completed'
+        ]
+
+        reschedule = serializer.validated_data[
+            'reschedule'
+        ]
+
+        if completed:
+            if reschedule:
+                affected = hierarchy.complete_subtree(
+                    item,
+                )
+            else:
+                # Focus fast-path:
+                #
+                # Completion itself is canonical and must be committed
+                # immediately, but Focus does not need to synchronously run
+                # the expensive global optimiser before acknowledging the
+                # user's checkbox action.
+                #
+                # Preserve everybody else's disposable schedule. Remove only
+                # proposal state belonging to work that just became complete.
+                affected = hierarchy.complete_subtree(
+                    item,
+                    reconcile=False,
+                )
+
+                lifecycle.validate_graph(
+                    request.user,
+                )
+
+                priority.reconcile(
+                    request.user,
+                )
+
+                PlanningItem.objects.filter(
+                    user=request.user,
+                    pk__in=affected,
+                ).update(
+                    scheduled_date=None,
+                    execution_rank=None,
+                )
+
+                SchedulerAllocation.objects.filter(
+                    item__user=request.user,
+                    item_id__in=affected,
+                ).delete()
+
+                focus.reconcile_current(
+                    request.user,
+                )
         else:
             # Splittable work carries canonical confirmed progress.
             # Its inverse is DUR-009's local progress reversal rather than
@@ -579,6 +636,279 @@ class PriorityReorderView(APIView):
 
         # Return the authoritative global priority order.
         return Response(_priority_rows(request.user, items))
+
+
+def _focus_projection(user):
+    projection = focus.build(
+        user,
+        today=timezone.localdate(),
+    )
+
+    parents = queries.parent_map(
+        user.pk,
+    )
+
+    candidate_ids = [
+        candidate.item_id
+        for candidate in projection['candidates']
+    ]
+
+    candidate_items = {
+        item.pk: item
+        for item in (
+            PlanningItem.objects
+            .for_user(user)
+            .filter(
+                pk__in=candidate_ids,
+            )
+        )
+    }
+
+    titles = dict(
+        PlanningItem.objects
+        .for_user(user)
+        .values_list(
+            'pk',
+            'title',
+        )
+    )
+
+    def serialize_candidate(candidate):
+        item = candidate_items[
+            candidate.item_id
+        ]
+
+        ancestors = [
+            titles[item_id]
+            for item_id in reversed(
+                queries.ancestor_chain(
+                    parents,
+                    candidate.item_id,
+                )
+            )
+            if item_id in titles
+        ]
+
+        return {
+            'item_id': candidate.item_id,
+            'title': candidate.title,
+            'duration_category':
+                candidate.duration_category,
+            'scheduled_date':
+                candidate.scheduled_date,
+            'priority_position':
+                candidate.priority_position,
+            'execution_rank':
+                candidate.execution_rank,
+            'is_current':
+                candidate.is_current,
+            'hierarchy_path':
+                ancestors + [candidate.title],
+            'description':
+                item.description,
+            'start_date':
+                item.start_date,
+            'due_date':
+                item.due_date,
+            'manual_requested_date':
+                item.manual_requested_date,
+            'manual_requested_order':
+                item.manual_requested_order,
+            'percent_completed':
+                float(
+                    item.percent_completed
+                    or 0
+                ),
+        }
+
+    candidates = [
+        serialize_candidate(candidate)
+        for candidate in projection['candidates']
+    ]
+
+    by_id = {
+        candidate['item_id']: candidate
+        for candidate in candidates
+    }
+
+    groups = {
+        value: [
+            by_id[candidate.item_id]
+            for candidate in projection['groups'].get(
+                value,
+                [],
+            )
+        ]
+        for value in DurationCategory.values
+    }
+
+    return FocusProjectionSerializer({
+        'today':
+            projection['today'],
+        'groups':
+            groups,
+        'candidates':
+            candidates,
+        'current_item_id':
+            projection['current_item_id'],
+    }).data
+
+
+class FocusView(APIView):
+    """Read-only projection over already-scheduled ARC work."""
+
+    @extend_schema(
+        responses=FocusProjectionSerializer,
+    )
+    def get(self, request):
+        return Response(
+            _focus_projection(
+                request.user,
+            )
+        )
+
+
+class FocusCurrentView(APIView):
+    """Set or clear convenience-only current Focus."""
+
+    @extend_schema(
+        request=FocusCurrentSerializer,
+        responses=FocusProjectionSerializer,
+    )
+    def post(self, request):
+        serializer = FocusCurrentSerializer(
+            data=request.data,
+        )
+        serializer.is_valid(
+            raise_exception=True,
+        )
+
+        item_id = serializer.validated_data[
+            'item_id'
+        ]
+
+        if item_id is None:
+            focus.clear_current(
+                request.user,
+            )
+        else:
+            item = (
+                PlanningItem.objects
+                .for_user(request.user)
+                .filter(
+                    pk=item_id,
+                    is_deleted=False,
+                )
+                .first()
+            )
+
+            if item is None:
+                return Response(
+                    {
+                        'detail':
+                            'Planning item not found.',
+                    },
+                    status=404,
+                )
+
+            focus.set_current(
+                request.user,
+                item,
+            )
+
+        return Response(
+            _focus_projection(
+                request.user,
+            )
+        )
+
+
+class FocusReprioritiseView(APIView):
+    """Explicit canonical global-priority mutation from Focus."""
+
+    @extend_schema(
+        request=FocusReprioritiseSerializer,
+        responses=FocusProjectionSerializer,
+    )
+    @transaction.atomic
+    def post(self, request):
+        serializer = FocusReprioritiseSerializer(
+            data=request.data,
+        )
+        serializer.is_valid(
+            raise_exception=True,
+        )
+
+        data = serializer.validated_data
+
+        item = (
+            PlanningItem.objects
+            .for_user(request.user)
+            .filter(
+                pk=data['item_id'],
+                is_deleted=False,
+            )
+            .first()
+        )
+
+        if item is None:
+            return Response(
+                {
+                    'detail':
+                        'Planning item not found.',
+                },
+                status=404,
+            )
+
+        before = {
+            'priority':
+                history.capture_priority(
+                    request.user,
+                ),
+            'leaf_siblings':
+                history.capture_leaf_order(
+                    request.user,
+                ),
+        }
+
+        try:
+            focus.reprioritise(
+                request.user,
+                item,
+                data['new_position'],
+            )
+            leaf_order_sync.from_priority(
+                request.user,
+            )
+            scheduling.schedule(
+                request.user,
+            )
+        except DjangoValidationError as exc:
+            raise _as_400(exc)
+
+        after = {
+            'priority':
+                history.capture_priority(
+                    request.user,
+                ),
+            'leaf_siblings':
+                history.capture_leaf_order(
+                    request.user,
+                ),
+        }
+
+        history.record_checkpoint(
+            request.user,
+            'PRIORITY',
+            before,
+            after,
+        )
+
+        return Response(
+            _focus_projection(
+                request.user,
+            )
+        )
 
 
 class TimelineNavigationView(APIView):
@@ -936,187 +1266,652 @@ class SchedulerSettingsView(APIView):
         })
 
 
-class ScheduleAnchorView(APIView):
-    """Explicit anchor/unanchor boundary for Timeline interactions.
-
-    Authoritative state transitions remain in planning.services.scheduling.
-    This view only translates situations requiring a human decision into a
-    stable frontend-facing 409 response.
-    """
-
-    @extend_schema(request=ScheduleAnchorSerializer)
-    def post(self, request):
-        serializer = ScheduleAnchorSerializer(
-            data=request.data,
+def _schedule_anchor_response(user, data):
+    item = (
+        PlanningItem.objects
+        .for_user(user)
+        .filter(
+            pk=data['item_id'],
+            is_deleted=False,
         )
-        serializer.is_valid(raise_exception=True)
+        .first()
+    )
 
-        data = serializer.validated_data
-
-        item = (
-            PlanningItem.objects
-            .for_user(request.user)
-            .filter(
-                pk=data['item_id'],
-                is_deleted=False,
-            )
-            .first()
+    if item is None:
+        return Response(
+            {
+                'detail':
+                    'Planning item not found.',
+            },
+            status=404,
         )
 
-        if item is None:
-            return Response(
-                {'detail': 'Planning item not found.'},
-                status=404,
-            )
+    if data.get('remove', False):
+        item = scheduling.remove_anchor(
+            item,
+        )
 
-        if data['remove']:
-            item = scheduling.remove_anchor(item)
+        return Response({
+            'item_id':
+                item.pk,
+            'manual_requested_date':
+                None,
+            'manual_requested_order':
+                None,
+            'scheduled_date':
+                item.scheduled_date,
+            'start_date':
+                item.start_date,
+            'due_date':
+                item.due_date,
+            'removed':
+                True,
+        })
 
-            return Response({
-                'item_id': item.pk,
-                'manual_requested_date': None,
-                'scheduled_date': item.scheduled_date,
-                'start_date': item.start_date,
-                'due_date': item.due_date,
-                'removed': True,
-            })
+    day = data['date']
 
-        day = data['date']
+    if day < timezone.localdate():
+        return Response(
+            {
+                'conflicts': [
+                    {
+                        'item_id':
+                            item.pk,
+                        'code':
+                            'past_date',
+                    },
+                ],
+                'decisions': [],
+            },
+            status=409,
+        )
 
-        # Past placement has no valid override.
-        if day < timezone.localdate():
+    conflicts = []
+    decisions = []
+
+    if (
+        item.due_date
+        and day > item.due_date
+        and not data.get(
+            'change_deadline',
+            False,
+        )
+    ):
+        conflicts.append({
+            'item_id':
+                item.pk,
+            'code':
+                'after_deadline',
+        })
+
+        decisions.append({
+            'code':
+                'change_deadline',
+            'label': (
+                'Move the deadline to the anchor '
+                'date and continue'
+            ),
+        })
+
+    if (
+        item.start_date
+        and day < item.start_date
+        and not data.get(
+            'change_release',
+            False,
+        )
+    ):
+        conflicts.append({
+            'item_id':
+                item.pk,
+            'code':
+                'before_release',
+        })
+
+        decisions.append({
+            'code':
+                'change_release',
+            'label': (
+                'Move the release date to the anchor '
+                'date and continue'
+            ),
+        })
+
+    if (
+        dependencies.is_blocked(item)
+        and not data.get(
+            'acknowledge_dependency_block',
+            False,
+        )
+    ):
+        conflicts.append({
+            'item_id':
+                item.pk,
+            'code':
+                'blocked_dependency',
+        })
+
+        decisions.append({
+            'code':
+                'acknowledge_dependency_block',
+            'label': (
+                'Keep this as future date intent '
+                'while the dependency is blocked'
+            ),
+        })
+
+    if conflicts:
+        return Response(
+            {
+                'conflicts':
+                    conflicts,
+                'decisions':
+                    decisions,
+            },
+            status=409,
+        )
+
+    try:
+        item = scheduling.set_anchor(
+            item,
+            day,
+            order=data.get(
+                'order',
+            ),
+            change_deadline=data.get(
+                'change_deadline',
+                False,
+            ),
+            change_release=data.get(
+                'change_release',
+                False,
+            ),
+            allow_overload=data.get(
+                'allow_overload',
+                False,
+            ),
+        )
+
+    except DjangoValidationError as exc:
+        messages = getattr(
+            exc,
+            'messages',
+            [str(exc)],
+        )
+
+        if any(
+            'overload'
+            in str(message).lower()
+            for message in messages
+        ):
             return Response(
                 {
                     'conflicts': [
                         {
-                            'item_id': item.pk,
-                            'code': 'past_date',
+                            'item_id':
+                                item.pk,
+                            'code':
+                                'capacity_exceeded',
                         },
                     ],
-                    'decisions': [],
+                    'decisions': [
+                        {
+                            'code':
+                                'allow_overload',
+                            'label': (
+                                'Allow overload on this '
+                                'date and continue'
+                            ),
+                        },
+                    ],
                 },
                 status=409,
             )
 
+        raise _as_400(exc)
+
+    return Response({
+        'item_id':
+            item.pk,
+        'manual_requested_date':
+            item.manual_requested_date,
+        'manual_requested_order':
+            item.manual_requested_order,
+        'scheduled_date':
+            item.scheduled_date,
+        'start_date':
+            item.start_date,
+        'due_date':
+            item.due_date,
+        'removed':
+            False,
+    })
+
+
+class ScheduleAnchorView(APIView):
+    """Existing Timeline explicit anchor/unanchor boundary."""
+
+    @extend_schema(
+        request=ScheduleAnchorSerializer,
+    )
+    def post(self, request):
+        serializer = ScheduleAnchorSerializer(
+            data=request.data,
+        )
+        serializer.is_valid(
+            raise_exception=True,
+        )
+
+        return _schedule_anchor_response(
+            request.user,
+            serializer.validated_data,
+        )
+
+
+
+
+class FocusAnchorView(APIView):
+    """Explicit Focus date + within-day order anchor."""
+
+    @extend_schema(
+        request=FocusAnchorSerializer,
+    )
+    def post(self, request):
+        serializer = FocusAnchorSerializer(
+            data=request.data,
+        )
+        serializer.is_valid(
+            raise_exception=True,
+        )
+
+        return _schedule_anchor_response(
+            request.user,
+            serializer.validated_data,
+        )
+
+
+
+class FocusAnchorBatchView(APIView):
+    """Atomically apply coalesced Focus placement intent."""
+
+    @extend_schema(
+        request=FocusAnchorBatchSerializer,
+    )
+    @transaction.atomic
+    def post(self, request):
+        serializer = FocusAnchorBatchSerializer(
+            data=request.data,
+        )
+
+        serializer.is_valid(
+            raise_exception=True,
+        )
+
+        changes = serializer.validated_data[
+            "changes"
+        ]
+
+        today = timezone.localdate()
+
+        item_ids = [
+            change[
+                "item_id"
+            ]
+            for change in changes
+        ]
+
+        items = {
+            item.pk: item
+            for item in (
+                PlanningItem.objects
+                .for_user(
+                    request.user
+                )
+                .filter(
+                    pk__in=item_ids,
+                )
+            )
+        }
+
         conflicts = []
         decisions = []
 
-        if (
-            item.due_date
-            and day > item.due_date
-            and not data['change_deadline']
-        ):
-            conflicts.append({
-                'item_id': item.pk,
-                'code': 'after_deadline',
-            })
+        for change in changes:
+            item = items.get(
+                change[
+                    "item_id"
+                ]
+            )
 
-            decisions.append({
-                'code': 'change_deadline',
-                'label': (
-                    'Move the deadline to the anchor '
-                    'date and continue'
-                ),
-            })
+            if item is None:
+                raise ValidationError({
+                    "item_id":
+                        "Choose a planning item."
+                })
 
-        if (
-            item.start_date
-            and day < item.start_date
-            and not data['change_release']
-        ):
-            conflicts.append({
-                'item_id': item.pk,
-                'code': 'before_release',
-            })
+            day = change[
+                "date"
+            ]
 
-            decisions.append({
-                'code': 'change_release',
-                'label': (
-                    'Move the release date to the '
-                    'anchor date and continue'
-                ),
-            })
+            if day < today:
+                conflicts.append({
+                    "item_id":
+                        item.pk,
 
-        # Dependencies remain hard.  The user may acknowledge that the
-        # anchor is only future date intent; this never overrides precedence.
-        if (
-            dependencies.is_blocked(item)
-            and not data['acknowledge_dependency_block']
-        ):
-            conflicts.append({
-                'item_id': item.pk,
-                'code': 'blocked_dependency',
-            })
+                    "item_title":
+                        item.title,
 
-            decisions.append({
-                'code': 'acknowledge_dependency_block',
-                'label': (
-                    'Keep this as future date intent '
-                    'while the dependency is blocked'
-                ),
-            })
+                    "code":
+                        "past_date",
+                })
+
+                continue
+
+            if (
+                item.due_date
+                and day > item.due_date
+                and not change.get(
+                    "change_deadline",
+                    False,
+                )
+            ):
+                conflicts.append({
+                    "item_id":
+                        item.pk,
+
+                    "item_title":
+                        item.title,
+
+                    "code":
+                        "after_deadline",
+
+                    "current_date":
+                        item.due_date,
+
+                    "requested_date":
+                        day,
+                })
+
+                decisions.append({
+                    "item_id":
+                        item.pk,
+
+                    "code":
+                        "change_deadline",
+
+                    "label":
+                        "Move deadline and continue",
+                })
+
+            if (
+                item.start_date
+                and day < item.start_date
+                and not change.get(
+                    "change_release",
+                    False,
+                )
+            ):
+                conflicts.append({
+                    "item_id":
+                        item.pk,
+
+                    "item_title":
+                        item.title,
+
+                    "code":
+                        "before_release",
+
+                    "current_date":
+                        item.start_date,
+
+                    "requested_date":
+                        day,
+                })
+
+                decisions.append({
+                    "item_id":
+                        item.pk,
+
+                    "code":
+                        "change_release",
+
+                    "label":
+                        "Move release date and continue",
+                })
+
+            blocking = list(
+                dependencies.blocking_edges(
+                    item
+                )
+            )
+
+            if (
+                blocking
+                and not change.get(
+                    "dissolve_dependencies",
+                    False,
+                )
+            ):
+                conflicts.append({
+                    "item_id":
+                        item.pk,
+
+                    "item_title":
+                        item.title,
+
+                    "code":
+                        "blocked_dependency",
+
+                    "prerequisites": [
+                        {
+                            "item_id":
+                                edge.prerequisite_id,
+
+                            "title":
+                                edge.prerequisite.title,
+                        }
+                        for edge
+                        in blocking
+                    ],
+                })
+
+                decisions.append({
+                    "item_id":
+                        item.pk,
+
+                    "code":
+                        "dissolve_dependencies",
+
+                    "label": (
+                        "Dissolve dependency and continue"
+                        if len(blocking) == 1
+                        else
+                        "Dissolve dependencies and continue"
+                    ),
+                })
+
+        capacity_conflicts = (
+            scheduling
+            .focus_capacity_conflicts(
+                request.user,
+                changes,
+            )
+        )
+
+        conflicts.extend(
+            capacity_conflicts
+        )
+
+        decisions.extend([
+            {
+                "item_id":
+                    conflict[
+                        "item_id"
+                    ],
+
+                "code":
+                    "allow_overload",
+
+                "label":
+                    "Allow overload and continue",
+            }
+            for conflict
+            in capacity_conflicts
+        ])
 
         if conflicts:
             return Response(
                 {
-                    'conflicts': conflicts,
-                    'decisions': decisions,
+                    "conflicts":
+                        conflicts,
+
+                    "decisions":
+                        decisions,
                 },
                 status=409,
             )
 
         try:
-            item = scheduling.set_anchor(
-                item,
-                day,
-                change_deadline=data['change_deadline'],
-                change_release=data['change_release'],
-                allow_overload=data['allow_overload'],
+            result = (
+                scheduling.set_anchor_batch(
+                    request.user,
+                    changes,
+                )
+            )
+
+        except scheduling.SchedulingConflict as exc:
+            capacity_item_ids = {
+                conflict.get(
+                    "item_id"
+                )
+                for conflict
+                in exc.conflicts
+                if (
+                    conflict.get(
+                        "code"
+                    )
+                    == "capacity_exceeded"
+                )
+            }
+
+            return Response(
+                {
+                    "conflicts":
+                        exc.conflicts,
+
+                    "decisions": [
+                        {
+                            "item_id":
+                                item_id,
+
+                            "code":
+                                "allow_overload",
+
+                            "label":
+                                "Allow overload and continue",
+                        }
+                        for item_id
+                        in capacity_item_ids
+                        if item_id is not None
+                    ],
+                },
+                status=409,
             )
 
         except DjangoValidationError as exc:
-            messages = getattr(
-                exc,
-                'messages',
-                [str(exc)],
+            raise _as_400(
+                exc
             )
 
-            if any(
-                'overload' in str(message).lower()
-                for message in messages
-            ):
-                return Response(
-                    {
-                        'conflicts': [
-                            {
-                                'item_id': item.pk,
-                                'code': 'capacity_exceeded',
-                            },
-                        ],
-                        'decisions': [
-                            {
-                                'code': 'allow_overload',
-                                'label': (
-                                    'Allow overload on this '
-                                    'date and continue'
-                                ),
-                            },
-                        ],
-                    },
-                    status=409,
-                )
-
-            raise _as_400(exc)
-
         return Response({
-            'item_id': item.pk,
-            'manual_requested_date':
-                item.manual_requested_date,
-            'scheduled_date': item.scheduled_date,
-            'start_date': item.start_date,
-            'due_date': item.due_date,
-            'removed': False,
+            "changed_ids":
+                result.get(
+                    "changed_ids",
+                    [],
+                ),
+
+            "conflicts":
+                result.get(
+                    "conflicts",
+                    [],
+                ),
+
+            "scheduler":
+                result.get(
+                    "scheduler",
+                    {},
+                ),
+
+            "focus":
+                _focus_projection(
+                    request.user
+                ),
+
+            **history.history_status(
+                request.user
+            ),
         })
+
+
+class FocusDoTodayView(APIView):
+    """Explicit Focus promotion using Timeline anchor semantics."""
+
+    @extend_schema(
+        request=FocusDoTodaySerializer,
+    )
+    def post(self, request):
+        serializer = FocusDoTodaySerializer(
+            data=request.data,
+        )
+        serializer.is_valid(
+            raise_exception=True,
+        )
+
+        return _schedule_anchor_response(
+            request.user,
+            {
+                **serializer.validated_data,
+                'date':
+                    timezone.localdate(),
+                'remove':
+                    False,
+            },
+        )
+
+
+class FocusAutomaticView(APIView):
+    """Remove explicit date intent and return item to scheduler control."""
+
+    @extend_schema(
+        request=FocusCurrentSerializer,
+    )
+    def post(self, request):
+        serializer = FocusCurrentSerializer(
+            data=request.data,
+        )
+        serializer.is_valid(
+            raise_exception=True,
+        )
+
+        item_id = serializer.validated_data[
+            'item_id'
+        ]
+
+        if item_id is None:
+            raise ValidationError({
+                'item_id':
+                    'Choose a planning item.',
+            })
+
+        return _schedule_anchor_response(
+            request.user,
+            {
+                'item_id':
+                    item_id,
+                'remove':
+                    True,
+            },
+        )
 
 
 class ScheduleMoveView(APIView):

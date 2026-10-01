@@ -268,6 +268,21 @@ class MoveSerializer(serializers.Serializer):
         queryset=PlanningItem.objects.all(), allow_null=True
     )
     sibling_order = serializers.IntegerField(required=False, min_value=1)
+    adopt_child_ids = UserScopedPrimaryKeyRelatedField(
+        queryset=PlanningItem.objects.all(),
+        many=True,
+        required=False,
+    )
+
+    def validate_adopt_child_ids(self, value):
+        ids = [item.pk for item in value]
+
+        if len(ids) != len(set(ids)):
+            raise serializers.ValidationError(
+                'Each adopted child may appear only once.'
+            )
+
+        return value
 
 
 class CompleteSerializer(serializers.Serializer):

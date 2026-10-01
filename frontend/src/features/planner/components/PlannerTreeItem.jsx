@@ -9,7 +9,6 @@ import {
 } from 'lucide-react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useSortable } from '@dnd-kit/sortable'
-import { CSS } from '@dnd-kit/utilities'
 
 import { completeItem, deleteItem } from '../../../api/planning'
 import {
@@ -39,6 +38,7 @@ const plannerCompletionRequests =
 export default function PlannerTreeItem({
   item,
   depth = 0,
+  previewDepth = null,
   selectedItemId,
   panelOwnerId,
   hoveredItemId,
@@ -315,8 +315,23 @@ export default function PlannerTreeItem({
       data-planner-item-id={item.id}
       className="relative scroll-mt-[150px]"
       style={{
-        transform: CSS.Transform.toString(transform),
+        /*
+         * Planner uses translation-only movement.
+         *
+         * Descendants are intentionally hidden while their parent is dragged,
+         * but they remain structurally attached and reappear after DragEnd.
+         */
+        transform:
+          transform
+            ? `translate3d(${
+                transform.x ?? 0
+              }px, ${
+                transform.y ?? 0
+              }px, 0)`
+            : undefined,
+
         transition,
+
         opacity: isDragging ? 0.5 : 1,
         zIndex: isDragging ? 20 : undefined,
       }}
@@ -336,6 +351,7 @@ export default function PlannerTreeItem({
       ))}
 
       <div
+        data-arc-planner-card-id={item.id}
         {...attributes}
         {...listeners}
         onMouseEnter={() => onHoverItem?.(item.id)}
@@ -348,6 +364,44 @@ export default function PlannerTreeItem({
           paddingLeft: `${indent}px`,
         }}
       >
+        {isDragging && previewDepth != null && (
+          <>
+            <span
+              aria-hidden="true"
+              className="
+                pointer-events-none absolute inset-y-0
+                z-30 w-[2px] bg-[#c3d19b]
+              "
+              style={{
+                left:
+                  depth === 0
+                    ? '0px'
+                    : `${(depth - 1) * 42 + 33}px`,
+              }}
+            />
+
+            {previewDepth > 1 && (
+              <span
+                aria-hidden="true"
+                className="
+                  pointer-events-none absolute inset-y-0
+                  z-30 w-[2px] bg-[#7c9cde]/60
+                "
+                style={{
+                  left:
+                    depth === 0
+                      ? '-42px'
+                      : `${
+                          (depth - 1) * 42
+                          + 33
+                          - 42
+                        }px`,
+                }}
+              />
+            )}
+          </>
+        )}
+
         {isSearchMatch ? (
           <div
             aria-hidden="true"

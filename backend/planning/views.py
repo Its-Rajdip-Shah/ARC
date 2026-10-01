@@ -338,35 +338,97 @@ class PlanningItemViewSet(UserScopedMixin, viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     @transaction.atomic
     def move(self, request, pk=None):
-        """FR-06: re-parent, refusing any move that would close a cycle."""
+        """FR-06: atomically move one subtree and optionally adopt following branches."""
         item = self.get_object()
-        serializer = MoveSerializer(data=request.data, context={'request': request})
+        serializer = MoveSerializer(
+            data=request.data,
+            context={'request': request},
+        )
         serializer.is_valid(raise_exception=True)
 
-        priority_before = history.capture_priority(request.user, include_unpositioned=True)
-        old_parent_id = item.parent_id
-        new_parent_id = serializer.validated_data['parent_id']
+        priority_before = history.capture_priority(
+            request.user,
+            include_unpositioned=True,
+        )
 
-        affected_parent_ids = {old_parent_id, new_parent_id}
+        old_parent_id = item.parent_id
+        new_parent = serializer.validated_data['parent_id']
+        new_parent_id = (
+            new_parent.pk
+            if new_parent is not None
+            else None
+        )
+
+        adopt_children = list(
+            serializer.validated_data.get(
+                'adopt_child_ids',
+                [],
+            )
+        )
+
+        if any(
+            child.pk == item.pk
+            for child in adopt_children
+        ):
+            raise ValidationError({
+                'adopt_child_ids':
+                    'An item cannot adopt itself.',
+            })
+
+        affected_parent_ids = {
+            old_parent_id,
+            new_parent_id,
+            item.pk,
+            *(
+                child.parent_id
+                for child in adopt_children
+            ),
+        }
 
         siblings_before = []
         for parent_id in affected_parent_ids:
             siblings_before.extend(
-                history.capture_siblings(request.user, parent_id)
+                history.capture_siblings(
+                    request.user,
+                    parent_id,
+                )
             )
 
         try:
             hierarchy.set_parent(
                 item,
-                new_parent_id,
+                new_parent,
                 reconcile=False,
             )
+
+            order = serializer.validated_data.get(
+                'sibling_order'
+            )
+
+            if order is not None:
+                item = hierarchy.set_sibling_order(
+                    item,
+                    order,
+                )
+
+            item.refresh_from_db()
+
+            # Adopt following branch roots in the exact order supplied by
+            # the frontend projection. Existing children remain before them.
+            for child in adopt_children:
+                child.refresh_from_db()
+
+                if child.parent_id == item.pk:
+                    continue
+
+                hierarchy.set_parent(
+                    child,
+                    item,
+                    reconcile=False,
+                )
+
         except DjangoValidationError as exc:
             raise _as_400(exc)
-
-        order = serializer.validated_data.get('sibling_order')
-        if order is not None:
-            item = hierarchy.set_sibling_order(item, order)
 
         leaf_order_sync.from_planner(item)
         lifecycle.finish(request.user)
@@ -375,12 +437,27 @@ class PlanningItemViewSet(UserScopedMixin, viewsets.ModelViewSet):
         siblings_after = []
         for parent_id in affected_parent_ids:
             siblings_after.extend(
-                history.capture_siblings(request.user, parent_id)
+                history.capture_siblings(
+                    request.user,
+                    parent_id,
+                )
             )
 
-        before = {'siblings': siblings_before}
-        after = {'siblings': siblings_after}
-        priority_after = history.capture_priority(request.user, include_unpositioned=True)
+        before = {
+            'siblings':
+                siblings_before,
+        }
+
+        after = {
+            'siblings':
+                siblings_after,
+        }
+
+        priority_after = history.capture_priority(
+            request.user,
+            include_unpositioned=True,
+        )
+
         if priority_before != priority_after:
             before['priority'] = priority_before
             after['priority'] = priority_after
@@ -392,7 +469,11 @@ class PlanningItemViewSet(UserScopedMixin, viewsets.ModelViewSet):
             after,
         )
 
-        return Response(self.get_serializer(item).data)
+        return Response(
+            self.get_serializer(
+                item,
+            ).data
+        )
 
     @extend_schema(
         request=CompleteSerializer,

@@ -1,21 +1,57 @@
-import { useEffect, useMemo, useState } from 'react'
-import {
-  DndContext,
-  PointerSensor,
-  closestCenter,
-  useSensor,
-  useSensors,
-} from '@dnd-kit/core'
-import {
-  SortableContext,
-  verticalListSortingStrategy,
-} from '@dnd-kit/sortable'
+import { useEffect, useMemo } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 
 import { deleteItem, moveItem } from '../../../api/planning'
 import PlannerTreeItem from './PlannerTreeItem'
+import PlannerDnd from '../../../dnd/planner/PlannerDnd'
+import {
+  applyPlannerMove,
+  flattenPlanningTree,
+  projectPlannerDrop,
+  removePlannerItem,
+} from '../../../dnd/planner/plannerProjection'
+import {
+  createSerialActionQueue,
+} from '../../../lib/latestIntentQueue'
 
-const INDENT_WIDTH = 42
+
+const plannerStructuralRequests =
+  createSerialActionQueue(
+    async (action) => {
+      if (
+        action.type ===
+        'move'
+      ) {
+        return moveItem(
+          action.itemId,
+          {
+            parent_id:
+              action.parentId,
+
+            sibling_order:
+              action.siblingOrder,
+
+            adopt_child_ids:
+              action.adoptChildIds
+              ?? [],
+          },
+        )
+      }
+
+      if (
+        action.type ===
+        'delete'
+      ) {
+        return deleteItem(
+          action.itemId,
+        )
+      }
+
+      throw new Error(
+        `Unknown Planner structural action: ${action.type}`,
+      )
+    },
+  )
 
 function filterCompletedItems(items) {
   return items
@@ -107,168 +143,6 @@ function searchPlanningTree(items, rawQuery) {
   }
 }
 
-function flattenTree(items, parentId = null, depth = 0) {
-  return items.flatMap((item) => [
-    {
-      ...item,
-      parentId,
-      depth,
-    },
-    ...flattenTree(item.children ?? [], item.id, depth + 1),
-  ])
-}
-
-function getDescendantIds(flatItems, itemId) {
-  const index = flatItems.findIndex((item) => item.id === itemId)
-
-  if (index === -1) {
-    return []
-  }
-
-  const depth = flatItems[index].depth
-  const descendants = []
-
-  for (let i = index + 1; i < flatItems.length; i += 1) {
-    if (flatItems[i].depth <= depth) {
-      break
-    }
-
-    descendants.push(flatItems[i].id)
-  }
-
-  return descendants
-}
-
-function getProjection({
-  items,
-  activeId,
-  overId,
-  dropSide,
-  dragOffset,
-}) {
-  const activeItem = items.find((item) => item.id === activeId)
-
-  if (!activeItem) {
-    return null
-  }
-
-  /*
-   * Moving a parent moves its whole subtree.
-   * Remove that entire subtree before calculating the destination.
-   */
-  const descendantIds = new Set(
-    getDescendantIds(items, activeId),
-  )
-
-  const remainingItems = items.filter(
-    (item) =>
-      item.id !== activeId &&
-      !descendantIds.has(item.id),
-  )
-
-  const overIndex = remainingItems.findIndex(
-    (item) => item.id === overId,
-  )
-
-  /*
-   * If we're still over the active item itself, there is no meaningful
-   * insertion target yet.
-   */
-  if (overIndex === -1) {
-    return {
-      depth: activeItem.depth,
-      parentId: activeItem.parentId,
-      siblingOrder: null,
-    }
-  }
-
-  /*
-   * This is the important part:
-   *
-   * upper half of target => insert BEFORE it
-   * lower half of target => insert AFTER it
-   *
-   * Therefore upward/downward movement is symmetric.
-   */
-  const insertionIndex =
-    dropSide === 'after'
-      ? overIndex + 1
-      : overIndex
-
-  const previousItem =
-    insertionIndex > 0
-      ? remainingItems[insertionIndex - 1]
-      : null
-
-  const nextItem =
-    insertionIndex < remainingItems.length
-      ? remainingItems[insertionIndex]
-      : null
-
-  const depthChange = Math.round(
-    dragOffset / INDENT_WIDTH,
-  )
-
-  let projectedDepth =
-    activeItem.depth + depthChange
-
-  const maxDepth = previousItem
-    ? previousItem.depth + 1
-    : 0
-
-  /*
-   * If the next visible item is nested, we cannot suddenly become
-   * shallower than its structural context permits.
-   */
-  const minDepth = nextItem
-    ? Math.max(0, nextItem.depth - 1)
-    : 0
-
-  projectedDepth = Math.max(
-    minDepth,
-    Math.min(projectedDepth, maxDepth),
-  )
-
-  let parentId = null
-
-  if (projectedDepth > 0) {
-    for (
-      let i = insertionIndex - 1;
-      i >= 0;
-      i -= 1
-    ) {
-      const candidate = remainingItems[i]
-
-      if (candidate.depth === projectedDepth - 1) {
-        parentId = candidate.id
-        break
-      }
-    }
-
-    if (parentId == null) {
-      projectedDepth = 0
-    }
-  }
-
-  /*
-   * sibling_order is the position among DIRECT children of parentId,
-   * not the flattened-tree index.
-   */
-  let siblingOrder = 1
-
-  for (let i = 0; i < insertionIndex; i += 1) {
-    if (remainingItems[i].parentId === parentId) {
-      siblingOrder += 1
-    }
-  }
-
-  return {
-    depth: projectedDepth,
-    parentId,
-    siblingOrder,
-  }
-}
-
 function getLocalDateString() {
   const now = new Date()
   const year = now.getFullYear()
@@ -329,11 +203,6 @@ export default function PlannerTree({
 }) {
   const queryClient = useQueryClient()
 
-  const [activeId, setActiveId] = useState(null)
-  const [overId, setOverId] = useState(null)
-  const [dropSide, setDropSide] = useState('before')
-  const [horizontalOffset, setHorizontalOffset] = useState(0)
-
   const completionFilteredItems = useMemo(
     () =>
       showCompleted
@@ -372,7 +241,10 @@ export default function PlannerTree({
   const searchMatchedIds = searchResult.matchedIds
 
   const flattenedItems = useMemo(
-    () => flattenTree(displayItems),
+    () =>
+      flattenPlanningTree(
+        displayItems,
+      ),
     [displayItems],
   )
 
@@ -386,74 +258,205 @@ export default function PlannerTree({
     [flattenedItems],
   )
 
-  const sensors = useSensors(
-    useSensor(PointerSensor, {
-      activationConstraint: {
-        delay: 220,
-        tolerance: 5,
-      },
-    }),
-  )
-
   const deleteMutation = useMutation({
-    mutationFn: deleteItem,
+    mutationFn({
+      promise,
+    }) {
+      return promise
+    },
 
-    onSuccess: async (_, deletedItemId) => {
-      // If the deleted task owns Edit/Add, cancel that panel.
-      if (deletedItemId === panelOwnerId) {
+    onSuccess(
+      _,
+      {
+        itemId,
+      },
+    ) {
+      if (
+        itemId ===
+        panelOwnerId
+      ) {
         onPanelOwnerDeleted?.()
       }
+    },
 
-      await Promise.all([
+    async onSettled() {
+      await plannerStructuralRequests.whenIdle()
+
+      void Promise.all([
         queryClient.invalidateQueries({
-          queryKey: ['planning', 'tree'],
+          queryKey: [
+            'planning',
+            'tree',
+          ],
         }),
+
         queryClient.invalidateQueries({
-          queryKey: ['planning', 'priority'],
+          queryKey: [
+            'planning',
+            'priority',
+          ],
         }),
+
         queryClient.invalidateQueries({
-          queryKey: ['planning', 'history'],
+          queryKey: [
+            'planning',
+            'history',
+          ],
         }),
       ])
     },
   })
 
-  function requestDelete(itemId) {
-    if (deleteMutation.isPending) {
-      return
-    }
 
-    deleteMutation.mutate(itemId)
+  function currentPlanningTree() {
+    return (
+      queryClient.getQueryData(
+        [
+          'planning',
+          'tree',
+        ],
+      )
+      ?? items
+    )
   }
 
-  const moveMutation = useMutation({
-    mutationFn: ({ id, payload }) =>
-      moveItem(id, payload),
 
-    onSuccess: async () => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['planning', 'tree'] }),
-        queryClient.invalidateQueries({ queryKey: ['planning', 'priority'], refetchType: 'all' }),
-        queryClient.invalidateQueries({ queryKey: ['planning', 'history'] }),
+  function requestDelete(itemId) {
+    /*
+     * Deletion is visually immediate. The server remains canonical and the
+     * authoritative tree is refreshed after all queued structural actions.
+     */
+    void queryClient.cancelQueries({
+      queryKey: [
+        'planning',
+        'tree',
+      ],
+    })
+
+    queryClient.setQueryData(
+      [
+        'planning',
+        'tree',
+      ],
+      (tree) =>
+        removePlannerItem(
+          tree,
+          itemId,
+        ),
+    )
+
+    const promise =
+      plannerStructuralRequests.push({
+        type:
+          'delete',
+
+        itemId,
+      })
+
+    deleteMutation.mutate({
+      itemId,
+      promise,
+    })
+  }
+
+
+  const moveMutation = useMutation({
+    mutationFn({
+      promise,
+    }) {
+      return promise
+    },
+
+    async onSettled() {
+      /*
+       * Do not let the response for an older structural action refetch over
+       * newer optimistic intent. Refresh only when the FIFO queue is empty.
+       */
+      await plannerStructuralRequests.whenIdle()
+
+      void Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: [
+            'planning',
+            'tree',
+          ],
+        }),
+
+        queryClient.invalidateQueries({
+          queryKey: [
+            'planning',
+            'priority',
+          ],
+          refetchType:
+            'all',
+        }),
+
+        queryClient.invalidateQueries({
+          queryKey: [
+            'planning',
+            'history',
+          ],
+        }),
       ])
     },
   })
 
-  const projection =
-    activeId && overId
-      ? getProjection({
-          items: flattenedItems,
-          activeId,
-          overId,
-          dropSide,
-          dragOffset: horizontalOffset,
-        })
-      : null
+
+
+  function persistPlannerMove(
+    intent,
+  ) {
+    /*
+     * dnd-kit removes its transform immediately after DragEnd. Write the
+     * projected hierarchy into React Query before that frame can render the
+     * old server tree. This is what removes Planner's snap-back.
+     */
+    void queryClient.cancelQueries({
+      queryKey: [
+        'planning',
+        'tree',
+      ],
+    })
+
+    queryClient.setQueryData(
+      [
+        'planning',
+        'tree',
+      ],
+      (tree) =>
+        applyPlannerMove(
+          tree,
+          intent,
+        ),
+    )
+
+    const promise =
+      plannerStructuralRequests.push({
+        type:
+          'move',
+
+        itemId:
+          intent.itemId,
+
+        parentId:
+          intent.parentId,
+
+        siblingOrder:
+          intent.siblingOrder,
+
+        adoptChildIds:
+          intent.adoptChildIds
+          ?? [],
+      })
+
+    moveMutation.mutate({
+      promise,
+    })
+  }
 
   function indentItem(itemId) {
-    if (moveMutation.isPending) {
-      return
-    }
+    const sourceItems =
+      currentPlanningTree()
 
     /*
      * Find item in the REAL nested tree and return its direct
@@ -481,7 +484,9 @@ export default function PlannerTree({
       return null
     }
 
-    const context = findSiblingContext(items)
+    const context = findSiblingContext(
+      sourceItems,
+    )
 
     if (!context) {
       return
@@ -493,7 +498,10 @@ export default function PlannerTree({
      * Roots are fixed at depth 0.
      * They can never be indented beneath another root.
      */
-    if (siblings === items) {
+    if (
+      siblings ===
+      sourceItems
+    ) {
       return
     }
 
@@ -521,183 +529,144 @@ export default function PlannerTree({
     const siblingOrder =
       (previousSibling.children?.length ?? 0) + 1
 
-    moveMutation.mutate({
-      id: item.id,
-      payload: {
-        parent_id: previousSibling.id,
-        sibling_order: siblingOrder,
-      },
+    persistPlannerMove({
+      type:
+        'planner-move',
+
+      itemId:
+        item.id,
+
+      parentId:
+        previousSibling.id,
+
+      siblingOrder,
     })
   }
 
-  function outdentItem(itemId) {
-    if (moveMutation.isPending) {
+  function outdentItem(
+    itemId,
+  ) {
+    const sourceItems =
+      currentPlanningTree()
+
+    const flat =
+      flattenPlanningTree(
+        sourceItems,
+      )
+
+    const active =
+      flat.find(
+        (item) =>
+          item.id === itemId,
+      )
+
+    if (
+      !active
+      || active.depth === 0
+    ) {
       return
     }
 
-    /*
-     * Find the item in the REAL nested tree.
-     *
-     * We need:
-     * - the item itself
-     * - its parent
-     * - the parent's siblings
-     * - the parent's position among those siblings
-     */
-    function findContext(nodes, parent = null, parentSiblings = null) {
-      for (let index = 0; index < nodes.length; index += 1) {
-        const node = nodes[index]
+    const intent =
+      projectPlannerDrop({
+        items: flat,
+        activeId: itemId,
+        overId: itemId,
+        depthDelta: -1,
+      })
 
-        if (node.id === itemId) {
-          return {
-            item: node,
-            parent,
-            parentSiblings,
-          }
-        }
-
-        const result = findContext(
-          node.children ?? [],
-          node,
-          nodes,
-        )
-
-        if (result) {
-          return result
-        }
-      }
-
-      return null
-    }
-
-    const context = findContext(items)
-
-    if (!context) {
+    if (
+      !intent
+      || intent.depth >=
+        active.depth
+    ) {
       return
     }
 
-    const {
-      item,
-      parent,
-      parentSiblings,
-    } = context
-
-    // Root tasks cannot be outdented.
-    if (!parent || !parentSiblings) {
-      return
-    }
-
-    /*
-     * Find where the parent currently sits among its siblings.
-     * The outdented item will be inserted immediately after it.
-     */
-    const parentIndex = parentSiblings.findIndex(
-      (candidate) => candidate.id === parent.id,
+    persistPlannerMove(
+      intent,
     )
-
-    if (parentIndex === -1) {
-      return
-    }
-
-    /*
-     * Determine the grandparent.
-     *
-     * If parentSiblings === items, the parent is a root,
-     * therefore the outdented item becomes a root too.
-     */
-    function findParentId(nodes, targetId, parentId = null) {
-      for (const node of nodes) {
-        if (node.id === targetId) {
-          return parentId
-        }
-
-        const result = findParentId(
-          node.children ?? [],
-          targetId,
-          node.id,
-        )
-
-        if (result !== undefined) {
-          return result
-        }
-      }
-
-      return undefined
-    }
-
-    const grandparentId = findParentId(items, parent.id)
-
-    if (grandparentId === undefined) {
-      return
-    }
-
-    /*
-     * sibling_order is 1-based.
-     *
-     * parentIndex is 0-based, so:
-     *
-     * parent index 0 → parent order 1
-     * outdented item → order 2
-     *
-     * Hence parentIndex + 2.
-     */
-    moveMutation.mutate({
-      id: item.id,
-      payload: {
-        parent_id: grandparentId,
-        sibling_order: parentIndex + 2,
-      },
-    })
-  }
-
-  function resetDrag() {
-    setActiveId(null)
-    setOverId(null)
-    setDropSide('before')
-    setHorizontalOffset(0)
   }
 
   useEffect(() => {
+    function clearPlannerShortcutFocus() {
+      const activeElement =
+        document.activeElement
+
+      if (
+        activeElement instanceof HTMLElement
+        && activeElement !== document.body
+      ) {
+        activeElement.blur()
+      }
+    }
+
     function handleTreeKeyboardShortcut(event) {
       const target = event.target
 
       const isEditing =
-        target instanceof HTMLElement &&
-        (
-          target.tagName === 'INPUT' ||
-          target.tagName === 'TEXTAREA' ||
-          target.tagName === 'SELECT' ||
-          target.isContentEditable
+        target instanceof HTMLElement
+        && (
+          target.tagName === 'INPUT'
+          || target.tagName === 'TEXTAREA'
+          || target.tagName === 'SELECT'
+          || target.isContentEditable
         )
 
-      if (isEditing || hoveredItemId == null) {
+      if (
+        isEditing
+        || hoveredItemId == null
+      ) {
         return
       }
 
       if (
-        event.key === 'Backspace' ||
-        event.key === 'Delete'
+        event.key === 'Backspace'
+        || event.key === 'Delete'
       ) {
-        // Cmd/Ctrl + Delete = delete the hovered task.
-        if (event.metaKey || event.ctrlKey) {
+        /*
+         * Cmd/Ctrl + Delete keeps the existing destructive shortcut.
+         * Plain Delete/Backspace means one-level outdent.
+         */
+        if (
+          event.metaKey
+          || event.ctrlKey
+        ) {
           event.preventDefault()
-          requestDelete(hoveredItemId)
+          clearPlannerShortcutFocus()
+
+          requestDelete(
+            hoveredItemId,
+          )
           return
         }
 
-        // Plain Delete/Backspace = outdent one level.
         event.preventDefault()
-        outdentItem(hoveredItemId)
+        clearPlannerShortcutFocus()
+
+        outdentItem(
+          hoveredItemId,
+        )
         return
       }
 
-      if (event.key === 'Tab' && !event.shiftKey) {
+      if (
+        event.key === 'Tab'
+        && !event.shiftKey
+      ) {
         event.preventDefault()
-        indentItem(hoveredItemId)
+        clearPlannerShortcutFocus()
+
+        indentItem(
+          hoveredItemId,
+        )
       }
     }
 
-    window.addEventListener('keydown', handleTreeKeyboardShortcut)
+    window.addEventListener(
+      'keydown',
+      handleTreeKeyboardShortcut,
+    )
 
     return () => {
       window.removeEventListener(
@@ -705,125 +674,47 @@ export default function PlannerTree({
         handleTreeKeyboardShortcut,
       )
     }
-  }, [
-    hoveredItemId,
-    flattenedItems,
-    moveMutation.isPending,
-    deleteMutation.isPending,
-    panelOwnerId,
-  ])
+  })
 
-  function handleDragStart({ active }) {
-    setActiveId(active.id)
-    setOverId(active.id)
-    setDropSide('before')
-  }
-
-  function handleDragMove({ active, over, delta }) {
-    setHorizontalOffset(delta.x)
-
-    if (!over) {
-      return
-    }
-
-    setOverId(over.id)
-
-    /*
-     * Compare the centre of the dragged rectangle with the centre
-     * of the current target.
-     *
-     * Above centre => BEFORE
-     * Below centre => AFTER
-     */
-    const translatedRect = active.rect.current.translated
-    const overRect = over.rect
-
-    if (!translatedRect || !overRect) {
-      return
-    }
-
-    const activeCenterY =
-      translatedRect.top + translatedRect.height / 2
-
-    const overCenterY =
-      overRect.top + overRect.height / 2
-
-    setDropSide(
-      activeCenterY < overCenterY
-        ? 'before'
-        : 'after',
-    )
-  }
-
-  function handleDragOver({ over }) {
-    if (over) {
-      setOverId(over.id)
-    }
-  }
-
-  function handleDragCancel() {
-    resetDrag()
-  }
-
-  function handleDragEnd({ active, over }) {
-    if (!over) {
-      resetDrag()
-      return
-    }
-
-    const finalProjection = getProjection({
-      items: flattenedItems,
-      activeId: active.id,
-      overId: over.id,
-      dropSide,
-      dragOffset: horizontalOffset,
-    })
-
-    resetDrag()
-
-    if (
-      !finalProjection ||
-      finalProjection.siblingOrder == null
-    ) {
-      return
-    }
-
-    console.log('ARC DROP DEBUG', {
-      activeId: active.id,
-      overId: over.id,
-      dropSide,
-      original: flattenedItems.find((item) => item.id === active.id),
-      projection: finalProjection,
-    })
-
-    moveMutation.mutate({
-      id: active.id,
-      payload: {
-        parent_id: finalProjection.parentId,
-        sibling_order: finalProjection.siblingOrder,
-      },
-    })
-  }
 
   return (
-    <DndContext
-      sensors={sensors}
-      collisionDetection={closestCenter}
-      onDragStart={handleDragStart}
-      onDragMove={handleDragMove}
-      onDragOver={handleDragOver}
-      onDragCancel={handleDragCancel}
-      onDragEnd={handleDragEnd}
+    <PlannerDnd
+      items={flattenedItems}
+      onMove={persistPlannerMove}
     >
-      <SortableContext
-        items={flattenedItems.map((item) => item.id)}
-        strategy={verticalListSortingStrategy}
-      >
+      {({
+        activeId,
+        projection,
+        dragDescendantIds,
+      }) => {
+        const dragDescendantSet =
+          new Set(
+            dragDescendantIds,
+          )
+
+        /*
+         * Existing descendants are deliberately hidden while their parent is
+         * being dragged.
+         *
+         * They remain excluded from independent sortable/collision units, so
+         * the parent still moves structurally as one subtree. They simply are
+         * not painted until DragEnd restores the canonical tree.
+         */
+        const visibleRows =
+          activeId == null
+            ? flattenedItems
+            : flattenedItems.filter(
+                (item) =>
+                  !dragDescendantSet
+                    .has(item.id),
+              )
+
+        return (
         <ul
           aria-label="Planning hierarchy"
           className="m-0 list-none p-0"
         >
-          {flattenedItems.map((item) => (
+          {visibleRows.map((item) => (
             <div
 
               data-arc-tree-row
@@ -846,10 +737,21 @@ export default function PlannerTree({
 
               <PlannerTreeItem
               item={item}
-              depth={
-                item.id === activeId && projection
+              /*
+               * Never mutate the active sortable row's layout depth during
+               * pointer movement.
+               *
+               * The dragged card itself follows pointer X and therefore
+               * previews indentation naturally. Changing padding here fed the
+               * projection back into dnd-kit's geometry and caused
+               * sibling/child flicker around the threshold.
+               */
+              depth={item.depth}
+              previewDepth={
+                item.id === activeId
+                && projection
                   ? projection.depth
-                  : item.depth
+                  : null
               }
               selectedItemId={selectedItemId}
           panelOwnerId={panelOwnerId}
@@ -871,7 +773,8 @@ export default function PlannerTree({
             </div>
           ))}
         </ul>
-      </SortableContext>
-    </DndContext>
+        )
+      }}
+    </PlannerDnd>
   )
 }

@@ -620,7 +620,7 @@ class PriorityReorderView(APIView):
                 serializer.validated_data['new_position'],
             )
             leaf_order_sync.from_priority(request.user)
-            scheduling.schedule(request.user)
+            scheduling.reconcile(request.user)
         except DjangoValidationError as exc:
             raise _as_400(exc)
 
@@ -885,7 +885,7 @@ class FocusReprioritiseView(APIView):
             leaf_order_sync.from_priority(
                 request.user,
             )
-            scheduling.schedule(
+            scheduling.reconcile(
                 request.user,
             )
         except DjangoValidationError as exc:

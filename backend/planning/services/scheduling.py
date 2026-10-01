@@ -20,6 +20,11 @@ from planning.models import (
 )
 from planning.services import dependencies, history, leaf_order_sync, priority
 
+
+class StaleSchedulingRevision(RuntimeError):
+    """A computed disposable schedule no longer matches current intent."""
+
+
 # Baseline scheduler policy, intentionally replaceable by future algorithm policy.
 BASELINE_SCHEDULER_CAPACITY = {
     DurationCategory.UNDER_20_MINUTES: 5,
@@ -518,6 +523,137 @@ def _legacy_schedule(user, today=None, *, mode='minimal'):
     return {'changed_ids': [item.pk for item in changed], 'conflicts': conflicts}
 
 
+@transaction.atomic
+def _next_scheduling_revision(user):
+    """Allocate one monotonic reconciliation revision for this user."""
+
+    state, _ = (
+        SchedulingState.objects
+        .select_for_update()
+        .get_or_create(user=user)
+    )
+
+    state.scheduling_revision += 1
+    state.save(
+        update_fields=[
+            'scheduling_revision',
+        ]
+    )
+
+    return state.scheduling_revision
+
+
+@transaction.atomic
+def _mark_restored_schedule_current(user):
+    """Advance freshness after history restores disposable schedule state.
+
+    Schedule undo/redo deliberately restores the historical proposal directly
+    instead of rerunning the optimizer. The monotonic revision must still
+    advance so any older in-flight computation can never overwrite that
+    explicit history action.
+    """
+
+    state, _ = (
+        SchedulingState.objects
+        .select_for_update()
+        .get_or_create(user=user)
+    )
+
+    state.scheduling_revision += 1
+    state.applied_scheduling_revision = (
+        state.scheduling_revision
+    )
+
+    state.save(
+        update_fields=[
+            'scheduling_revision',
+            'applied_scheduling_revision',
+        ]
+    )
+
+    return state.scheduling_revision
+
+
+def _locked_revision_state(
+    user,
+    expected_revision,
+):
+    """Lock and verify freshness before disposable state can apply."""
+
+    state, _ = (
+        SchedulingState.objects
+        .select_for_update()
+        .get_or_create(user=user)
+    )
+
+    if (
+        expected_revision is not None
+        and state.scheduling_revision
+        != expected_revision
+    ):
+        raise StaleSchedulingRevision(
+            "Scheduler result is stale: "
+            f"expected revision {expected_revision}, "
+            f"current revision {state.scheduling_revision}."
+        )
+
+    return state
+
+
+def _compatibility_conflicts(
+    user,
+    today,
+    *,
+    mode,
+):
+    """Run frozen legacy conflict logic without persisting its proposal."""
+
+    savepoint = transaction.savepoint_create()
+
+    try:
+        result = _legacy_schedule(
+            user,
+            today,
+            mode=mode,
+        )
+
+        conflicts = list(
+            result['conflicts']
+        )
+    finally:
+        transaction.savepoint_rollback(
+            savepoint
+        )
+
+    return conflicts
+
+
+@transaction.atomic
+def reconcile(
+    user,
+    today=None,
+    *,
+    mode='minimal',
+):
+    """Request and synchronously reconcile the newest schedule revision.
+
+    This slice deliberately remains synchronous. A later worker can execute
+    schedule(..., expected_revision=revision) out of band without changing
+    the freshness contract established here.
+    """
+
+    revision = _next_scheduling_revision(
+        user
+    )
+
+    return schedule(
+        user,
+        today,
+        mode=mode,
+        expected_revision=revision,
+    )
+
+
 def _configured_scheduler_flavour(user):
     """Return the explicitly selected V1 flavour, or None.
 
@@ -579,19 +715,38 @@ def _json_safe_scheduler_value(value):
     return value
 
 
-def _store_scheduler_runtime(user, runtime):
-    """Replace disposable cached scheduler output."""
+def _store_scheduler_runtime(
+    user,
+    runtime,
+    *,
+    state=None,
+    applied_revision=None,
+):
+    """Replace cached scheduler output and its applied freshness token."""
 
-    state, _ = SchedulingState.objects.get_or_create(
-        user=user,
-    )
+    if state is None:
+        state, _ = SchedulingState.objects.get_or_create(
+            user=user,
+        )
 
     state.scheduler_runtime = _json_safe_scheduler_value(
         runtime
     )
 
+    fields = [
+        'scheduler_runtime',
+    ]
+
+    if applied_revision is not None:
+        state.applied_scheduling_revision = (
+            applied_revision
+        )
+        fields.append(
+            'applied_scheduling_revision'
+        )
+
     state.save(
-        update_fields=['scheduler_runtime']
+        update_fields=fields
     )
 
 
@@ -718,7 +873,13 @@ def _scheduler_v1_response(output, persistence):
 
 
 @transaction.atomic
-def schedule(user, today=None, *, mode='minimal'):
+def schedule(
+    user,
+    today=None,
+    *,
+    mode='minimal',
+    expected_revision=None,
+):
     """ARC scheduling facade.
 
     Unconfigured users retain the frozen legacy ARC scheduler behaviour.
@@ -734,11 +895,32 @@ def schedule(user, today=None, *, mode='minimal'):
     flavour = _configured_scheduler_flavour(user)
 
     if flavour is None:
+        # Legacy scheduling still computes and applies in one pass.
+        # Holding the revision row lock prevents a newer reconciliation
+        # from committing ahead of this short legacy operation.
+        state = None
+
+        if expected_revision is not None:
+            state = _locked_revision_state(
+                user,
+                expected_revision,
+            )
+
         result = _legacy_schedule(
             user,
             today,
             mode=mode,
         )
+
+        if state is not None:
+            state.applied_scheduling_revision = (
+                expected_revision
+            )
+            state.save(
+                update_fields=[
+                    'applied_scheduling_revision',
+                ]
+            )
 
         result['scheduler'] = {
             'configured': False,
@@ -749,21 +931,38 @@ def schedule(user, today=None, *, mode='minimal'):
 
     before = _disposable_schedule_state(user)
 
-    # Preserve ARC's established conflict/API semantics.  This intermediary
-    # proposal is disposable and is immediately replaced by V1 below.
-    compatibility = _legacy_schedule(
-        user,
-        today,
-        mode=mode,
+    # Preserve ARC's exact established compatibility-conflict surface without
+    # allowing the legacy intermediary schedule proposal to persist.
+    compatibility_conflicts = (
+        _compatibility_conflicts(
+            user,
+            today,
+            mode=mode,
+        )
     )
 
     from planning.services import scheduler_v1
 
-    request, output, persistence = (
-        scheduler_v1.run_and_apply_scheduler_v1(
+    # The expensive frozen V1 engine is compute-only here. No V1 output is
+    # persisted until freshness is checked below.
+    request, output = (
+        scheduler_v1.run_scheduler_v1(
             user,
             flavour=flavour,
             today=today,
+        )
+    )
+
+    state = _locked_revision_state(
+        user,
+        expected_revision,
+    )
+
+    persistence = (
+        scheduler_v1.apply_scheduler_output(
+            user,
+            request,
+            output,
         )
     )
 
@@ -783,18 +982,20 @@ def schedule(user, today=None, *, mode='minimal'):
     # Preserve the compatibility conflict surface alongside the cached V1
     # runtime so later read-only Timeline requests do not need to rerun either
     # scheduler merely to reconstruct the response.
-    runtime['compatibility_conflicts'] = compatibility[
-        'conflicts'
-    ]
+    runtime['compatibility_conflicts'] = (
+        compatibility_conflicts
+    )
 
     _store_scheduler_runtime(
         user,
         runtime,
+        state=state,
+        applied_revision=expected_revision,
     )
 
     return {
         'changed_ids': changed_ids,
-        'conflicts': compatibility['conflicts'],
+        'conflicts': compatibility_conflicts,
         'scheduler': runtime,
     }
 
@@ -861,7 +1062,7 @@ def daily_schedule(user, today=None):
             'scheduler': state.scheduler_runtime,
         }
     else:
-        result = schedule(
+        result = reconcile(
             user,
             today,
             mode=mode,
@@ -886,7 +1087,7 @@ def reschedule(user, today=None):
 
     before = _snapshot(user)
 
-    result = schedule(
+    result = reconcile(
         user,
         today,
         mode='global',
@@ -1060,7 +1261,7 @@ def _item(user, item_id):
 
 
 def _finish(user, before, today, baseline):
-    result = schedule(user, today)
+    result = reconcile(user, today)
     new_conflicts = [c for c in result['conflicts'] if (c['item_id'], c['code']) not in baseline]
     if new_conflicts:
         raise SchedulingConflict(new_conflicts)

@@ -205,7 +205,7 @@ def reprioritise(user, item, new_position, *, reconcile=True):
     # Priority is canonical preference; scheduler consumes the resulting
     # canonical order but never owns it.
     if reconcile:
-        scheduling.schedule(user)
+        scheduling.reconcile(user)
     return result
 
 

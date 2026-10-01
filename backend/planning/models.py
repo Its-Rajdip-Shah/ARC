@@ -616,6 +616,16 @@ class SchedulingState(OwnedModel):
         blank=True,
     )
 
+    # Monotonic freshness token for disposable scheduling work.
+    # Every requested reconciliation receives a new revision. Only a result
+    # computed for the current revision may replace derived schedule state.
+    scheduling_revision = models.PositiveBigIntegerField(
+        default=0,
+    )
+    applied_scheduling_revision = models.PositiveBigIntegerField(
+        default=0,
+    )
+
     class Meta:
         constraints = [
             models.UniqueConstraint(

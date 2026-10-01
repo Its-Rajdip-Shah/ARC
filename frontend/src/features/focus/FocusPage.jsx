@@ -127,7 +127,6 @@ export default function FocusPage() {
 
   const planningBusy =
     doToday.isPending
-    || automatic.isPending
     || history.busy
 
   const currentCandidate =

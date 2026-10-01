@@ -13,8 +13,17 @@ import {
   anchorFocusBatch,
   reprioritiseFocus,
 } from '../api/planning'
+import {
+  createSerialActionQueue,
+} from '../lib/latestIntentQueue'
 
 const focusKey = ['planning', 'focus']
+
+
+const automaticFocusQueue =
+  createSerialActionQueue(
+    returnFocusToAutomatic,
+  )
 
 
 function invalidatePlanning(
@@ -71,7 +80,8 @@ export function useDoTodayFocus() {
 }
 
 export function useReturnFocusToAutomatic() {
-  const queryClient = useQueryClient()
+  const queryClient =
+    useQueryClient()
 
   return useMutation({
     mutationKey: [
@@ -81,10 +91,81 @@ export function useReturnFocusToAutomatic() {
       'automatic',
     ],
 
-    mutationFn: returnFocusToAutomatic,
+    mutationFn(payload) {
+      return automaticFocusQueue.push(
+        payload,
+      )
+    },
 
-    async onSuccess() {
-      await invalidatePlanning(
+    async onMutate({
+      item_id: itemId,
+    }) {
+      await queryClient.cancelQueries({
+        queryKey:
+          focusKey,
+      })
+
+      queryClient.setQueryData(
+        focusKey,
+        (previous) => {
+          if (!previous) {
+            return previous
+          }
+
+          const patch =
+            (candidate) =>
+              candidate.item_id
+              === itemId
+                ? {
+                    ...candidate,
+                    manual_requested_date:
+                      null,
+                    manual_requested_order:
+                      null,
+                  }
+                : candidate
+
+          return {
+            ...previous,
+
+            candidates:
+              (
+                previous.candidates
+                ?? []
+              ).map(
+                patch,
+              ),
+
+            groups:
+              Object.fromEntries(
+                Object.entries(
+                  previous.groups
+                  ?? {},
+                ).map(
+                  ([
+                    key,
+                    rows,
+                  ]) => [
+                    key,
+                    rows.map(
+                      patch,
+                    ),
+                  ],
+                ),
+              ),
+          }
+        },
+      )
+    },
+
+    async onSettled() {
+      /*
+       * Do not let the response for unanchor A refresh over optimistic
+       * unanchors B/C/D. Refresh only after the shared serial queue drains.
+       */
+      await automaticFocusQueue.whenIdle()
+
+      void invalidatePlanning(
         queryClient,
       )
     },

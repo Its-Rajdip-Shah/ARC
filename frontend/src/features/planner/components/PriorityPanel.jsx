@@ -1,6 +1,4 @@
 import { useEffect, useMemo, useState } from 'react'
-import { DndContext, PointerSensor, KeyboardSensor, closestCenter, useSensor, useSensors } from '@dnd-kit/core'
-import { SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { usePriorityOrder, useReorderPriority } from '../../../hooks/usePriorityOrder'
 import { usePlanningTree } from '../../../hooks/usePlanningTree'
 import PriorityCard from './PriorityCard'
@@ -9,10 +7,10 @@ import usePriorityFind from '../hooks/usePriorityFind'
 import {
   reorderPriorityRows,
 } from '../../../lib/planningOptimistic'
+import PriorityDnd from '../../../dnd/priority/PriorityDnd'
 import './PriorityPanel.css'
 
 const EMPTY = []
-const verticalOnly = ({ transform }) => ({ ...transform, x: 0 })
 
 // Read the hierarchy once; root identity and execution positions come from Priority.
 function hierarchyContext(tree) {
@@ -81,10 +79,6 @@ function PriorityContent({ canUndo, canRedo, onUndo, onRedo, historyBusy }) {
     return () => window.clearTimeout(timeout)
   }, [isSuccess, reset])
   const columnIndex = new Map(columns.map((root, index) => [root.id, index]))
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
-  )
   /*
    * Reconciliation no longer freezes Priority interaction.
    *
@@ -124,12 +118,6 @@ function PriorityContent({ canUndo, canRedo, onUndo, onRedo, historyBusy }) {
       new_position:
         position,
     })
-  }
-
-  function drop({ active, over }) {
-    if (!over || active.id === over.id) return
-    const target = rows.find((row) => row.item_id === over.id)
-    if (target) move(active.id, target.position)
   }
 
   return (
@@ -175,21 +163,22 @@ function PriorityContent({ canUndo, canRedo, onUndo, onRedo, historyBusy }) {
             <div className="priority-guides" aria-hidden="true">
               {columns.map((root, index) => <span key={root.id} style={{ left: `calc(var(--number-width) + ${index} * var(--column-width))` }} />)}
             </div>
-            <DndContext sensors={sensors} collisionDetection={closestCenter} modifiers={[verticalOnly]} onDragEnd={drop}>
-              <SortableContext items={visibleRows.map((row) => row.item_id)} strategy={verticalListSortingStrategy}>
-                <ol
-                  className="relative m-0 list-none p-0 pb-8"
-                  aria-label="Global priority order"
-                  aria-busy={busy || reconciling}
-                >
-                  {visibleRows.map((row) => (
-                    <PriorityCard key={row.item_id} row={row} column={columnIndex.get(row.root.id)}
-                      matched={find.matchIds.has(row.item_id)} currentMatch={find.currentId === row.item_id} registerCard={find.registerCard}
-                      ancestors={paths.get(row.item_id)} count={rows.length} disabled={busy || unavailable} onMove={move} />
-                  ))}
-                </ol>
-              </SortableContext>
-            </DndContext>
+            <PriorityDnd
+              rows={visibleRows}
+              onMove={move}
+            >
+              <ol
+                className="relative m-0 list-none p-0 pb-8"
+                aria-label="Global priority order"
+                aria-busy={busy || reconciling}
+              >
+                {visibleRows.map((row) => (
+                  <PriorityCard key={row.item_id} row={row} column={columnIndex.get(row.root.id)}
+                    matched={find.matchIds.has(row.item_id)} currentMatch={find.currentId === row.item_id} registerCard={find.registerCard}
+                    ancestors={paths.get(row.item_id)} count={rows.length} disabled={busy || unavailable} onMove={move} />
+                ))}
+              </ol>
+            </PriorityDnd>
           </div>
         </div>
       )}

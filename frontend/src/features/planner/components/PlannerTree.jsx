@@ -702,21 +702,21 @@ export default function PlannerTree({
          * coordinate system after DragStart.
          */
         const visibleRows =
-          flattenedItems
+          activeId == null
+            ? flattenedItems
+            : flattenedItems.filter(
+                (item) =>
+                  !dragDescendantSet.has(
+                    item.id,
+                  ),
+              )
 
         return (
         <ul
           aria-label="Planning hierarchy"
           className="m-0 list-none p-0"
         >
-          {visibleRows.map((item) => {
-            const isHiddenDescendant =
-              activeId != null
-              && dragDescendantSet.has(
-                item.id,
-              )
-
-            return (
+          {visibleRows.map((item) => (
             <div
 
               data-arc-tree-row
@@ -738,17 +738,6 @@ export default function PlannerTree({
 
             >
 
-              <div
-                className="relative"
-              >
-                <div
-                  style={{
-                    visibility:
-                      isHiddenDescendant
-                        ? 'hidden'
-                        : undefined,
-                  }}
-                >
               <PlannerTreeItem
               item={item}
               /*
@@ -783,29 +772,9 @@ export default function PlannerTree({
               dndEnabled
               flat
             />
-                </div>
-
-                {isHiddenDescendant && (
-                  <div
-                    aria-hidden="true"
-                    className="
-                      pointer-events-none absolute inset-0
-                      flex items-center
-                    "
-                  >
-                    <div
-                      className="
-                        ml-[38px] h-[6px] w-[46%]
-                        rounded-full bg-[#7c9cde]/10
-                      "
-                    />
-                  </div>
-                )}
-              </div>
 
             </div>
-            )
-          })}
+          ))}
         </ul>
         )
       }}

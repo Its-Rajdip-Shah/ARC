@@ -42,6 +42,7 @@ import {
 import {
   changesForTouchedRows,
   findQueuePosition,
+  flattenQueue,
   makeQueueGroups,
   moveQueueItemByGlobalPosition,
   moveQueueItemToSlot,
@@ -155,6 +156,12 @@ export default function FocusQueueManager({
     useRef(null)
 
   const latestSaveRef =
+    useRef(null)
+
+  const saveInFlightRef =
+    useRef(false)
+
+  const queuedSaveRef =
     useRef(null)
 
   const dragOriginRef =
@@ -411,13 +418,63 @@ export default function FocusQueueManager({
     )
   }
 
-  function performSave(
-    changes,
+  function buildSaveRequest(
+    nextGroups,
+    nextTouched,
+    nextDirtyDates,
   ) {
+    return {
+      changes:
+        buildChanges(
+          nextGroups,
+          nextTouched,
+          nextDirtyDates,
+        ),
+
+      optimisticOrderIds:
+        flattenQueue(
+          nextGroups,
+        ).map(
+          (entry) =>
+            entry.row.item_id,
+        ),
+    }
+  }
+
+
+  function performSave(
+    request,
+  ) {
+    const changes =
+      request?.changes
+      ?? []
+
     if (!changes.length) {
-      clearIntent()
+      if (
+        !saveInFlightRef.current
+      ) {
+        setSaving(false)
+        clearIntent()
+      }
+
       return
     }
+
+    if (
+      saveInFlightRef.current
+    ) {
+      /*
+       * Only the newest not-yet-started queue arrangement matters. The
+       * currently running canonical request is allowed to finish.
+       */
+      queuedSaveRef.current =
+        request
+
+      return
+    }
+
+    saveInFlightRef.current =
+      true
 
     setSaving(true)
     setLocalError('')
@@ -425,15 +482,40 @@ export default function FocusQueueManager({
     batch.mutate(
       {
         changes,
+
+        optimisticOrderIds:
+          request
+            .optimisticOrderIds,
       },
       {
         onSuccess() {
-          setSaving(false)
+          saveInFlightRef.current =
+            false
+
           setConflict(null)
+
+          const queued =
+            queuedSaveRef.current
+
+          queuedSaveRef.current =
+            null
+
+          if (queued) {
+            performSave(
+              queued,
+            )
+
+            return
+          }
+
+          setSaving(false)
           clearIntent()
         },
 
         onError(error) {
+          saveInFlightRef.current =
+            false
+
           setSaving(false)
 
           const data =
@@ -445,13 +527,24 @@ export default function FocusQueueManager({
               ?.status === 409
             && data?.conflicts
           ) {
+            /*
+             * Warning/confirmation remains synchronous. Newer local intent is
+             * retained but cannot pass this canonical decision boundary.
+             */
             setConflict({
               data,
               changes,
+
+              optimisticOrderIds:
+                request
+                  .optimisticOrderIds,
             })
 
             return
           }
+
+          queuedSaveRef.current =
+            null
 
           setLocalError(
             data?.detail
@@ -463,6 +556,7 @@ export default function FocusQueueManager({
       },
     )
   }
+
 
   function scheduleAutosave(
     nextGroups,
@@ -477,15 +571,15 @@ export default function FocusQueueManager({
       )
     }
 
-    const changes =
-      buildChanges(
+    const request =
+      buildSaveRequest(
         nextGroups,
         nextTouched,
         nextDirtyDates,
       )
 
     latestSaveRef.current =
-      changes
+      request
 
     saveTimerRef.current =
       setTimeout(
@@ -495,7 +589,6 @@ export default function FocusQueueManager({
 
           performSave(
             latestSaveRef.current
-            ?? [],
           )
         },
         AUTOSAVE_DELAY_MS,
@@ -557,7 +650,7 @@ export default function FocusQueueManager({
   ) {
     if (
       interactionBusy
-      || saving
+      || conflict
     ) {
       return
     }
@@ -1056,6 +1149,9 @@ export default function FocusQueueManager({
   }
 
   function cancelConflict() {
+    queuedSaveRef.current =
+      null
+
     setConflict(null)
     rollback()
   }
@@ -1099,9 +1195,15 @@ export default function FocusQueueManager({
 
     setConflict(null)
 
-    performSave(
-      resolved,
-    )
+    performSave({
+      changes:
+        resolved,
+
+      optimisticOrderIds:
+        conflict
+          .optimisticOrderIds
+        ?? [],
+    })
   }
 
   function searchKeyDown(
@@ -1265,7 +1367,7 @@ export default function FocusQueueManager({
                     id={`date-boundary:${group.date}`}
                     disabled={
                       interactionBusy
-                      || saving
+                      || conflict
                     }
                     className="focus-date-heading-drop"
                   >
@@ -1308,7 +1410,7 @@ export default function FocusQueueManager({
                             }
                             disabled={
                               interactionBusy
-                              || saving
+                              || conflict
                             }
                             onMoveGlobal={
                               moveGlobal
@@ -1381,7 +1483,7 @@ export default function FocusQueueManager({
                 }`}
                 disabled={
                   interactionBusy
-                  || saving
+                  || conflict
                 }
                 className="focus-queue-final-drop-zone"
               />

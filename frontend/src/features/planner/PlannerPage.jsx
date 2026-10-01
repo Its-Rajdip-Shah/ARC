@@ -137,14 +137,32 @@ export default function PlannerPage() {
     },
   })
 
+  /*
+   * Priority reconciliation must not freeze ordinary Priority interaction.
+   * It still disables undo/redo until its coalesced mutation chain settles,
+   * because history must only operate on confirmed server state.
+   */
   const historyBusy =
-    undoMutation.isPending || redoMutation.isPending || priorityReordering
+    undoMutation.isPending
+    || redoMutation.isPending
+
+  const historyUnsafe =
+    historyBusy
+    || priorityReordering
 
   const canUndo =
-    Boolean(historyQuery.data?.can_undo) && !historyBusy
+    Boolean(
+      historyQuery.data
+        ?.can_undo,
+    )
+    && !historyUnsafe
 
   const canRedo =
-    Boolean(historyQuery.data?.can_redo) && !historyBusy
+    Boolean(
+      historyQuery.data
+        ?.can_redo,
+    )
+    && !historyUnsafe
 
 
   const [isPriorityOpen, setIsPriorityOpen] = useState(false)

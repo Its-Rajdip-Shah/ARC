@@ -166,7 +166,6 @@ export default function FocusTaskRow({
               className="focus-anchor-button is-anchored"
               aria-label={`Remove anchor from ${candidate.title}`}
               title="Remove anchor"
-              disabled={planningBusy}
               onClick={(event) => {
                 event.stopPropagation()
 

@@ -50,7 +50,7 @@ def validate_parent(item, new_parent):
 
 
 @transaction.atomic
-def set_parent(item, new_parent):
+def set_parent(item, new_parent, *, reconcile=True):
     """Validate and apply a re-parent, keeping sibling numbering dense."""
     from . import lifecycle
     original = item
@@ -72,7 +72,8 @@ def set_parent(item, new_parent):
     # reconcile here, before the scheduler consumes the resulting state.
     if not item.is_completed:
         lifecycle.reopen_ancestors(item)
-    lifecycle.finish(item.user)
+    if reconcile:
+        lifecycle.finish(item.user)
 
     original.refresh_from_db()
     return original

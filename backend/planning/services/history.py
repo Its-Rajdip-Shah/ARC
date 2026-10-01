@@ -751,6 +751,14 @@ def _validated_delta(user, state, action_type, expected):
             timezone.localdate(),
         )
 
+        # Undo/redo is itself newer user intent. Do not restore historical
+        # revision numbers: revisions are monotonic. Advance freshness so an
+        # older in-flight scheduler result can never overwrite this restored
+        # disposable schedule.
+        scheduling._mark_restored_schedule_current(
+            user
+        )
+
         return
 
     # Canonical inverses must rebuild ARC projections and scheduling.

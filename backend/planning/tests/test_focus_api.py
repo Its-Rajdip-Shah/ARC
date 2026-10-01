@@ -1520,3 +1520,49 @@ def test_focus_batch_same_day_reorder_does_not_reprompt_capacity(
         response.status_code
         == 200
     )
+
+
+def test_focus_reprioritise_runs_scheduler_once(
+    api_for,
+    user,
+    make_item,
+    monkeypatch,
+):
+    make_item(
+        user,
+        'First',
+        duration_category=DurationCategory.UNDER_20_MINUTES,
+        priority_position=1,
+    )
+
+    second = make_item(
+        user,
+        'Second',
+        duration_category=DurationCategory.UNDER_20_MINUTES,
+        priority_position=2,
+    )
+
+    calls = []
+    real_schedule = scheduling.schedule
+
+    def counted_schedule(*args, **kwargs):
+        calls.append((args, kwargs))
+        return real_schedule(*args, **kwargs)
+
+    monkeypatch.setattr(
+        scheduling,
+        'schedule',
+        counted_schedule,
+    )
+
+    response = api_for(user).post(
+        '/api/planning/focus/reprioritise/',
+        {
+            'item_id': second.pk,
+            'new_position': 1,
+        },
+        format='json',
+    )
+
+    assert response.status_code == 200, response.data
+    assert len(calls) == 1

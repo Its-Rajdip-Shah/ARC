@@ -131,26 +131,18 @@ export default function PlannerDnd({
           activeId,
         )
 
-  const dragDescendantSet =
-    new Set(
-      dragDescendantIds,
-    )
-
   /*
-   * IMPORTANT:
+   * A parent must use EXACTLY the same dnd-kit geometry as a leaf.
    *
-   * projectPlannerDrop() removes descendants before calculating arrayMove.
-   * SortableContext MUST operate on the same ID sequence or visual position
-   * and persisted position use different index spaces.
+   * Descendants remain in SortableContext for the entire gesture. Removing
+   * them after DragStart changes the list geometry underneath an active
+   * pointer gesture and makes parent placement dependent on subtree size.
+   *
+   * Descendants may be hidden visually by PlannerTree, but geometry stays
+   * stable.
    */
   const sortableItems =
-    activeId == null
-      ? items
-      : items.filter(
-          (item) =>
-            !dragDescendantSet
-              .has(item.id),
-        )
+    items
 
 
   const sensors =

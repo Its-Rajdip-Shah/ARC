@@ -693,28 +693,30 @@ export default function PlannerTree({
           )
 
         /*
-         * Existing descendants are deliberately hidden while their parent is
-         * being dragged.
+         * Descendants disappear visually while their parent is dragged, as
+         * intended by the Planner preview contract.
          *
-         * They remain excluded from independent sortable/collision units, so
-         * the parent still moves structurally as one subtree. They simply are
-         * not painted until DragEnd restores the canonical tree.
+         * CRITICAL: their DOM rows stay mounted and retain their exact height.
+         * This makes dragging a parent mechanically identical to dragging a
+         * leaf. The presence/size/depth of its subtree cannot mutate dnd-kit's
+         * coordinate system after DragStart.
          */
         const visibleRows =
-          activeId == null
-            ? flattenedItems
-            : flattenedItems.filter(
-                (item) =>
-                  !dragDescendantSet
-                    .has(item.id),
-              )
+          flattenedItems
 
         return (
         <ul
           aria-label="Planning hierarchy"
           className="m-0 list-none p-0"
         >
-          {visibleRows.map((item) => (
+          {visibleRows.map((item) => {
+            const isHiddenDescendant =
+              activeId != null
+              && dragDescendantSet.has(
+                item.id,
+              )
+
+            return (
             <div
 
               data-arc-tree-row
@@ -726,6 +728,7 @@ export default function PlannerTree({
               data-item-id={item.id}
 
               key={item.id}
+
               className={
                 item.depth === 0 &&
                 flattenedItems[0]?.id !== item.id
@@ -735,6 +738,17 @@ export default function PlannerTree({
 
             >
 
+              <div
+                className="relative"
+              >
+                <div
+                  style={{
+                    visibility:
+                      isHiddenDescendant
+                        ? 'hidden'
+                        : undefined,
+                  }}
+                >
               <PlannerTreeItem
               item={item}
               /*
@@ -769,9 +783,29 @@ export default function PlannerTree({
               dndEnabled
               flat
             />
+                </div>
+
+                {isHiddenDescendant && (
+                  <div
+                    aria-hidden="true"
+                    className="
+                      pointer-events-none absolute inset-0
+                      flex items-center
+                    "
+                  >
+                    <div
+                      className="
+                        ml-[38px] h-[6px] w-[46%]
+                        rounded-full bg-[#7c9cde]/10
+                      "
+                    />
+                  </div>
+                )}
+              </div>
 
             </div>
-          ))}
+            )
+          })}
         </ul>
         )
       }}

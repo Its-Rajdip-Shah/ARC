@@ -95,3 +95,79 @@ test(
     )
   },
 )
+
+
+test(
+  'hidden descendant geometry cannot change a parent destination',
+  () => {
+    const withoutDescendants = [
+      { id: 100, centerY: 100 },
+      { id: 2, centerY: 140 },
+      { id: 3, centerY: 180 },
+      { id: 1, centerY: 220 },
+      { id: 4, centerY: 260 },
+      { id: 7, centerY: 300 },
+      { id: 6, centerY: 340 },
+      { id: 5, centerY: 380 },
+      { id: 8, centerY: 420 },
+    ]
+
+    const withDeepDescendants = [
+      { id: 100, centerY: 100 },
+      { id: 2, centerY: 140 },
+      { id: 3, centerY: 180 },
+      { id: 1, centerY: 220 },
+
+      // Paint-hidden during the parent drag, but still mounted.
+      { id: 11, centerY: 260 },
+      { id: 111, centerY: 300 },
+      { id: 1111, centerY: 340 },
+      { id: 12, centerY: 380 },
+
+      { id: 4, centerY: 420 },
+      { id: 7, centerY: 460 },
+      { id: 6, centerY: 500 },
+      { id: 5, centerY: 540 },
+      { id: 8, centerY: 580 },
+    ]
+
+    /*
+     * In both layouts, put the active parent visually between 7 and 6.
+     * The numeric stationary-gap index must be identical because descendant
+     * rows are explicitly ignored by plannerVisualGapIndex.
+     */
+    const leafLikeGap =
+      plannerVisualGapIndex({
+        rows:
+          withoutDescendants,
+
+        activeId: 1,
+
+        descendantIds: [],
+
+        activeCenterY: 320,
+      })
+
+    const deepParentGap =
+      plannerVisualGapIndex({
+        rows:
+          withDeepDescendants,
+
+        activeId: 1,
+
+        descendantIds: [
+          11,
+          111,
+          1111,
+          12,
+        ],
+
+        activeCenterY: 480,
+      })
+
+    assert.equal(
+      deepParentGap,
+      leafLikeGap,
+    )
+  },
+)

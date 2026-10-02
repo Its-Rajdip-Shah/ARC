@@ -149,6 +149,81 @@ export function findQueuePosition(
 }
 
 
+export function changedQueueItemIds(
+  beforeGroups,
+  afterGroups,
+) {
+  const before =
+    new Map(
+      flattenQueue(
+        beforeGroups,
+      ).map(
+        (entry) => [
+          entry.row.item_id,
+          {
+            date:
+              entry.date,
+
+            localPosition:
+              entry.localPosition,
+          },
+        ],
+      ),
+    )
+
+  const after =
+    new Map(
+      flattenQueue(
+        afterGroups,
+      ).map(
+        (entry) => [
+          entry.row.item_id,
+          {
+            date:
+              entry.date,
+
+            localPosition:
+              entry.localPosition,
+          },
+        ],
+      ),
+    )
+
+  const changed =
+    new Set()
+
+  for (
+    const [
+      itemId,
+      beforePosition,
+    ]
+    of before
+  ) {
+    const afterPosition =
+      after.get(
+        itemId,
+      )
+
+    if (!afterPosition) {
+      continue
+    }
+
+    if (
+      beforePosition.date
+        !== afterPosition.date
+      || beforePosition.localPosition
+        !== afterPosition.localPosition
+    ) {
+      changed.add(
+        itemId,
+      )
+    }
+  }
+
+  return changed
+}
+
+
 export function queueItemPositionChanged(
   beforeGroups,
   afterGroups,
@@ -323,7 +398,65 @@ export function moveQueueItemByGlobalPosition(
   let targetDate
   let targetLocalPosition
 
-  if (
+  const previous =
+    insertionIndex > 0
+      ? remaining[
+          insertionIndex - 1
+        ]
+        ?? null
+      : null
+
+  const next =
+    insertionIndex
+      < remaining.length
+      ? remaining[
+          insertionIndex
+        ]
+        ?? null
+      : null
+
+  /*
+   * A requested global rank can land exactly on:
+   *
+   *   last TODAY | first TOMORROW
+   *
+   * Both dates touch the same flattened insertion gap.
+   *
+   * When the moving task already belongs to one of those dates, preserve
+   * that date instead of silently migrating across the boundary.
+   */
+  const ambiguousDateBoundary =
+    previous
+    && next
+    && previous.date
+      !== next.date
+    && (
+      moving.date
+        === previous.date
+      || moving.date
+        === next.date
+    )
+
+  if (ambiguousDateBoundary) {
+    targetDate =
+      moving.date
+
+    if (
+      moving.date
+      === previous.date
+    ) {
+      targetLocalPosition =
+        remaining.filter(
+          (entry) =>
+            entry.date
+            === targetDate,
+        ).length
+        + 1
+    } else {
+      targetLocalPosition =
+        1
+    }
+  } else if (
     insertionIndex
     >= remaining.length
   ) {
@@ -400,13 +533,21 @@ export function changesForTouchedRows(
             row.item_id,
           )
 
-        const alreadyAnchored =
+        /*
+         * A date-only Timeline anchor is not a Focus ordering anchor.
+         *
+         * Only an existing date + order intent should be carried forward
+         * automatically when another row on this date is reordered.
+         */
+        const alreadyFocusAnchored =
           row.manual_requested_date
+          != null
+          && row.manual_requested_order
           != null
 
         if (
           !touched
-          && !alreadyAnchored
+          && !alreadyFocusAnchored
         ) {
           return
         }

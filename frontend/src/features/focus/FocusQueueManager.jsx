@@ -11,7 +11,6 @@ import {
   KeyboardSensor,
   PointerSensor,
   closestCenter,
-  rectIntersection,
   useDroppable,
   useSensor,
   useSensors,
@@ -19,6 +18,7 @@ import {
 import {
   SortableContext,
   sortableKeyboardCoordinates,
+  useSortable,
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable'
 import {
@@ -27,6 +27,10 @@ import {
   Search,
   X,
 } from 'lucide-react'
+
+import {
+  CSS,
+} from '@dnd-kit/utilities'
 
 import {
   useBatchAnchorFocus,
@@ -40,15 +44,21 @@ import {
   hierarchyPaths,
 } from './focusModel'
 import {
+  changedQueueItemIds,
   changesForTouchedRows,
   findQueuePosition,
   flattenQueue,
   makeQueueGroups,
+  moveQueueItem,
   moveQueueItemByGlobalPosition,
   moveQueueItemToSlot,
   queueItemPositionChanged,
   queuePositionMap,
 } from './focusQueueModel'
+import {
+  projectFocusDrop,
+} from '../../dnd/focus/focusProjection'
+
 import FocusConflictDialog from './FocusConflictDialog'
 import FocusQueueRow from './FocusQueueRow'
 import FocusTaskRow from './FocusTaskRow'
@@ -61,47 +71,19 @@ const AUTOSAVE_DELAY_MS = 180
 function focusCollisionDetection(
   args,
 ) {
-  const dateBoundaries =
-    args.droppableContainers.filter(
-      (container) =>
-        String(
-          container.id,
-        ).startsWith(
-          'date-boundary:',
-        ),
-    )
-
-  const boundaryHits =
-    rectIntersection({
-      ...args,
-      droppableContainers:
-        dateBoundaries,
-    })
-
-  if (
-    boundaryHits.length
-    > 0
-  ) {
-    return boundaryHits
-  }
-
-  const ordinaryTargets =
-    args.droppableContainers.filter(
-      (container) =>
-        !String(
-          container.id,
-        ).startsWith(
-          'date-boundary:',
-        ),
-    )
-
-  return closestCenter({
-    ...args,
-    droppableContainers:
-      ordinaryTargets,
-  })
+  /*
+   * Date boundaries are structural landmarks, not hard collision walls.
+   *
+   * Previously ANY rectangle intersection with TODAY/TOMORROW immediately
+   * overrode nearby task targets. That made a dragged card snap back as soon
+   * as its edge merely touched a heading.
+   *
+   * All sortable landmarks now compete using one closest-center rule.
+   */
+  return closestCenter(
+    args,
+  )
 }
-
 
 
 function QueueDropZone({
@@ -128,6 +110,45 @@ function QueueDropZone({
           ? 'is-over'
           : '',
       ].join(' ')}
+    >
+      {children}
+    </div>
+  )
+}
+
+
+function SortableDateBoundary({
+  id,
+  disabled,
+  children,
+}) {
+  const {
+    setNodeRef,
+    transform,
+    transition,
+    isOver,
+  } =
+    useSortable({
+      id,
+      disabled,
+    })
+
+  return (
+    <div
+      ref={setNodeRef}
+      className={[
+        'focus-date-heading-drop',
+        isOver
+          ? 'is-over'
+          : '',
+      ].join(' ')}
+      style={{
+        transform:
+          CSS.Translate.toString(
+            transform,
+          ),
+        transition,
+      }}
     >
       {children}
     </div>
@@ -165,9 +186,6 @@ export default function FocusQueueManager({
     useRef(null)
 
   const dragOriginRef =
-    useRef(null)
-
-  const dragPreviewGroupsRef =
     useRef(null)
 
   const dragProjectionRef =
@@ -280,7 +298,8 @@ export default function FocusQueueManager({
 
   useEffect(() => {
     if (
-      touchedIds.size
+      dragOriginRef.current != null
+      || touchedIds.size
       || saving
       || conflict
     ) {
@@ -292,6 +311,8 @@ export default function FocusQueueManager({
     )
   }, [
     conflict,
+    // Ending a gesture must retry any canonical update deferred by the ref.
+    draggedItemId,
     initialGroups,
     saving,
     touchedIds,
@@ -508,6 +529,27 @@ export default function FocusQueueManager({
             return
           }
 
+          /*
+           * A newer movement may already exist in latestSaveRef while its
+           * debounce timer has not fired yet.
+           *
+           * In that case this response acknowledges only the older request.
+           * Clearing intent here would erase the newer visible movement before
+           * it ever reaches the backend.
+           *
+           * Keep `saving` true as the reconciliation guard and allow the
+           * newer request's existing debounce timer to start its save.
+           */
+          const latest =
+            latestSaveRef.current
+
+          if (
+            latest
+            && latest !== request
+          ) {
+            return
+          }
+
           setSaving(false)
           clearIntent()
         },
@@ -601,11 +643,47 @@ export default function FocusQueueManager({
     sourceDate,
     targetDate,
   ) {
+    /*
+     * A Focus move changes more than the grabbed card.
+     *
+     * Every row whose date/local slot changed is part of the explicit
+     * ordering action. Rows outside that displaced span remain automatic.
+     *
+     * Example:
+     *
+     *   1, 3, 2, 4
+     *        ↓ move 2 to position 2
+     *   1, 2, 3, 4
+     *
+     * Changed set = {2, 3}.
+     *
+     * Sending only {2} leaves task 3's resulting slot unspecified.
+     * Sending the entire bucket would incorrectly anchor untouched 1 and 4.
+     */
+    const displacedIds =
+      changedQueueItemIds(
+        groups,
+        nextGroups,
+      )
+
     const nextTouched =
       new Set(
         touchedIds,
       )
 
+    for (
+      const displacedId
+      of displacedIds
+    ) {
+      nextTouched.add(
+        displacedId,
+      )
+    }
+
+    /*
+     * Defensive guarantee: a genuine movement must always include the item
+     * the user directly acted on.
+     */
     nextTouched.add(
       itemId,
     )
@@ -700,24 +778,75 @@ export default function FocusQueueManager({
     )
   }
 
-  function activeCenterY(
-    active,
+  function moveWithinDate(
+    itemId,
+    delta,
   ) {
-    const translated =
-      active.rect.current
-        .translated
-
-    if (!translated) {
-      return null
+    if (
+      interactionBusy
+      || conflict
+    ) {
+      return
     }
 
-    return (
-      translated.top
-      + translated.height / 2
+    const source =
+      findQueuePosition(
+        groups,
+        itemId,
+      )
+
+    if (!source) {
+      return
+    }
+
+    const group =
+      groups.find(
+        (candidate) =>
+          candidate.date
+          === source.date,
+      )
+
+    if (!group) {
+      return
+    }
+
+    const targetPosition =
+      Math.max(
+        1,
+        Math.min(
+          group.rows.length,
+          source.index + 1 + delta,
+        ),
+      )
+
+    const nextGroups =
+      moveQueueItem(
+        groups,
+        itemId,
+        source.date,
+        targetPosition,
+      )
+
+    if (
+      !queueItemPositionChanged(
+        groups,
+        nextGroups,
+        itemId,
+      )
+    ) {
+      return
+    }
+
+    commitMovement(
+      nextGroups,
+      itemId,
+      source.date,
+      source.date,
     )
   }
 
-  function projectionForDrop(
+
+  function projectionForEvent(
     currentGroups,
     active,
     over,
@@ -726,191 +855,32 @@ export default function FocusQueueManager({
       return null
     }
 
-    const overId =
-      String(
+    const translated =
+      active.rect.current
+        .translated
+
+    const initial =
+      active.rect.current
+        .initial
+
+    return projectFocusDrop({
+      groups:
+        currentGroups,
+
+      activeId:
+        active.id,
+
+      overId:
         over.id,
-      )
 
-    const centerY =
-      activeCenterY(
-        active,
-      )
-
-    /*
-     * A date heading is one actual boundary between two days.
-     *
-     * Pointer / dragged-card centre above the heading centre:
-     *   -> append to previous day.
-     *
-     * Pointer / dragged-card centre below the heading centre:
-     *   -> prepend to this day.
-     *
-     * This makes crossing the marker symmetric and predictable.
-     */
-    if (
-      overId.startsWith(
-        'date-boundary:',
-      )
-    ) {
-      const targetDate =
-        overId.slice(
-          'date-boundary:'.length,
-        )
-
-      const groupIndex =
-        currentGroups.findIndex(
-          (group) =>
-            group.date
-            === targetDate,
-        )
-
-      if (groupIndex === -1) {
-        return null
-      }
-
-      const translated =
-        active.rect.current
-          .translated
-
-      const initial =
-        active.rect.current
-          .initial
-
-      const movingUp =
+      movingUp:
         Boolean(
           translated
           && initial
           && translated.top
             < initial.top
-        )
-
-      /*
-       * rectIntersection means the dragged CARD itself has now
-       * physically touched the date marker.
-       *
-       * Moving upward:
-       *   the card's top edge reaches the marker and the task
-       *   belongs at the end of the previous date.
-       *
-       * Moving downward:
-       *   the card's bottom edge reaches the marker and the task
-       *   belongs at the beginning of the date below.
-       *
-       * Ordinary task-to-task sorting below this branch continues
-       * using the existing centre-based logic unchanged.
-       */
-      if (
-        groupIndex > 0
-        && movingUp
-      ) {
-        const previous =
-          currentGroups[
-            groupIndex - 1
-          ]
-
-        return {
-          date:
-            previous.date,
-
-          slotIndex:
-            previous.rows.length,
-        }
-      }
-
-      return {
-        date:
-          targetDate,
-
-        slotIndex:
-          0,
-      }
-    }
-
-    /*
-     * Only the bottom of the final date needs a separate end target.
-     * Every intermediate boundary is represented by the next heading.
-     */
-    if (
-      overId.startsWith(
-        'queue-end:',
-      )
-    ) {
-      const targetDate =
-        overId.slice(
-          'queue-end:'.length,
-        )
-
-      const targetGroup =
-        currentGroups.find(
-          (group) =>
-            group.date
-            === targetDate,
-        )
-
-      if (!targetGroup) {
-        return null
-      }
-
-      return {
-        date:
-          targetDate,
-
-        slotIndex:
-          targetGroup.rows.length,
-      }
-    }
-
-    const target =
-      findQueuePosition(
-        currentGroups,
-        over.id,
-      )
-
-    if (!target) {
-      return null
-    }
-
-    if (
-      active.id
-      === over.id
-    ) {
-      return {
-        date:
-          target.date,
-
-        slotIndex:
-          target.index,
-      }
-    }
-
-    const overCenter =
-      over.rect
-        ? (
-            over.rect.top
-            + over.rect.height / 2
-          )
-        : null
-
-    const dropAfter =
-      (
-        centerY != null
-        && overCenter != null
-        && centerY
-          >= overCenter
-      )
-
-    return {
-      date:
-        target.date,
-
-      slotIndex:
-        target.index
-        + (
-          dropAfter
-            ? 1
-            : 0
         ),
-    }
+    })
   }
 
   function groupsForProjection(
@@ -922,19 +892,58 @@ export default function FocusQueueManager({
       return originGroups
     }
 
+    /*
+     * projectFocusDrop() intentionally describes TASK collisions using the
+     * hovered sortable row's occupied index.
+     *
+     * moveQueueItemToSlot() intentionally accepts an insertion gap measured
+     * against the immutable pre-removal queue.
+     *
+     * For a same-date downward movement those coordinate systems differ by
+     * exactly one:
+     *
+     *   A B C
+     *   drag A into B's occupied slot
+     *
+     *   occupied slot = 1
+     *   insertion gap = 2
+     *
+     * Convert exactly once here. The queue model then performs its existing
+     * source-removal adjustment exactly once.
+     *
+     * Upward moves already share the same numeric coordinate. Cross-date
+     * targets do not contain the moving row, so no source-removal offset is
+     * required there.
+     */
+    const source =
+      findQueuePosition(
+        originGroups,
+        activeId,
+      )
+
+    let insertionSlot =
+      projection.slotIndex
+
+    if (
+      source
+      && source.date
+        === projection.date
+      && source.index
+        < projection.slotIndex
+    ) {
+      insertionSlot += 1
+    }
+
     return moveQueueItemToSlot(
       originGroups,
       activeId,
       projection.date,
-      projection.slotIndex,
+      insertionSlot,
     )
   }
 
   function resetDragState() {
     dragOriginRef.current =
-      null
-
-    dragPreviewGroupsRef.current =
       null
 
     dragProjectionRef.current =
@@ -964,9 +973,6 @@ export default function FocusQueueManager({
         source.date,
     }
 
-    dragPreviewGroupsRef.current =
-      groups
-
     dragProjectionRef.current = {
       date:
         source.date,
@@ -995,55 +1001,31 @@ export default function FocusQueueManager({
     }
 
     /*
-     * Resolve collision against the layout currently visible to the user,
-     * but always rebuild the next preview from the immutable drag origin.
+     * Keep queue structure stable for the entire gesture.
      *
-     * This prevents preview-on-preview drift and means a quick drag is
-     * handled on the same event stream as a slow drag.
+     * The previous implementation called setGroups() on every pointer
+     * movement. That changed the same layout dnd-kit was actively measuring,
+     * producing a feedback loop:
+     *
+     * measure -> reorder DOM -> remeasure -> project again.
+     *
+     * One global SortableContext now owns visual displacement. During drag we
+     * only remember semantic intent.
      */
-    const collisionGroups =
-      dragPreviewGroupsRef.current
-      ?? origin.groups
-
     const projection =
-      projectionForDrop(
-        collisionGroups,
+      projectionForEvent(
+        origin.groups,
         active,
         over,
       )
 
-    if (!projection) {
-      return
+    if (projection) {
+      dragProjectionRef.current =
+        projection
     }
-
-    const nextGroups =
-      groupsForProjection(
-        origin.groups,
-        active.id,
-        projection,
-      )
-
-    dragProjectionRef.current =
-      projection
-
-    dragPreviewGroupsRef.current =
-      nextGroups
-
-    setGroups(
-      nextGroups,
-    )
   }
 
   function handleDragCancel() {
-    const origin =
-      dragOriginRef.current
-
-    if (origin) {
-      setGroups(
-        origin.groups,
-      )
-    }
-
     resetDragState()
   }
 
@@ -1060,23 +1042,36 @@ export default function FocusQueueManager({
     }
 
     /*
-     * The visible preview is authoritative.
+     * Persist the latest semantic projection measured against the immutable
+     * DragStart layout.
      *
-     * handleDragMove() already computes the exact queue arrangement
-     * shown on screen and stores it synchronously in
-     * dragPreviewGroupsRef.current.
-     *
-     * Do NOT reinterpret the drop again here from `over`, because the
-     * preview has already changed the sortable layout. A second
-     * projection can therefore translate the visible final index back
-     * through original-layout slot arithmetic and commit a different
-     * position from the one the user actually saw.
-     *
-     * What the user sees at release is exactly what gets persisted.
+     * There is no preview-on-preview arithmetic anymore, so the release
+     * target cannot drift because an earlier preview changed the geometry.
      */
+    /*
+     * The release event is authoritative.
+     *
+     * A collision target can change after the last onDragMove callback.
+     * Recalculate from onDragEnd first so persistence describes the place
+     * where the user actually released the card.
+     *
+     * The stored projection is only a fallback for an end event without a
+     * usable target.
+     */
+    const projection =
+      projectionForEvent(
+        origin.groups,
+        active,
+        over,
+      )
+      ?? dragProjectionRef.current
+
     const nextGroups =
-      dragPreviewGroupsRef.current
-      ?? origin.groups
+      groupsForProjection(
+        origin.groups,
+        active.id,
+        projection,
+      )
 
     const changed =
       queueItemPositionChanged(
@@ -1349,6 +1344,9 @@ export default function FocusQueueManager({
           onDragMove={
             handleDragMove
           }
+          onDragOver={
+            handleDragMove
+          }
           onDragCancel={
             handleDragCancel
           }
@@ -1356,6 +1354,22 @@ export default function FocusQueueManager({
             handleDragEnd
           }
         >
+          <SortableContext
+            items={
+              displayGroups.flatMap(
+                (group) => [
+                  `date-boundary:${group.date}`,
+                  ...group.rows.map(
+                    (candidate) =>
+                      candidate.item_id,
+                  ),
+                ],
+              )
+            }
+            strategy={
+              verticalListSortingStrategy
+            }
+          >
           <div className="focus-manager-list">
             {displayGroups.map(
               (group) => (
@@ -1363,13 +1377,12 @@ export default function FocusQueueManager({
                   key={group.date}
                   className="focus-date-group"
                 >
-                  <QueueDropZone
+                  <SortableDateBoundary
                     id={`date-boundary:${group.date}`}
                     disabled={
                       interactionBusy
                       || conflict
                     }
-                    className="focus-date-heading-drop"
                   >
                     <h3>
                       {dateGroupLabel(
@@ -1377,22 +1390,11 @@ export default function FocusQueueManager({
                         data.today,
                       )}
                     </h3>
-                  </QueueDropZone>
+                  </SortableDateBoundary>
 
-                  <SortableContext
-                    items={
-                      group.rows.map(
-                        (candidate) =>
-                          candidate.item_id,
-                      )
-                    }
-                    strategy={
-                      verticalListSortingStrategy
-                    }
-                  >
-                    <div className="focus-date-group-rows">
-                      {group.rows.map(
-                        (candidate) => (
+                  <div className="focus-date-group-rows">
+                    {group.rows.map(
+                      (candidate, localIndex) => (
                           <FocusQueueRow
                             key={
                               candidate.item_id
@@ -1407,6 +1409,15 @@ export default function FocusQueueManager({
                             }
                             count={
                               totalRows
+                            }
+                            localPosition={
+                              localIndex + 1
+                            }
+                            localCount={
+                              group.rows.length
+                            }
+                            onMoveWithinDate={
+                              moveWithinDate
                             }
                             disabled={
                               interactionBusy
@@ -1467,8 +1478,7 @@ export default function FocusQueueManager({
                           />
                         ),
                       )}
-                    </div>
-                  </SortableContext>
+                  </div>
 
                 </section>
               ),
@@ -1489,6 +1499,7 @@ export default function FocusQueueManager({
               />
             )}
           </div>
+          </SortableContext>
 
           <DragOverlay
             zIndex={1000}

@@ -22,7 +22,7 @@ import FocusConflictDialog from './FocusConflictDialog'
 import FocusQueueManager from './FocusQueueManager'
 import FocusSchedulerMascot from './FocusSchedulerMascot'
 import {
-  bucketForCategory,
+  bucketForCandidate,
   hierarchyPaths,
 } from './focusModel'
 
@@ -105,9 +105,8 @@ export default function FocusPage() {
       {
         onNavigate(row) {
           const bucket =
-            bucketForCategory(
-              row
-                ?.duration_category,
+            bucketForCandidate(
+              row,
             )
 
           if (bucket) {

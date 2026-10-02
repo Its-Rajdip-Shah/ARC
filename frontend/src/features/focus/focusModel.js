@@ -88,6 +88,37 @@ export function bucketForCategory(
   )
 }
 
+export function bucketForCandidate(
+  candidate,
+) {
+  const canonicalId =
+    candidate
+      ?.focus_bucket
+
+  if (canonicalId) {
+    const canonical =
+      FOCUS_BUCKETS.find(
+        (bucket) =>
+          bucket.id
+          === canonicalId,
+      )
+
+    if (canonical) {
+      return canonical
+    }
+  }
+
+  /*
+   * Compatibility fallback for older fixtures / callers that do not yet
+   * provide canonical focus_bucket.
+   */
+  return bucketForCategory(
+    candidate
+      ?.duration_category,
+  )
+}
+
+
 export function candidatesForBucket(
   candidates,
   bucket,
@@ -97,9 +128,10 @@ export function candidatesForBucket(
     ?? EMPTY_CANDIDATES
   ).filter(
     (candidate) =>
-      bucket.categories.includes(
-        candidate.duration_category,
-      ),
+      bucketForCandidate(
+        candidate,
+      )?.id
+      === bucket.id,
   )
 }
 

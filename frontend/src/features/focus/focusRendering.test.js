@@ -350,3 +350,81 @@ test('queue groups use today tomorrow then absolute date and weekday', () => {
     /^03 OCT · /,
   )
 })
+
+
+test(
+  'canonical focus_bucket overrides raw duration category for residual candidates',
+  () => {
+    const residual = {
+      item_id:
+        101,
+
+      duration_category:
+        'UNDER_4_HOURS',
+
+      /*
+       * Backend/scheduler canonical classification:
+       * residual work belongs to QUICK WINS.
+       */
+      focus_bucket:
+        'quick',
+    }
+
+    const boss = {
+      item_id:
+        102,
+
+      duration_category:
+        'UNDER_4_HOURS',
+
+      focus_bucket:
+        'boss',
+    }
+
+    const bossBucket =
+      FOCUS_BUCKETS.find(
+        (bucket) =>
+          bucket.id
+          === 'boss',
+      )
+
+    const quickBucket =
+      FOCUS_BUCKETS.find(
+        (bucket) =>
+          bucket.id
+          === 'quick',
+      )
+
+    assert.deepEqual(
+      candidatesForBucket(
+        [
+          residual,
+          boss,
+        ],
+        bossBucket,
+      ).map(
+        (candidate) =>
+          candidate.item_id,
+      ),
+      [
+        102,
+      ],
+    )
+
+    assert.deepEqual(
+      candidatesForBucket(
+        [
+          residual,
+          boss,
+        ],
+        quickBucket,
+      ).map(
+        (candidate) =>
+          candidate.item_id,
+      ),
+      [
+        101,
+      ],
+    )
+  },
+)

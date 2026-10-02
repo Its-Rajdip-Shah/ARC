@@ -738,6 +738,15 @@ def _focus_projection(user):
         for candidate in projection['candidates']
     ]
 
+    residual_children = (
+        PlanningItem.objects
+        .visible()
+        .filter(
+            user=user,
+            parent_id=OuterRef("pk"),
+        )
+    )
+
     candidate_items = {
         item.pk: item
         for item in (
@@ -745,6 +754,11 @@ def _focus_projection(user):
             .for_user(user)
             .filter(
                 pk__in=candidate_ids,
+            )
+            .annotate(
+                is_residual=Exists(
+                    residual_children,
+                ),
             )
         )
     }
@@ -779,6 +793,13 @@ def _focus_projection(user):
             'title': candidate.title,
             'duration_category':
                 candidate.duration_category,
+            'focus_bucket':
+                focus_bucket_key(
+                    candidate.duration_category,
+                    is_residual=bool(
+                        item.is_residual
+                    ),
+                ),
             'scheduled_date':
                 candidate.scheduled_date,
             'priority_position':

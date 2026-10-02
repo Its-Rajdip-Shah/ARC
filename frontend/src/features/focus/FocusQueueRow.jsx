@@ -18,8 +18,11 @@ export default function FocusQueueRow({
   candidate,
   position,
   count,
+  localPosition,
+  localCount,
   disabled,
   onMoveGlobal,
+  onMoveWithinDate,
   matched = false,
   currentMatch = false,
   ...taskProps
@@ -96,13 +99,13 @@ export default function FocusQueueRow({
             type="button"
             disabled={
               disabled
-              || position === 1
+              || localPosition === 1
             }
             aria-label={`Move ${candidate.title} up`}
             onClick={() =>
-              onMoveGlobal(
+              onMoveWithinDate(
                 candidate.item_id,
-                position - 1,
+                -1,
               )
             }
           >
@@ -113,13 +116,13 @@ export default function FocusQueueRow({
             type="button"
             disabled={
               disabled
-              || position === count
+              || localPosition === localCount
             }
             aria-label={`Move ${candidate.title} down`}
             onClick={() =>
-              onMoveGlobal(
+              onMoveWithinDate(
                 candidate.item_id,
-                position + 1,
+                1,
               )
             }
           >

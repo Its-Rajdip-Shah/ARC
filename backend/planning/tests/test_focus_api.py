@@ -1566,3 +1566,358 @@ def test_focus_reprioritise_runs_scheduler_once(
 
     assert response.status_code == 200, response.data
     assert len(calls) == 1
+
+
+
+@pytest.mark.parametrize(
+    "flavour",
+    [
+        "lock-in",
+        "monk",
+    ],
+)
+def test_focus_displaced_span_rank_edit_survives_real_scheduler_round_trip(
+    api_for,
+    user,
+    make_item,
+    flavour,
+):
+    """Rank edit anchors only the two rows whose local positions changed."""
+
+    from planning.models import SchedulingState
+
+    today = timezone.localdate()
+
+    SchedulingState.objects.update_or_create(
+        user=user,
+        defaults={
+            "scheduler_flavour": flavour,
+        },
+    )
+
+    one = make_item(
+        user,
+        "Behavior 1",
+        duration_category=DurationCategory.UNDER_1_HOUR,
+        priority_position=1,
+    )
+
+    three = make_item(
+        user,
+        "Behavior 3",
+        duration_category=DurationCategory.UNDER_1_HOUR,
+        priority_position=2,
+    )
+
+    two = make_item(
+        user,
+        "Behavior 2",
+        duration_category=DurationCategory.UNDER_1_HOUR,
+        priority_position=3,
+    )
+
+    four = make_item(
+        user,
+        "Behavior 4",
+        duration_category=DurationCategory.UNDER_1_HOUR,
+        priority_position=4,
+    )
+
+    initial = [
+        one,
+        three,
+        two,
+        four,
+    ]
+
+    for rank, item in enumerate(
+        initial,
+        start=1,
+    ):
+        PlanningItem.objects.filter(
+            pk=item.pk,
+        ).update(
+            scheduled_date=today,
+            execution_rank=rank,
+            manual_requested_date=None,
+            manual_requested_order=None,
+        )
+
+    response = api_for(user).post(
+        "/api/planning/focus/anchor/batch/",
+        {
+            "changes": [
+                {
+                    "item_id": two.pk,
+                    "date": today.isoformat(),
+                    "order": 2,
+                },
+                {
+                    "item_id": three.pk,
+                    "date": today.isoformat(),
+                    "order": 3,
+                },
+            ],
+        },
+        format="json",
+    )
+
+    assert response.status_code == 200, response.data
+
+    projection = api_for(user).get(
+        "/api/planning/focus/",
+    )
+
+    actual = [
+        row["item_id"]
+        for row in projection.data["candidates"]
+        if row["item_id"] in {
+            one.pk,
+            two.pk,
+            three.pk,
+            four.pk,
+        }
+    ]
+
+    assert actual == [
+        one.pk,
+        two.pk,
+        three.pk,
+        four.pk,
+    ]
+
+    one.refresh_from_db()
+    two.refresh_from_db()
+    three.refresh_from_db()
+    four.refresh_from_db()
+
+    assert one.manual_requested_date is None
+    assert one.manual_requested_order is None
+
+    assert four.manual_requested_date is None
+    assert four.manual_requested_order is None
+
+    assert two.manual_requested_date == today
+    assert two.manual_requested_order == 2
+
+    assert three.manual_requested_date == today
+    assert three.manual_requested_order == 3
+
+
+@pytest.mark.parametrize(
+    "flavour",
+    [
+        "lock-in",
+        "monk",
+    ],
+)
+def test_focus_displaced_span_arrow_move_survives_real_scheduler_round_trip(
+    api_for,
+    user,
+    make_item,
+    flavour,
+):
+    """Arrow action anchors moved row plus the sibling it displaced."""
+
+    from planning.models import SchedulingState
+
+    today = timezone.localdate()
+
+    SchedulingState.objects.update_or_create(
+        user=user,
+        defaults={
+            "scheduler_flavour": flavour,
+        },
+    )
+
+    one = make_item(
+        user,
+        "Arrow 1",
+        duration_category=DurationCategory.UNDER_1_HOUR,
+        priority_position=1,
+    )
+
+    four = make_item(
+        user,
+        "Arrow 4",
+        duration_category=DurationCategory.UNDER_1_HOUR,
+        priority_position=2,
+    )
+
+    two = make_item(
+        user,
+        "Arrow 2",
+        duration_category=DurationCategory.UNDER_1_HOUR,
+        priority_position=3,
+    )
+
+    three = make_item(
+        user,
+        "Arrow 3",
+        duration_category=DurationCategory.UNDER_1_HOUR,
+        priority_position=4,
+    )
+
+    initial = [
+        one,
+        four,
+        two,
+        three,
+    ]
+
+    for rank, item in enumerate(
+        initial,
+        start=1,
+    ):
+        PlanningItem.objects.filter(
+            pk=item.pk,
+        ).update(
+            scheduled_date=today,
+            execution_rank=rank,
+            manual_requested_date=None,
+            manual_requested_order=None,
+        )
+
+    response = api_for(user).post(
+        "/api/planning/focus/anchor/batch/",
+        {
+            "changes": [
+                {
+                    "item_id": three.pk,
+                    "date": today.isoformat(),
+                    "order": 3,
+                },
+                {
+                    "item_id": two.pk,
+                    "date": today.isoformat(),
+                    "order": 4,
+                },
+            ],
+        },
+        format="json",
+    )
+
+    assert response.status_code == 200, response.data
+
+    projection = api_for(user).get(
+        "/api/planning/focus/",
+    )
+
+    actual = [
+        row["item_id"]
+        for row in projection.data["candidates"]
+        if row["item_id"] in {
+            one.pk,
+            four.pk,
+            two.pk,
+            three.pk,
+        }
+    ]
+
+    assert actual == [
+        one.pk,
+        four.pk,
+        three.pk,
+        two.pk,
+    ]
+
+    one.refresh_from_db()
+    four.refresh_from_db()
+    two.refresh_from_db()
+    three.refresh_from_db()
+
+    assert one.manual_requested_order is None
+    assert four.manual_requested_order is None
+
+    assert three.manual_requested_order == 3
+    assert two.manual_requested_order == 4
+
+
+def test_focus_projection_exposes_scheduler_canonical_bucket_for_residual(
+    api_for,
+    user,
+    make_item,
+):
+    """
+    A schedulable parent with only completed children is a residual task.
+
+    Its raw duration may still be UNDER_4_HOURS, but canonical Focus/scheduler
+    semantics place residual work in QUICK WINS.
+    """
+
+    today = timezone.localdate()
+
+    residual = make_item(
+        user,
+        "Residual boss-looking task",
+        duration_category=DurationCategory.UNDER_4_HOURS,
+        priority_position=1,
+    )
+
+    completed_child = make_item(
+        user,
+        "Completed child",
+        parent=residual,
+        duration_category=DurationCategory.UNDER_1_HOUR,
+    )
+
+    PlanningItem.objects.filter(
+        pk=completed_child.pk,
+    ).update(
+        is_completed=True,
+        percent_completed=100,
+    )
+
+    PlanningItem.objects.filter(
+        pk=residual.pk,
+    ).update(
+        scheduled_date=today,
+        execution_rank=1,
+    )
+
+    boss = make_item(
+        user,
+        "Real boss task",
+        duration_category=DurationCategory.UNDER_4_HOURS,
+        priority_position=2,
+    )
+
+    PlanningItem.objects.filter(
+        pk=boss.pk,
+    ).update(
+        scheduled_date=today,
+        execution_rank=2,
+    )
+
+    response = api_for(user).get(
+        "/api/planning/focus/",
+    )
+
+    assert response.status_code == 200
+
+    rows = {
+        row["item_id"]:
+            row
+        for row in response.data["candidates"]
+    }
+
+    assert (
+        rows[
+            residual.pk
+        ]["duration_category"]
+        == DurationCategory.UNDER_4_HOURS
+    )
+
+    assert (
+        rows[
+            residual.pk
+        ]["focus_bucket"]
+        == "quick"
+    )
+
+    assert (
+        rows[
+            boss.pk
+        ]["focus_bucket"]
+        == "boss"
+    )

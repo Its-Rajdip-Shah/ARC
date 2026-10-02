@@ -296,6 +296,7 @@ class FocusCandidateSerializer(serializers.Serializer):
     duration_category = serializers.CharField(
         allow_null=True,
     )
+    focus_bucket = serializers.CharField()
     scheduled_date = serializers.DateField(
         allow_null=True,
     )

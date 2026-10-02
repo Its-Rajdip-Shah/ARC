@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
+  changedQueueItemIds,
   changesForTouchedRows,
   makeQueueGroups,
   moveQueueItem,
@@ -513,3 +514,678 @@ test('same-day exact original slot remains a no-op', () => {
     false,
   )
 })
+
+
+test(
+  'date-local nudge never crosses into another date',
+  () => {
+    const groups =
+      makeQueueGroups(
+        [
+          row(1, TODAY),
+          row(2, TODAY),
+          row(3, TOMORROW),
+          row(4, TOMORROW),
+        ],
+        TODAY,
+      )
+
+    const moved =
+      moveQueueItem(
+        groups,
+        2,
+        TODAY,
+        1,
+      )
+
+    assert.deepEqual(
+      moved[0].rows.map(
+        (candidate) =>
+          candidate.item_id,
+      ),
+      [
+        2,
+        1,
+      ],
+    )
+
+    assert.deepEqual(
+      moved[1].rows.map(
+        (candidate) =>
+          candidate.item_id,
+      ),
+      [
+        3,
+        4,
+      ],
+    )
+  },
+)
+
+
+test(
+  'BEHAVIOR rank edit anchors exactly the displaced span',
+  () => {
+    const today =
+      '2026-10-01'
+
+    const initial = [
+      {
+        date:
+          today,
+
+        rows: [
+          {
+            item_id: 1,
+            scheduled_date: today,
+            manual_requested_date: null,
+          },
+          {
+            item_id: 3,
+            scheduled_date: today,
+            manual_requested_date: null,
+          },
+          {
+            item_id: 2,
+            scheduled_date: today,
+            manual_requested_date: null,
+          },
+          {
+            item_id: 4,
+            scheduled_date: today,
+            manual_requested_date: null,
+          },
+        ],
+      },
+    ]
+
+    const moved =
+      moveQueueItemByGlobalPosition(
+        initial,
+        2,
+        2,
+      )
+
+    assert.deepEqual(
+      moved[0].rows.map(
+        (row) =>
+          row.item_id,
+      ),
+      [
+        1,
+        2,
+        3,
+        4,
+      ],
+    )
+
+    const touched =
+      changedQueueItemIds(
+        initial,
+        moved,
+      )
+
+    assert.deepEqual(
+      [
+        ...touched,
+      ].sort(),
+      [
+        2,
+        3,
+      ],
+    )
+
+    const changes =
+      changesForTouchedRows(
+        moved,
+        touched,
+        new Set([
+          today,
+        ]),
+      )
+
+    assert.deepEqual(
+      changes,
+      [
+        {
+          item_id: 2,
+          date: today,
+          order: 2,
+        },
+        {
+          item_id: 3,
+          date: today,
+          order: 3,
+        },
+      ],
+    )
+  },
+)
+
+
+test(
+  'BEHAVIOR arrow move anchors exactly moved + displaced sibling',
+  () => {
+    const today =
+      '2026-10-01'
+
+    const initial = [
+      {
+        date:
+          today,
+
+        rows: [
+          {
+            item_id: 1,
+            scheduled_date: today,
+            manual_requested_date: null,
+          },
+          {
+            item_id: 4,
+            scheduled_date: today,
+            manual_requested_date: null,
+          },
+          {
+            item_id: 2,
+            scheduled_date: today,
+            manual_requested_date: null,
+          },
+          {
+            item_id: 3,
+            scheduled_date: today,
+            manual_requested_date: null,
+          },
+        ],
+      },
+    ]
+
+    const moved =
+      moveQueueItem(
+        initial,
+        3,
+        today,
+        3,
+      )
+
+    assert.deepEqual(
+      moved[0].rows.map(
+        (row) =>
+          row.item_id,
+      ),
+      [
+        1,
+        4,
+        3,
+        2,
+      ],
+    )
+
+    const touched =
+      changedQueueItemIds(
+        initial,
+        moved,
+      )
+
+    assert.deepEqual(
+      [
+        ...touched,
+      ].sort(),
+      [
+        2,
+        3,
+      ],
+    )
+
+    const changes =
+      changesForTouchedRows(
+        moved,
+        touched,
+        new Set([
+          today,
+        ]),
+      )
+
+    assert.deepEqual(
+      changes,
+      [
+        {
+          item_id: 3,
+          date: today,
+          order: 3,
+        },
+        {
+          item_id: 2,
+          date: today,
+          order: 4,
+        },
+      ],
+    )
+  },
+)
+
+
+test(
+  'BEHAVIOR DnD anchors exactly the visibly displaced rows',
+  () => {
+    const today =
+      '2026-10-01'
+
+    const initial = [
+      {
+        date:
+          today,
+
+        rows: [
+          {
+            item_id: 1,
+            scheduled_date: today,
+            manual_requested_date: null,
+          },
+          {
+            item_id: 3,
+            scheduled_date: today,
+            manual_requested_date: null,
+          },
+          {
+            item_id: 2,
+            scheduled_date: today,
+            manual_requested_date: null,
+          },
+          {
+            item_id: 4,
+            scheduled_date: today,
+            manual_requested_date: null,
+          },
+        ],
+      },
+    ]
+
+    const moved =
+      moveQueueItemToSlot(
+        initial,
+        2,
+        today,
+        1,
+      )
+
+    assert.deepEqual(
+      moved[0].rows.map(
+        (row) =>
+          row.item_id,
+      ),
+      [
+        1,
+        2,
+        3,
+        4,
+      ],
+    )
+
+    const touched =
+      changedQueueItemIds(
+        initial,
+        moved,
+      )
+
+    const changes =
+      changesForTouchedRows(
+        moved,
+        touched,
+        new Set([
+          today,
+        ]),
+      )
+
+    assert.deepEqual(
+      changes,
+      [
+        {
+          item_id: 2,
+          date: today,
+          order: 2,
+        },
+        {
+          item_id: 3,
+          date: today,
+          order: 3,
+        },
+      ],
+    )
+  },
+)
+
+
+test(
+  'BEHAVIOR long move anchors every row in the displaced span but nothing else',
+  () => {
+    const today =
+      '2026-10-01'
+
+    const initial = [
+      {
+        date:
+          today,
+
+        rows: [
+          row(1, today),
+          row(2, today),
+          row(3, today),
+          row(4, today),
+          row(5, today),
+        ],
+      },
+    ]
+
+    const moved =
+      moveQueueItem(
+        initial,
+        5,
+        today,
+        2,
+      )
+
+    assert.deepEqual(
+      moved[0].rows.map(
+        (candidate) =>
+          candidate.item_id,
+      ),
+      [
+        1,
+        5,
+        2,
+        3,
+        4,
+      ],
+    )
+
+    assert.deepEqual(
+      [
+        ...changedQueueItemIds(
+          initial,
+          moved,
+        ),
+      ].sort(),
+      [
+        2,
+        3,
+        4,
+        5,
+      ],
+    )
+  },
+)
+
+
+test(
+  'BEHAVIOR rapid moves accumulate intent from the latest local queue',
+  () => {
+    const today =
+      '2026-10-01'
+
+    const initial = [
+      {
+        date:
+          today,
+
+        rows: [
+          row(1, today),
+          row(3, today),
+          row(2, today),
+          row(4, today),
+        ],
+      },
+    ]
+
+    const first =
+      moveQueueItemByGlobalPosition(
+        initial,
+        2,
+        2,
+      )
+
+    const firstTouched =
+      changedQueueItemIds(
+        initial,
+        first,
+      )
+
+    assert.deepEqual(
+      [
+        ...firstTouched,
+      ].sort(),
+      [
+        2,
+        3,
+      ],
+    )
+
+    const second =
+      moveQueueItemByGlobalPosition(
+        first,
+        4,
+        2,
+      )
+
+    assert.deepEqual(
+      second[0].rows.map(
+        (candidate) =>
+          candidate.item_id,
+      ),
+      [
+        1,
+        4,
+        2,
+        3,
+      ],
+    )
+
+    const cumulativeTouched =
+      new Set(
+        firstTouched,
+      )
+
+    for (
+      const itemId
+      of changedQueueItemIds(
+        first,
+        second,
+      )
+    ) {
+      cumulativeTouched.add(
+        itemId,
+      )
+    }
+
+    const changes =
+      changesForTouchedRows(
+        second,
+        cumulativeTouched,
+        new Set([
+          today,
+        ]),
+      )
+
+    assert.deepEqual(
+      changes,
+      [
+        {
+          item_id: 4,
+          date: today,
+          order: 2,
+        },
+        {
+          item_id: 2,
+          date: today,
+          order: 3,
+        },
+        {
+          item_id: 3,
+          date: today,
+          order: 4,
+        },
+      ],
+      (
+        'The latest queued save must describe the current local arrangement, '
+        + 'including earlier still-pending displaced anchors.'
+      ),
+    )
+  },
+)
+
+
+test(
+  'RED: untouched date-only Timeline anchor is not promoted to Focus order',
+  () => {
+    const today =
+      '2026-10-01'
+
+    const groups = [
+      {
+        date:
+          today,
+
+        rows: [
+          {
+            item_id: 1,
+            scheduled_date: today,
+
+            /*
+             * Timeline anchor only:
+             * fixed date, no Focus order intent.
+             */
+            manual_requested_date:
+              today,
+
+            manual_requested_order:
+              null,
+          },
+
+          {
+            item_id: 3,
+            scheduled_date: today,
+            manual_requested_date:
+              null,
+            manual_requested_order:
+              null,
+          },
+
+          {
+            item_id: 2,
+            scheduled_date: today,
+            manual_requested_date:
+              null,
+            manual_requested_order:
+              null,
+          },
+
+          {
+            item_id: 4,
+            scheduled_date: today,
+            manual_requested_date:
+              null,
+            manual_requested_order:
+              null,
+          },
+        ],
+      },
+    ]
+
+    /*
+     * The user moved only tasks 2 and 3.
+     *
+     * Task 1 is date-anchored by Timeline but was neither directly touched
+     * nor displaced.
+     */
+    const changes =
+      changesForTouchedRows(
+        groups,
+        new Set([
+          2,
+          3,
+        ]),
+        new Set([
+          today,
+        ]),
+      )
+
+    assert.deepEqual(
+      changes,
+      [
+        {
+          item_id:
+            3,
+
+          date:
+            today,
+
+          order:
+            2,
+        },
+
+        {
+          item_id:
+            2,
+
+          date:
+            today,
+
+          order:
+            3,
+        },
+      ],
+    )
+  },
+)
+
+
+test(
+  'REAL RANK boundary keeps moving task on current date when requested rank touches both dates',
+  () => {
+    const groups =
+      makeQueueGroups(
+        [
+          row(2, TODAY),
+          row(3, TODAY),
+          row(1, TODAY),
+          row(4, TODAY),
+          row(5, TODAY),
+
+          row(6, TOMORROW),
+          row(7, TOMORROW),
+        ],
+        TODAY,
+      )
+
+    const moved =
+      moveQueueItemByGlobalPosition(
+        groups,
+        1,
+        5,
+      )
+
+    assert.deepEqual(
+      moved[0].rows.map(
+        (candidate) =>
+          candidate.item_id,
+      ),
+      [
+        2,
+        3,
+        4,
+        5,
+        1,
+      ],
+    )
+
+    assert.deepEqual(
+      moved[1].rows.map(
+        (candidate) =>
+          candidate.item_id,
+      ),
+      [
+        6,
+        7,
+      ],
+    )
+  },
+)

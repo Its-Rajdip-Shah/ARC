@@ -199,13 +199,18 @@ def test_delete_disconnects_but_keeps_the_imported_items(client, user, connectio
 
 def test_one_users_connection_is_invisible_to_another(api_for, other_user, connection):
     """FR-03."""
-    assert api_for(other_user).get('/api/canvas/connection/').status_code == 404
+    other = api_for(other_user)
+    assert other.get('/api/canvas/connection/').status_code == 404
+    assert other.get('/api/canvas/courses/').status_code == 404
+    assert other.put('/api/canvas/courses/', {'course_ids': []}, format='json').status_code == 404
 
 
 def test_the_canvas_endpoints_refuse_an_anonymous_request(db, api):
     assert api.get('/api/canvas/connection/').status_code == 401
     assert api.post('/api/canvas/sync/').status_code == 401
     assert api.get('/api/canvas/sync-logs/').status_code == 401
+    assert api.get('/api/canvas/courses/').status_code == 401
+    assert api.put('/api/canvas/courses/', {'course_ids': []}).status_code == 401
 
 
 # --- Client -----------------------------------------------------------------
@@ -726,3 +731,113 @@ def test_a_scheduler_crash_after_import_still_counts_as_canvas_success(connectio
     connection.refresh_from_db()
     assert connection.last_sync_at == log.completed_at
     assert PlanningItem.objects.filter(user=user, canvas_object_id='11').exists()
+
+
+def _two_courses():
+    return StubCanvas(
+        courses=[
+            {'id': 11, 'course_code': 'ELEC3609', 'name': 'Internet Software'},
+            {'id': 12, 'course_code': 'COMP2123', 'name': 'Data Structures'},
+        ],
+        assignments={
+            11: [{'id': 501, 'name': 'A'}],
+            12: [{'id': 502, 'name': 'B'}],
+        },
+    )
+
+
+def test_a_null_allowlist_still_imports_every_canvas_course(connection, user):
+    connection.sync_course_ids = None
+    connection.save(update_fields=['sync_course_ids'])
+    stub = _two_courses()
+    log = sync.run_sync(connection, client=stub)
+    assert log.status == SyncStatus.SUCCESS
+    assert log.counts['courses_created'] == 2
+    assert stub.assignment_calls == [11, 12]
+
+
+def test_an_explicit_allowlist_imports_only_those_courses(connection, user):
+    connection.sync_course_ids = ['11']
+    connection.save(update_fields=['sync_course_ids'])
+    stub = _two_courses()
+    log = sync.run_sync(connection, client=stub)
+    assert log.status == SyncStatus.SUCCESS
+    assert log.counts['courses_created'] == 1
+    assert stub.assignment_calls == [11]
+    assert PlanningItem.objects.filter(
+        user=user, canvas_object_type=CanvasObjectType.COURSE, canvas_object_id='11',
+    ).exists()
+    assert not PlanningItem.objects.filter(
+        user=user, canvas_object_id='12',
+    ).exists()
+
+
+def test_an_empty_allowlist_syncs_nothing(connection, user):
+    connection.sync_course_ids = []
+    connection.save(update_fields=['sync_course_ids'])
+    stub = _two_courses()
+    log = sync.run_sync(connection, client=stub)
+    assert log.status == SyncStatus.SUCCESS
+    assert log.counts == {
+        'courses_created': 0, 'courses_updated': 0,
+        'assignments_created': 0, 'assignments_updated': 0,
+    }
+    assert stub.assignment_calls == []
+    assert not PlanningItem.objects.filter(user=user).exists()
+
+
+def test_unchecking_a_course_does_not_delete_its_planner_root(connection, user):
+    sync.run_sync(connection, client=_two_courses())
+    connection.sync_course_ids = ['11']
+    connection.save(update_fields=['sync_course_ids'])
+    stub = _two_courses()
+    log = sync.run_sync(connection, client=stub)
+    assert log.status == SyncStatus.SUCCESS
+    assert stub.assignment_calls == [11]
+    assert PlanningItem.objects.filter(
+        user=user, canvas_object_type=CanvasObjectType.COURSE,
+    ).count() == 2
+
+
+def test_get_courses_marks_every_row_selected_when_the_allowlist_is_null(
+    client, connection, canvas_returns,
+):
+    canvas_returns(_two_courses())
+    response = client.get('/api/canvas/courses/')
+    assert response.status_code == 200, response.data
+    assert [row['id'] for row in response.data] == ['11', '12']
+    assert all(row['selected'] for row in response.data)
+    body = str(response.data)
+    assert TOKEN not in body
+    assert 'api_token' not in body
+
+
+def test_get_courses_honours_an_explicit_allowlist(client, connection, canvas_returns):
+    connection.sync_course_ids = ['11']
+    connection.save(update_fields=['sync_course_ids'])
+    canvas_returns(_two_courses())
+    response = client.get('/api/canvas/courses/')
+    by_id = {row['id']: row for row in response.data}
+    assert by_id['11']['selected'] is True
+    assert by_id['12']['selected'] is False
+
+
+def test_put_courses_saves_the_allowlist_and_null_means_all(client, connection):
+    saved = client.put('/api/canvas/courses/', {'course_ids': ['11', '12']}, format='json')
+    assert saved.status_code == 200, saved.data
+    assert saved.data['course_ids'] == ['11', '12']
+    connection.refresh_from_db()
+    assert connection.sync_course_ids == ['11', '12']
+
+    cleared = client.put('/api/canvas/courses/', {'course_ids': None}, format='json')
+    assert cleared.status_code == 200, cleared.data
+    assert cleared.data['course_ids'] is None
+    connection.refresh_from_db()
+    assert connection.sync_course_ids is None
+
+    emptied = client.put('/api/canvas/courses/', {'course_ids': []}, format='json')
+    assert emptied.status_code == 200, emptied.data
+    assert emptied.data['course_ids'] == []
+    connection.refresh_from_db()
+    assert connection.sync_course_ids == []
+

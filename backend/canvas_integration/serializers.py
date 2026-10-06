@@ -42,3 +42,18 @@ class CanvasConnectionSerializer(serializers.ModelSerializer):
         stored without the API handing it back."""
         token = connection.api_token_encrypted or ''
         return f'...{token[-4:]}' if len(token) >= 4 else None
+
+
+class CanvasCourseSerializer(serializers.Serializer):
+    id = serializers.CharField()
+    course_code = serializers.CharField(allow_null=True, required=False)
+    name = serializers.CharField(allow_null=True, required=False)
+    selected = serializers.BooleanField()
+
+
+class CanvasCourseSelectionSerializer(serializers.Serializer):
+    course_ids = serializers.ListField(
+        child=serializers.CharField(allow_blank=False),
+        allow_null=True,
+        allow_empty=True,
+    )

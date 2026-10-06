@@ -16,5 +16,6 @@ urlpatterns = [
         name='canvas-connection-test',
     ),
     path('sync/', views.CanvasSyncView.as_view(), name='canvas-sync'),
+    path('courses/', views.CanvasCourseListView.as_view(), name='canvas-courses'),
     path('', include(router.urls)),
 ]

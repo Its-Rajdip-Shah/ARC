@@ -44,6 +44,14 @@ def _course_title(course):
     return course.get('course_code') or course.get('name') or 'Untitled Canvas course'
 
 
+def _selected_course_ids(connection):
+    """None means every course. Otherwise a set of Canvas id strings."""
+    raw = connection.sync_course_ids
+    if raw is None:
+        return None
+    return {str(course_id) for course_id in raw}
+
+
 def _as_decimal(value):
     if value is None:
         return None
@@ -229,8 +237,11 @@ def run_sync(connection, client=None):
     try:
         profile = client.whoami()
         courses = client.courses()
+        allow = _selected_course_ids(connection)
         for course in courses:
             if course.get('id') is None:
+                continue
+            if allow is not None and str(course['id']) not in allow:
                 continue
             _import_course(user, client, course, counts)
     except CanvasError as exc:

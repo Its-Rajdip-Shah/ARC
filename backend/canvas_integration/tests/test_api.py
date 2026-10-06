@@ -15,6 +15,7 @@ from canvas_integration import sync, views
 from canvas_integration.client import CanvasClient, CanvasError
 from canvas_integration.models import CanvasConnection, SyncLog, SyncStatus
 from planning.models import AssignmentDetail, CanvasObjectType, ItemType, PlanningItem, Timezone
+from planning.services import deletion
 
 pytestmark = pytest.mark.django_db
 
@@ -840,4 +841,96 @@ def test_put_courses_saves_the_allowlist_and_null_means_all(client, connection):
     assert emptied.data['course_ids'] == []
     connection.refresh_from_db()
     assert connection.sync_course_ids == []
+
+
+def test_resync_does_not_revive_a_deleted_canvas_course(connection, user):
+    """With import-all (null allowlist), a planner tombstone stays dead."""
+    stub = StubCanvas(
+        courses=[{'id': 11, 'course_code': 'ELEC3609'}],
+        assignments={11: [{'id': 501, 'name': 'A'}]},
+    )
+    assert sync.run_sync(connection, client=stub).status == SyncStatus.SUCCESS
+    root = PlanningItem.objects.get(user=user, canvas_object_id='11')
+    deletion.delete_subtree(root)
+
+    log = sync.run_sync(connection, client=stub)
+    assert log.status == SyncStatus.SUCCESS
+    assert log.error_message is None
+    root.refresh_from_db()
+    assert root.is_deleted is True
+    assert not PlanningItem.objects.for_user(user).exists()
+
+
+def test_an_explicit_allowlist_restores_a_deleted_canvas_course(connection, user):
+    """Checking a subject in Settings means import it, even after a planner delete."""
+    stub = StubCanvas(
+        courses=[{'id': 11, 'course_code': 'ELEC3609'}],
+        assignments={11: [{'id': 501, 'name': 'A'}]},
+    )
+    sync.run_sync(connection, client=stub)
+    root = PlanningItem.objects.get(user=user, canvas_object_id='11')
+    deletion.delete_subtree(root)
+    connection.sync_course_ids = ['11']
+    connection.save(update_fields=['sync_course_ids'])
+
+    log = sync.run_sync(connection, client=stub)
+    assert log.status == SyncStatus.SUCCESS
+    assert log.error_message is None
+    root.refresh_from_db()
+    assert root.is_deleted is False
+    assignment = PlanningItem.objects.get(user=user, canvas_object_id='501')
+    assert assignment.is_deleted is False
+    assert assignment.parent_id == root.pk
+
+
+def test_resync_does_not_hang_new_work_off_a_deleted_course(connection, user):
+    """The live Last error: finish sees an active child of a deleted parent."""
+    first = StubCanvas(
+        courses=[{'id': 11, 'course_code': 'ELEC3609'}],
+        assignments={11: [{'id': 501, 'name': 'A'}]},
+    )
+    sync.run_sync(connection, client=first)
+    root = PlanningItem.objects.get(user=user, canvas_object_id='11')
+    deletion.delete_subtree(root)
+
+    grown = StubCanvas(
+        courses=[{'id': 11, 'course_code': 'ELEC3609'}],
+        assignments={
+            11: [
+                {'id': 501, 'name': 'A'},
+                {'id': 502, 'name': 'New from Canvas'},
+            ]
+        },
+    )
+    log = sync.run_sync(connection, client=grown)
+    assert log.status == SyncStatus.SUCCESS
+    assert log.error_message is None
+    assert not PlanningItem.objects.for_user(user).filter(
+        canvas_object_id='502',
+    ).exists()
+    assert PlanningItem.objects.get(user=user, canvas_object_id='11').is_deleted
+
+
+def test_a_later_sync_heals_assignments_already_hung_off_a_deleted_course(connection, user):
+    first = StubCanvas(
+        courses=[{'id': 11, 'course_code': 'ELEC3609'}],
+        assignments={11: [{'id': 501, 'name': 'A'}]},
+    )
+    sync.run_sync(connection, client=first)
+    root = PlanningItem.objects.get(user=user, canvas_object_id='11')
+    deletion.delete_subtree(root)
+    stray = PlanningItem.objects.create(
+        user=user,
+        item_type=ItemType.ASSIGNMENT,
+        title='Stray',
+        parent=root,
+        canvas_object_type=CanvasObjectType.ASSIGNMENT,
+        canvas_object_id='502',
+    )
+    log = sync.run_sync(connection, client=first)
+    assert log.status == SyncStatus.SUCCESS
+    assert log.error_message is None
+    stray.refresh_from_db()
+    assert stray.is_deleted is True
+    assert not PlanningItem.objects.for_user(user).exists()
 

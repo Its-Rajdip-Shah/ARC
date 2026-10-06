@@ -269,8 +269,9 @@ function IntegrationPanel() {
         <fieldset className="space-y-2">
           <legend className="text-sm text-arc-text-secondary">Courses to sync</legend>
           <p className="text-sm text-arc-text-muted">
-            Unchecked subjects are skipped on the next sync. Existing planner
-            items stay.
+            Checked subjects import on Sync, including ones you deleted in
+            Planner. Uncheck to skip. Unchecked roots already in Planner are
+            not removed.
           </p>
           {courses.isPending && (
             <p className="text-sm text-arc-text-muted">Loading courses…</p>

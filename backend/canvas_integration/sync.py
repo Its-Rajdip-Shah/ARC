@@ -52,6 +52,33 @@ def _selected_course_ids(connection):
     return {str(course_id) for course_id in raw}
 
 
+def _canvas_row(user, object_type, object_id):
+    return PlanningItem.objects.filter(
+        user=user,
+        canvas_object_type=object_type,
+        canvas_object_id=str(object_id),
+    ).first()
+
+
+def _tombstone_active_children_of_deleted_parents(user):
+    """A prior sync could hang new work off a planner tombstone.
+
+    validate_graph only sees live rows, so those children 500 the scheduler
+    with 'inactive/foreign parent'. Soft-delete them; do not resurrect.
+    """
+    orphans = PlanningItem.objects.filter(
+        user=user,
+        is_deleted=False,
+        parent__isnull=False,
+        parent__is_deleted=True,
+    )
+    ids = list(orphans.values_list('pk', flat=True))
+    if not ids:
+        return
+    priority.release_positions(user, ids)
+    orphans.update(is_deleted=True, priority_position=None, scheduled_date=None)
+
+
 def _as_decimal(value):
     if value is None:
         return None
@@ -127,12 +154,20 @@ def _upsert_term_timezone(user, term):
         existing.save(update_fields=['start_date', 'end_date'])
 
 
-def _import_course(user, client, course, counts):
+def _import_course(user, client, course, counts, restore_deleted=False):
     """Upsert one course and its assignments.
 
     The Canvas call happens before the transaction opens, so a slow Canvas
     never holds a write transaction open against Postgres.
+
+    Import-all (null allowlist) leaves planner tombstones alone. An explicit
+    course pick restores that Canvas subtree.
     """
+    existing = _canvas_row(user, CanvasObjectType.COURSE, course['id'])
+    course_was_deleted = existing is not None and existing.is_deleted
+    if course_was_deleted and not restore_deleted:
+        return
+
     assignments = client.assignments(course['id'])
     groups = client.assignment_groups(course['id'])
     submissions = client.submissions_self(course['id'])
@@ -160,6 +195,7 @@ def _import_course(user, client, course, counts):
                 'parent': None,
                 'start_date': term['start'],
                 'due_date': term['end'],
+                'is_deleted': False,
             },
         )
         _upsert_term_timezone(user, term)
@@ -175,11 +211,18 @@ def _import_course(user, client, course, counts):
                 counts,
                 weight=_weight_percent(assignment, groups_by_id, point_totals),
                 mark=_mark_percent(assignment, submissions_by_id),
+                revive=course_was_deleted,
             )
 
 
-def _import_assignment(user, root, assignment, counts, weight=None, mark=None):
+def _import_assignment(user, root, assignment, counts, weight=None, mark=None, revive=False):
+    if root.is_deleted:
+        return
     assignment_id = str(assignment['id'])
+    existing = _canvas_row(user, CanvasObjectType.ASSIGNMENT, assignment_id)
+    if existing is not None and existing.is_deleted and not revive:
+        return
+
     due_date = _as_date(assignment.get('due_at'))
 
     item, created = PlanningItem.objects.update_or_create(
@@ -193,6 +236,7 @@ def _import_assignment(user, root, assignment, counts, weight=None, mark=None):
             'parent': root,
             'due_date': due_date,
             'start_date': _as_date(assignment.get('unlock_at')),
+            'is_deleted': False,
         },
     )
 
@@ -243,7 +287,10 @@ def run_sync(connection, client=None):
                 continue
             if allow is not None and str(course['id']) not in allow:
                 continue
-            _import_course(user, client, course, counts)
+            _import_course(
+                user, client, course, counts,
+                restore_deleted=allow is not None,
+            )
     except CanvasError as exc:
         log.completed_at = timezone.now()
         log.error_message = str(exc)
@@ -260,6 +307,9 @@ def run_sync(connection, client=None):
     log.error_message = None
 
     try:
+        with transaction.atomic():
+            priority._lock(user)
+            _tombstone_active_children_of_deleted_parents(user)
         lifecycle.finish(user)
     except Exception as exc:
         log.error_message = f'Imported; scheduler failed: {exc}'

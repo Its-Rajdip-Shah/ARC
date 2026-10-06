@@ -11,7 +11,12 @@ from rest_framework.views import APIView
 from canvas_integration import sync
 from canvas_integration.client import CanvasClient, CanvasError
 from canvas_integration.models import CanvasConnection, SyncLog, SyncStatus
-from canvas_integration.serializers import CanvasConnectionSerializer, SyncLogSerializer
+from canvas_integration.serializers import (
+    CanvasConnectionSerializer,
+    CanvasCourseSelectionSerializer,
+    CanvasCourseSerializer,
+    SyncLogSerializer,
+)
 from core.mixins import UserScopedMixin
 
 
@@ -41,7 +46,22 @@ class CanvasConnectionView(GenericAPIView):
         existing = CanvasConnection.objects.filter(user=request.user).first()
         serializer = self.get_serializer(existing, data=request.data)
         serializer.is_valid(raise_exception=True)
-        connection = serializer.save(user=request.user)
+
+        token = serializer.validated_data['api_token_encrypted']
+        client = CanvasClient(settings.CANVAS_BASE_URL, token)
+        try:
+            profile = client.whoami()
+        except CanvasError as exc:
+            return Response(
+                {'ok': False, 'detail': str(exc), 'status': exc.status},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        connection = serializer.save(
+            user=request.user,
+            canvas_user_id=str(profile.get('id') or '') or None,
+        )
+        connection.last_sync = SyncLog.objects.filter(user=request.user).first()
         return Response(
             self.get_serializer(connection).data,
             status=status.HTTP_200_OK if existing else status.HTTP_201_CREATED,
@@ -53,6 +73,48 @@ class CanvasConnectionView(GenericAPIView):
         user's own tags, marks and priority decisions by now."""
         _connection_or_404(request.user).delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class CanvasCourseListView(APIView):
+    """GET the user's Canvas catalogue; PUT the sync allowlist.
+
+    Course rows come from Canvas server-side. selected is true for every
+    course when sync_course_ids is null (import-all).
+    """
+
+    def get(self, request):
+        connection = _connection_or_404(request.user)
+        client = CanvasClient(settings.CANVAS_BASE_URL, connection.api_token_encrypted)
+        try:
+            courses = client.courses()
+        except CanvasError as exc:
+            return Response(
+                {'ok': False, 'detail': str(exc), 'status': exc.status},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+        allow = connection.sync_course_ids
+        selected_ids = None if allow is None else {str(course_id) for course_id in allow}
+        rows = []
+        for course in courses:
+            if course.get('id') is None:
+                continue
+            course_id = str(course['id'])
+            rows.append({
+                'id': course_id,
+                'course_code': course.get('course_code') or None,
+                'name': course.get('name') or None,
+                'selected': selected_ids is None or course_id in selected_ids,
+            })
+        return Response(CanvasCourseSerializer(rows, many=True).data)
+
+    def put(self, request):
+        connection = _connection_or_404(request.user)
+        serializer = CanvasCourseSelectionSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        raw = serializer.validated_data['course_ids']
+        connection.sync_course_ids = None if raw is None else [str(course_id) for course_id in raw]
+        connection.save(update_fields=['sync_course_ids'])
+        return Response({'course_ids': connection.sync_course_ids})
 
 
 class CanvasConnectionTestView(APIView):

@@ -26,6 +26,9 @@ class CanvasConnection(models.Model):
     canvas_user_id = models.CharField(max_length=100, null=True, blank=True)
     connected_at = models.DateTimeField(default=timezone.now)
     last_sync_at = models.DateTimeField(null=True, blank=True)
+    # null = import every Canvas course (compat). A list (including []) is
+    # an explicit allowlist of canvas course ids stored as strings.
+    sync_course_ids = models.JSONField(null=True, blank=True)
 
     class Meta:
         db_table = 'canvas_connections'

@@ -12,9 +12,10 @@ import pytest
 from django.contrib.auth import get_user_model
 
 from canvas_integration import sync, views
-from canvas_integration.client import CanvasError
+from canvas_integration.client import CanvasClient, CanvasError
 from canvas_integration.models import CanvasConnection, SyncLog, SyncStatus
-from planning.models import AssignmentDetail, CanvasObjectType, ItemType, PlanningItem
+from planning.models import AssignmentDetail, CanvasObjectType, ItemType, PlanningItem, Timezone
+from planning.services import deletion
 
 pytestmark = pytest.mark.django_db
 
@@ -26,9 +27,19 @@ TOKEN = 'canvas-token-that-is-long-enough'
 class StubCanvas:
     """Stands in for CanvasClient. Records calls so tests can assert on them."""
 
-    def __init__(self, courses=None, assignments=None, profile=None, fail_on=None):
+    def __init__(
+        self,
+        courses=None,
+        assignments=None,
+        profile=None,
+        fail_on=None,
+        assignment_groups=None,
+        submissions=None,
+    ):
         self._courses = courses or []
         self._assignments = assignments or {}
+        self._assignment_groups = assignment_groups or {}
+        self._submissions = submissions or {}
         self._profile = profile or {'id': 4242, 'name': 'Alice Example'}
         self._fail_on = fail_on
         self.assignment_calls = []
@@ -49,6 +60,35 @@ class StubCanvas:
         self._maybe_fail('assignments')
         self.assignment_calls.append(course_id)
         return self._assignments.get(course_id, [])
+
+    def assignment_groups(self, course_id):
+        self._maybe_fail('assignment_groups')
+        return self._assignment_groups.get(course_id, [])
+
+    def submissions_self(self, course_id):
+        self._maybe_fail('submissions')
+        return self._submissions.get(course_id, [])
+
+
+class _FakeResponse:
+    def __init__(self, payload, status=200, link=None):
+        self._payload = payload
+        self.status_code = status
+        self.ok = 200 <= status < 300
+        self.headers = {'Link': link} if link else {}
+
+    def json(self):
+        return self._payload
+
+
+class _FakeSession:
+    def __init__(self, responses):
+        self._responses = list(responses)
+        self.calls = []
+
+    def get(self, url, headers=None, params=None, timeout=None):
+        self.calls.append({'url': url, 'params': params})
+        return self._responses.pop(0)
 
 
 @pytest.fixture
@@ -77,16 +117,19 @@ def test_the_connection_is_a_404_before_it_is_created(client):
     assert client.get('/api/canvas/connection/').status_code == 404
 
 
-def test_put_creates_the_connection(client, user):
+def test_put_creates_the_connection(client, user, canvas_returns):
+    canvas_returns(StubCanvas())
     response = client.put(
         '/api/canvas/connection/', {'api_token': TOKEN}, format='json'
     )
     assert response.status_code == 201, response.data
     assert CanvasConnection.objects.filter(user=user).count() == 1
+    assert response.data['canvas_user_id'] == '4242'
 
 
-def test_put_again_replaces_rather_than_duplicates(client, user, connection):
+def test_put_again_replaces_rather_than_duplicates(client, user, connection, canvas_returns):
     """FR-04: one connection per user, so re-pasting a token is a replacement."""
+    canvas_returns(StubCanvas())
     response = client.put(
         '/api/canvas/connection/', {'api_token': 'a-brand-new-canvas-token'}, format='json'
     )
@@ -94,6 +137,28 @@ def test_put_again_replaces_rather_than_duplicates(client, user, connection):
     assert CanvasConnection.objects.filter(user=user).count() == 1
     connection.refresh_from_db()
     assert connection.api_token_encrypted == 'a-brand-new-canvas-token'
+
+
+def test_put_rejects_a_dead_token_without_saving(client, user, canvas_returns):
+    canvas_returns(StubCanvas(fail_on='whoami'))
+    response = client.put(
+        '/api/canvas/connection/', {'api_token': TOKEN}, format='json'
+    )
+    assert response.status_code == 502
+    assert response.data['ok'] is False
+    assert not CanvasConnection.objects.filter(user=user).exists()
+
+
+def test_put_keeps_the_old_token_when_the_new_one_fails(
+    client, user, connection, canvas_returns
+):
+    canvas_returns(StubCanvas(fail_on='whoami'))
+    response = client.put(
+        '/api/canvas/connection/', {'api_token': 'a-brand-new-canvas-token'}, format='json'
+    )
+    assert response.status_code == 502
+    connection.refresh_from_db()
+    assert connection.api_token_encrypted == TOKEN
 
 
 def test_the_api_token_never_comes_back_out(client, connection):
@@ -135,13 +200,49 @@ def test_delete_disconnects_but_keeps_the_imported_items(client, user, connectio
 
 def test_one_users_connection_is_invisible_to_another(api_for, other_user, connection):
     """FR-03."""
-    assert api_for(other_user).get('/api/canvas/connection/').status_code == 404
+    other = api_for(other_user)
+    assert other.get('/api/canvas/connection/').status_code == 404
+    assert other.get('/api/canvas/courses/').status_code == 404
+    assert other.put('/api/canvas/courses/', {'course_ids': []}, format='json').status_code == 404
 
 
 def test_the_canvas_endpoints_refuse_an_anonymous_request(db, api):
     assert api.get('/api/canvas/connection/').status_code == 401
     assert api.post('/api/canvas/sync/').status_code == 401
     assert api.get('/api/canvas/sync-logs/').status_code == 401
+    assert api.get('/api/canvas/courses/').status_code == 401
+    assert api.put('/api/canvas/courses/', {'course_ids': []}).status_code == 401
+
+
+# --- Client -----------------------------------------------------------------
+
+def test_courses_asks_canvas_for_the_enrolment_term():
+    session = _FakeSession([_FakeResponse([])])
+    CanvasClient('https://canvas.test', TOKEN, session=session).courses()
+    params = session.calls[0]['params']
+    assert params['include[]'] == 'term'
+    assert params['enrollment_state'] == 'active'
+
+
+def test_list_gets_follow_canvas_next_links():
+    page1 = _FakeResponse(
+        [{'id': 1}],
+        link='<https://canvas.test/api/v1/courses?page=2>; rel="next"',
+    )
+    page2 = _FakeResponse([{'id': 2}])
+    session = _FakeSession([page1, page2])
+    rows = CanvasClient('https://canvas.test', TOKEN, session=session).assignment_groups(9)
+    assert [row['id'] for row in rows] == [1, 2]
+    assert session.calls[1]['url'] == 'https://canvas.test/api/v1/courses?page=2'
+    assert session.calls[1]['params'] is None
+
+
+def test_submissions_self_requests_the_token_holder_only():
+    session = _FakeSession([_FakeResponse([])])
+    CanvasClient('https://canvas.test', TOKEN, session=session).submissions_self(11)
+    call = session.calls[0]
+    assert call['url'].endswith('/courses/11/students/submissions')
+    assert call['params']['student_ids[]'] == 'self'
 
 
 # --- Sync -------------------------------------------------------------------
@@ -266,6 +367,145 @@ def test_canvas_gives_no_weighting_so_none_is_recorded(connection):
     assert detail.mark_achieved is None
 
 
+def test_group_weight_is_split_by_assignment_points(connection, user):
+    stub = StubCanvas(
+        courses=[{'id': 11, 'course_code': 'ELEC3609'}],
+        assignments={
+            11: [
+                {
+                    'id': 501,
+                    'name': 'Quiz',
+                    'points_possible': 10,
+                    'assignment_group_id': 1,
+                },
+                {
+                    'id': 502,
+                    'name': 'Report',
+                    'points_possible': 30,
+                    'assignment_group_id': 1,
+                },
+            ]
+        },
+        assignment_groups={11: [{'id': 1, 'group_weight': 40}]},
+    )
+    sync.run_sync(connection, client=stub)
+
+    quiz = AssignmentDetail.objects.get(planning_item__canvas_object_id='501')
+    report = AssignmentDetail.objects.get(planning_item__canvas_object_id='502')
+    assert quiz.weight_percent == Decimal('10.00')
+    assert report.weight_percent == Decimal('30.00')
+    assert PlanningItem.objects.filter(user=user).count() == 3
+
+
+def test_missing_group_weight_does_not_clobber_a_local_weight(connection, user):
+    first = StubCanvas(
+        courses=[{'id': 11, 'course_code': 'ELEC3609'}],
+        assignments={
+            11: [{
+                'id': 501,
+                'name': 'Quiz',
+                'points_possible': 10,
+                'assignment_group_id': 1,
+            }]
+        },
+        assignment_groups={11: [{'id': 1, 'group_weight': 25}]},
+    )
+    sync.run_sync(connection, client=first)
+    item = PlanningItem.objects.get(canvas_object_id='501')
+    item.is_completed = True
+    item.save(update_fields=['is_completed'])
+
+    sync.run_sync(
+        connection,
+        client=StubCanvas(
+            courses=[{'id': 11, 'course_code': 'ELEC3609'}],
+            assignments={11: [{'id': 501, 'name': 'Quiz', 'points_possible': 10}]},
+        ),
+    )
+    item.refresh_from_db()
+    detail = AssignmentDetail.objects.get(planning_item=item)
+    assert item.is_completed is True
+    assert detail.weight_percent == Decimal('25.00')
+
+
+def test_self_submission_score_becomes_a_percentage_mark(connection):
+    stub = StubCanvas(
+        courses=[{'id': 11, 'course_code': 'ELEC3609'}],
+        assignments={11: [{'id': 501, 'name': 'Quiz', 'points_possible': 10}]},
+        submissions={11: [{'assignment_id': 501, 'score': 8}]},
+    )
+    sync.run_sync(connection, client=stub)
+    detail = AssignmentDetail.objects.get(planning_item__canvas_object_id='501')
+    assert detail.mark_achieved == Decimal('80.00')
+
+
+def test_missing_canvas_score_leaves_a_local_mark_alone(connection):
+    stub = StubCanvas(
+        courses=[{'id': 11, 'course_code': 'ELEC3609'}],
+        assignments={11: [{'id': 501, 'name': 'Quiz', 'points_possible': 10}]},
+    )
+    sync.run_sync(connection, client=stub)
+    AssignmentDetail.objects.filter(planning_item__canvas_object_id='501').update(
+        mark_achieved='21.00'
+    )
+    sync.run_sync(connection, client=stub)
+    detail = AssignmentDetail.objects.get(planning_item__canvas_object_id='501')
+    assert detail.mark_achieved == Decimal('21.00')
+
+
+def test_a_canvas_score_replaces_the_stored_mark(connection):
+    first = StubCanvas(
+        courses=[{'id': 11, 'course_code': 'ELEC3609'}],
+        assignments={11: [{'id': 501, 'name': 'Quiz', 'points_possible': 10}]},
+        submissions={11: [{'assignment_id': 501, 'score': 5}]},
+    )
+    sync.run_sync(connection, client=first)
+    later = StubCanvas(
+        courses=[{'id': 11, 'course_code': 'ELEC3609'}],
+        assignments={11: [{'id': 501, 'name': 'Quiz', 'points_possible': 10}]},
+        submissions={11: [{'assignment_id': 501, 'score': 9}]},
+    )
+    sync.run_sync(connection, client=later)
+    detail = AssignmentDetail.objects.get(planning_item__canvas_object_id='501')
+    assert detail.mark_achieved == Decimal('90.00')
+
+
+def test_course_term_dates_land_on_the_root_and_a_timezone(connection, user):
+    stub = StubCanvas(
+        courses=[{
+            'id': 11,
+            'course_code': 'ELEC3609',
+            'term': {
+                'name': 'Semester 2 2026',
+                'start_at': '2026-07-27T00:00:00Z',
+                'end_at': '2026-11-01T00:00:00Z',
+            },
+        }],
+        assignments={11: [{'id': 501, 'name': 'Quiz'}]},
+    )
+    sync.run_sync(connection, client=stub)
+    root = PlanningItem.objects.get(user=user, canvas_object_type=CanvasObjectType.COURSE)
+    assert root.start_date.isoformat() == '2026-07-27'
+    assert root.due_date.isoformat() == '2026-11-01'
+    zone = Timezone.objects.get(user=user, title='Semester 2 2026')
+    assert (zone.start_date, zone.end_date) == (root.start_date, root.due_date)
+
+    sync.run_sync(connection, client=stub)
+    assert Timezone.objects.filter(user=user, title='Semester 2 2026').count() == 1
+
+
+def test_a_course_without_a_term_does_not_invent_dates(connection, user):
+    stub = StubCanvas(
+        courses=[{'id': 11, 'course_code': 'ELEC3609'}],
+        assignments={11: [{'id': 501, 'name': 'Quiz'}]},
+    )
+    sync.run_sync(connection, client=stub)
+    root = PlanningItem.objects.get(user=user, canvas_object_type=CanvasObjectType.COURSE)
+    assert root.start_date is None
+    assert root.due_date is None
+    assert Timezone.objects.filter(user=user).count() == 0
+
+
 def test_sync_records_a_success_log(connection, user):
     """FR-04."""
     log = sync.run_sync(connection, client=StubCanvas())
@@ -291,6 +531,20 @@ def test_a_rejected_token_records_a_failure_log(connection, user):
 
     connection.refresh_from_db()
     assert connection.last_sync_at is None
+
+
+def test_an_unexpected_sync_crash_is_logged_not_a_blank_500(connection, user):
+    class BoomCanvas(StubCanvas):
+        def assignments(self, course_id):
+            raise RuntimeError('planner exploded')
+
+    log = sync.run_sync(
+        connection,
+        client=BoomCanvas(courses=[{'id': 11, 'course_code': 'X'}]),
+    )
+    assert log.status == SyncStatus.FAILED
+    assert log.error_message == 'planner exploded'
+    assert log.completed_at is not None
 
 
 def test_a_failure_partway_through_still_logs(connection, user):
@@ -340,6 +594,20 @@ def test_the_sync_endpoint_reports_a_canvas_failure_as_502(client, connection,
     assert response.status_code == 502
     assert response.data['status'] == SyncStatus.FAILED
     assert 'rejected the API token' in response.data['error_message']
+
+
+def test_the_sync_endpoint_reports_an_unexpected_crash_as_502(
+    client, connection, canvas_returns,
+):
+    class BoomCanvas(StubCanvas):
+        def assignments(self, course_id):
+            raise RuntimeError('planner exploded')
+
+    canvas_returns(BoomCanvas(courses=[{'id': 11, 'course_code': 'X'}]))
+    response = client.post('/api/canvas/sync/')
+    assert response.status_code == 502
+    assert response.data['status'] == SyncStatus.FAILED
+    assert response.data['error_message'] == 'planner exploded'
 
 
 def test_the_sync_endpoint_needs_a_connection_first(client):
@@ -424,3 +692,245 @@ def test_sync_schedules_each_course_batch_once(connection, user):
     items = PlanningItem.objects.for_user(user).priority_eligible()
     assert items.count() == 2
     assert not items.filter(scheduled_date=None).exists()
+
+
+def test_sync_finishes_once_for_many_courses(connection, user, monkeypatch):
+    calls = []
+
+    def once(user, today=None):
+        calls.append(user.pk)
+
+    monkeypatch.setattr(sync.lifecycle, 'finish', once)
+    stub = StubCanvas(
+        courses=[
+            {'id': 11, 'course_code': 'ELEC3609'},
+            {'id': 12, 'course_code': 'COMP3888'},
+        ],
+        assignments={
+            11: [{'id': 501, 'name': 'A'}],
+            12: [{'id': 502, 'name': 'B'}],
+        },
+    )
+    log = sync.run_sync(connection, client=stub)
+    assert log.status == SyncStatus.SUCCESS
+    assert calls == [user.pk]
+    assert PlanningItem.objects.filter(user=user, canvas_object_type=CanvasObjectType.COURSE).count() == 2
+
+
+def test_a_scheduler_crash_after_import_still_counts_as_canvas_success(connection, user, monkeypatch):
+    def boom(user, today=None):
+        raise RuntimeError('v1 exploded')
+
+    monkeypatch.setattr(sync.lifecycle, 'finish', boom)
+    stub = StubCanvas(
+        courses=[{'id': 11, 'course_code': 'ELEC3609'}],
+        assignments={11: [{'id': 501, 'name': 'A'}]},
+    )
+    log = sync.run_sync(connection, client=stub)
+    assert log.status == SyncStatus.SUCCESS
+    assert 'Imported; scheduler failed: v1 exploded' == log.error_message
+    connection.refresh_from_db()
+    assert connection.last_sync_at == log.completed_at
+    assert PlanningItem.objects.filter(user=user, canvas_object_id='11').exists()
+
+
+def _two_courses():
+    return StubCanvas(
+        courses=[
+            {'id': 11, 'course_code': 'ELEC3609', 'name': 'Internet Software'},
+            {'id': 12, 'course_code': 'COMP2123', 'name': 'Data Structures'},
+        ],
+        assignments={
+            11: [{'id': 501, 'name': 'A'}],
+            12: [{'id': 502, 'name': 'B'}],
+        },
+    )
+
+
+def test_a_null_allowlist_still_imports_every_canvas_course(connection, user):
+    connection.sync_course_ids = None
+    connection.save(update_fields=['sync_course_ids'])
+    stub = _two_courses()
+    log = sync.run_sync(connection, client=stub)
+    assert log.status == SyncStatus.SUCCESS
+    assert log.counts['courses_created'] == 2
+    assert stub.assignment_calls == [11, 12]
+
+
+def test_an_explicit_allowlist_imports_only_those_courses(connection, user):
+    connection.sync_course_ids = ['11']
+    connection.save(update_fields=['sync_course_ids'])
+    stub = _two_courses()
+    log = sync.run_sync(connection, client=stub)
+    assert log.status == SyncStatus.SUCCESS
+    assert log.counts['courses_created'] == 1
+    assert stub.assignment_calls == [11]
+    assert PlanningItem.objects.filter(
+        user=user, canvas_object_type=CanvasObjectType.COURSE, canvas_object_id='11',
+    ).exists()
+    assert not PlanningItem.objects.filter(
+        user=user, canvas_object_id='12',
+    ).exists()
+
+
+def test_an_empty_allowlist_syncs_nothing(connection, user):
+    connection.sync_course_ids = []
+    connection.save(update_fields=['sync_course_ids'])
+    stub = _two_courses()
+    log = sync.run_sync(connection, client=stub)
+    assert log.status == SyncStatus.SUCCESS
+    assert log.counts == {
+        'courses_created': 0, 'courses_updated': 0,
+        'assignments_created': 0, 'assignments_updated': 0,
+    }
+    assert stub.assignment_calls == []
+    assert not PlanningItem.objects.filter(user=user).exists()
+
+
+def test_unchecking_a_course_does_not_delete_its_planner_root(connection, user):
+    sync.run_sync(connection, client=_two_courses())
+    connection.sync_course_ids = ['11']
+    connection.save(update_fields=['sync_course_ids'])
+    stub = _two_courses()
+    log = sync.run_sync(connection, client=stub)
+    assert log.status == SyncStatus.SUCCESS
+    assert stub.assignment_calls == [11]
+    assert PlanningItem.objects.filter(
+        user=user, canvas_object_type=CanvasObjectType.COURSE,
+    ).count() == 2
+
+
+def test_get_courses_marks_every_row_selected_when_the_allowlist_is_null(
+    client, connection, canvas_returns,
+):
+    canvas_returns(_two_courses())
+    response = client.get('/api/canvas/courses/')
+    assert response.status_code == 200, response.data
+    assert [row['id'] for row in response.data] == ['11', '12']
+    assert all(row['selected'] for row in response.data)
+    body = str(response.data)
+    assert TOKEN not in body
+    assert 'api_token' not in body
+
+
+def test_get_courses_honours_an_explicit_allowlist(client, connection, canvas_returns):
+    connection.sync_course_ids = ['11']
+    connection.save(update_fields=['sync_course_ids'])
+    canvas_returns(_two_courses())
+    response = client.get('/api/canvas/courses/')
+    by_id = {row['id']: row for row in response.data}
+    assert by_id['11']['selected'] is True
+    assert by_id['12']['selected'] is False
+
+
+def test_put_courses_saves_the_allowlist_and_null_means_all(client, connection):
+    saved = client.put('/api/canvas/courses/', {'course_ids': ['11', '12']}, format='json')
+    assert saved.status_code == 200, saved.data
+    assert saved.data['course_ids'] == ['11', '12']
+    connection.refresh_from_db()
+    assert connection.sync_course_ids == ['11', '12']
+
+    cleared = client.put('/api/canvas/courses/', {'course_ids': None}, format='json')
+    assert cleared.status_code == 200, cleared.data
+    assert cleared.data['course_ids'] is None
+    connection.refresh_from_db()
+    assert connection.sync_course_ids is None
+
+    emptied = client.put('/api/canvas/courses/', {'course_ids': []}, format='json')
+    assert emptied.status_code == 200, emptied.data
+    assert emptied.data['course_ids'] == []
+    connection.refresh_from_db()
+    assert connection.sync_course_ids == []
+
+
+def test_resync_does_not_revive_a_deleted_canvas_course(connection, user):
+    """With import-all (null allowlist), a planner tombstone stays dead."""
+    stub = StubCanvas(
+        courses=[{'id': 11, 'course_code': 'ELEC3609'}],
+        assignments={11: [{'id': 501, 'name': 'A'}]},
+    )
+    assert sync.run_sync(connection, client=stub).status == SyncStatus.SUCCESS
+    root = PlanningItem.objects.get(user=user, canvas_object_id='11')
+    deletion.delete_subtree(root)
+
+    log = sync.run_sync(connection, client=stub)
+    assert log.status == SyncStatus.SUCCESS
+    assert log.error_message is None
+    root.refresh_from_db()
+    assert root.is_deleted is True
+    assert not PlanningItem.objects.for_user(user).exists()
+
+
+def test_an_explicit_allowlist_restores_a_deleted_canvas_course(connection, user):
+    """Checking a subject in Settings means import it, even after a planner delete."""
+    stub = StubCanvas(
+        courses=[{'id': 11, 'course_code': 'ELEC3609'}],
+        assignments={11: [{'id': 501, 'name': 'A'}]},
+    )
+    sync.run_sync(connection, client=stub)
+    root = PlanningItem.objects.get(user=user, canvas_object_id='11')
+    deletion.delete_subtree(root)
+    connection.sync_course_ids = ['11']
+    connection.save(update_fields=['sync_course_ids'])
+
+    log = sync.run_sync(connection, client=stub)
+    assert log.status == SyncStatus.SUCCESS
+    assert log.error_message is None
+    root.refresh_from_db()
+    assert root.is_deleted is False
+    assignment = PlanningItem.objects.get(user=user, canvas_object_id='501')
+    assert assignment.is_deleted is False
+    assert assignment.parent_id == root.pk
+
+
+def test_resync_does_not_hang_new_work_off_a_deleted_course(connection, user):
+    """The live Last error: finish sees an active child of a deleted parent."""
+    first = StubCanvas(
+        courses=[{'id': 11, 'course_code': 'ELEC3609'}],
+        assignments={11: [{'id': 501, 'name': 'A'}]},
+    )
+    sync.run_sync(connection, client=first)
+    root = PlanningItem.objects.get(user=user, canvas_object_id='11')
+    deletion.delete_subtree(root)
+
+    grown = StubCanvas(
+        courses=[{'id': 11, 'course_code': 'ELEC3609'}],
+        assignments={
+            11: [
+                {'id': 501, 'name': 'A'},
+                {'id': 502, 'name': 'New from Canvas'},
+            ]
+        },
+    )
+    log = sync.run_sync(connection, client=grown)
+    assert log.status == SyncStatus.SUCCESS
+    assert log.error_message is None
+    assert not PlanningItem.objects.for_user(user).filter(
+        canvas_object_id='502',
+    ).exists()
+    assert PlanningItem.objects.get(user=user, canvas_object_id='11').is_deleted
+
+
+def test_a_later_sync_heals_assignments_already_hung_off_a_deleted_course(connection, user):
+    first = StubCanvas(
+        courses=[{'id': 11, 'course_code': 'ELEC3609'}],
+        assignments={11: [{'id': 501, 'name': 'A'}]},
+    )
+    sync.run_sync(connection, client=first)
+    root = PlanningItem.objects.get(user=user, canvas_object_id='11')
+    deletion.delete_subtree(root)
+    stray = PlanningItem.objects.create(
+        user=user,
+        item_type=ItemType.ASSIGNMENT,
+        title='Stray',
+        parent=root,
+        canvas_object_type=CanvasObjectType.ASSIGNMENT,
+        canvas_object_id='502',
+    )
+    log = sync.run_sync(connection, client=first)
+    assert log.status == SyncStatus.SUCCESS
+    assert log.error_message is None
+    stray.refresh_from_db()
+    assert stray.is_deleted is True
+    assert not PlanningItem.objects.for_user(user).exists()
+

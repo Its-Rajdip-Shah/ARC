@@ -4,8 +4,8 @@ import { useLocation, useNavigate } from 'react-router-dom'
 import { useAuthStore } from '../../stores/authStore'
 
 const menuItems = [
-  { label: 'Account' },
-  { label: 'Settings' },
+  { label: 'Account', to: '/settings' },
+  { label: 'Settings', to: '/settings' },
   { label: 'Marks' },
   { label: 'Planner', to: '/planner' },
   { label: 'Timeline', to: '/timeline' },
@@ -68,25 +68,18 @@ export default function NavigationDrawer({ isOpen, onClose }) {
           "
         >
           {menuItems.map((item) => {
-            const isActive =
-              Boolean(
-                item.to
-                && location.pathname === item.to,
-              )
-              || (
-                item.label === 'Settings'
-                && location.pathname.startsWith('/settings')
-              )
+            const isActive = item.to
+              ? location.pathname.startsWith(item.to)
+              : false
 
             return (
               <button
                 key={item.label}
                 type="button"
                 onClick={() => {
-                  if (item.to) {
-                    navigate(item.to)
-                    onClose()
-                  }
+                  if (!item.to) return
+                  navigate(item.to)
+                  onClose()
                 }}
                 className={`
                   w-fit whitespace-nowrap text-left

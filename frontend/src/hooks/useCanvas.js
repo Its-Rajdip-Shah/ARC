@@ -2,8 +2,10 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   deleteCanvasConnection,
   getCanvasConnection,
+  getCanvasCourses,
   listSyncLogs,
   saveCanvasConnection,
+  saveCanvasCourses,
   syncCanvas,
   testCanvasConnection,
 } from '../api/canvas'
@@ -29,6 +31,7 @@ export function useSaveCanvasConnection() {
     mutationFn: saveCanvasConnection,
     onSuccess: (data) => {
       queryClient.setQueryData(['canvas', 'connection'], data)
+      queryClient.invalidateQueries({ queryKey: ['canvas', 'courses'] })
     },
   })
 }
@@ -38,7 +41,8 @@ export function useDeleteCanvasConnection() {
   return useMutation({
     mutationFn: deleteCanvasConnection,
     onSuccess: () => {
-      queryClient.removeQueries({ queryKey: ['canvas', 'connection'] })
+      queryClient.setQueryData(['canvas', 'connection'], null)
+      queryClient.removeQueries({ queryKey: ['canvas', 'courses'] })
     },
   })
 }
@@ -51,9 +55,30 @@ export function useSyncCanvas() {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: syncCanvas,
-    onSuccess: () => {
+    onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ['canvas'] })
+    },
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['planning'] })
+    },
+  })
+}
+
+export function useCanvasCourses(enabled) {
+  return useQuery({
+    queryKey: ['canvas', 'courses'],
+    queryFn: getCanvasCourses,
+    enabled,
+    retry: false,
+  })
+}
+
+export function useSaveCanvasCourses() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: saveCanvasCourses,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['canvas', 'courses'] })
     },
   })
 }

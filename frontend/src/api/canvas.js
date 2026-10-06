@@ -1,7 +1,10 @@
 import { apiClient } from '../lib/apiClient'
 
 export function getCanvasConnection() {
-  return apiClient.get('canvas/connection/').then((res) => res.data)
+  return apiClient.get('canvas/connection/').then((res) => res.data).catch((error) => {
+    if (error?.response?.status === 404) return null
+    throw error
+  })
 }
 
 export function saveCanvasConnection(payload) {
@@ -26,4 +29,14 @@ export function listSyncLogs(params) {
 
 export function getSyncLog(id) {
   return apiClient.get(`canvas/sync-logs/${id}/`).then((res) => res.data)
+}
+
+export function getCanvasCourses() {
+  return apiClient.get('canvas/courses/').then((res) => res.data)
+}
+
+export function saveCanvasCourses(courseIds) {
+  return apiClient
+    .put('canvas/courses/', { course_ids: courseIds })
+    .then((res) => res.data)
 }

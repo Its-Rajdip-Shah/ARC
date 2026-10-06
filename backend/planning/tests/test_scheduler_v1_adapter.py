@@ -379,4 +379,6 @@ def test_v1_adapter_forwards_manual_anchor_order(
     )
 
     assert scheduler_item.anchor_date == today
-    assert scheduler_item.anchor_order == 2
+    assert not hasattr(scheduler_item, 'anchor_order')
+    item.refresh_from_db()
+    assert item.manual_requested_order == 2

@@ -2,8 +2,10 @@ import { useState } from 'react'
 
 import {
   useCanvasConnection,
+  useCanvasCourses,
   useDeleteCanvasConnection,
   useSaveCanvasConnection,
+  useSaveCanvasCourses,
   useSyncCanvas,
   useTestCanvasConnection,
 } from '../../hooks/useCanvas'
@@ -45,14 +47,16 @@ function IntegrationPanel() {
   const testConnection = useTestCanvasConnection()
   const sync = useSyncCanvas()
   const disconnect = useDeleteCanvasConnection()
+  const saveCourses = useSaveCanvasCourses()
 
   const [token, setToken] = useState('')
   const [banner, setBanner] = useState(null)
+  const [picked, setPicked] = useState(null)
 
   const connected = Boolean(connection.data)
+  const courses = useCanvasCourses(connected)
   const lastLog = connection.data?.last_sync
-  const lastError =
-    lastLog?.status === 'FAILED' ? lastLog.error_message : null
+  const lastError = lastLog?.error_message || null
 
   async function onSave(event) {
     event.preventDefault()
@@ -87,17 +91,56 @@ function IntegrationPanel() {
     }
   }
 
+  function selectedIds(list) {
+    return new Set((list || []).filter((course) => course.selected).map((course) => course.id))
+  }
+
+  function isChecked(course) {
+    if (picked) return picked.has(course.id)
+    return course.selected
+  }
+
+  function toggleCourse(courseId) {
+    setPicked((prev) => {
+      const next = new Set(prev ?? selectedIds(courses.data))
+      if (next.has(courseId)) next.delete(courseId)
+      else next.add(courseId)
+      return next
+    })
+  }
+
+  async function persistSelection() {
+    if (picked === null) return
+    await saveCourses.mutateAsync([...picked])
+    setPicked(null)
+  }
+
+  async function onSaveSelection() {
+    setBanner(null)
+    try {
+      await persistSelection()
+      setBanner({ tone: 'ok', text: 'Course selection saved.' })
+    } catch (error) {
+      setBanner({
+        tone: 'error',
+        text: canvasMessage(error, 'Could not save course selection.'),
+      })
+    }
+  }
+
   async function onSync() {
     setBanner(null)
     try {
+      await persistSelection()
       const log = await sync.mutateAsync()
       const created =
         (log.counts?.courses_created || 0) + (log.counts?.assignments_created || 0)
       const updated =
         (log.counts?.courses_updated || 0) + (log.counts?.assignments_updated || 0)
+      const extra = log.error_message ? ` ${log.error_message}` : ''
       setBanner({
-        tone: 'ok',
-        text: `Sync finished. ${created} new, ${updated} updated.`,
+        tone: log.error_message ? 'error' : 'ok',
+        text: `Sync finished. ${created} new, ${updated} updated.${extra}`,
       })
     } catch (error) {
       setBanner({
@@ -111,6 +154,7 @@ function IntegrationPanel() {
     setBanner(null)
     try {
       await disconnect.mutateAsync()
+      setPicked(null)
       setBanner({ tone: 'ok', text: 'Canvas disconnected. Imported items were kept.' })
     } catch (error) {
       setBanner({
@@ -124,7 +168,8 @@ function IntegrationPanel() {
     saveConnection.isPending ||
     testConnection.isPending ||
     sync.isPending ||
-    disconnect.isPending
+    disconnect.isPending ||
+    saveCourses.isPending
 
   return (
     <section className="space-y-4 rounded-[15px] border border-[#4a496b] bg-arc-panel p-5">
@@ -219,6 +264,57 @@ function IntegrationPanel() {
           )}
         </div>
       </form>
+
+      {connected && (
+        <fieldset className="space-y-2">
+          <legend className="text-sm text-arc-text-secondary">Courses to sync</legend>
+          <p className="text-sm text-arc-text-muted">
+            Unchecked subjects are skipped on the next sync. Existing planner
+            items stay.
+          </p>
+          {courses.isPending && (
+            <p className="text-sm text-arc-text-muted">Loading courses…</p>
+          )}
+          {courses.isError && (
+            <p className="text-sm text-arc-danger-light" role="alert">
+              {canvasMessage(courses.error, 'Could not load Canvas courses.')}
+            </p>
+          )}
+          {courses.data && courses.data.length === 0 && (
+            <p className="text-sm text-arc-text-muted">No active Canvas courses.</p>
+          )}
+          {courses.data?.map((course) => (
+            <label
+              key={course.id}
+              className="flex items-start gap-2 text-sm text-arc-text"
+            >
+              <input
+                type="checkbox"
+                className="mt-1"
+                checked={isChecked(course)}
+                disabled={busy}
+                onChange={() => toggleCourse(course.id)}
+              />
+              <span>
+                <span className="font-medium">{course.course_code || 'Untitled course'}</span>
+                {course.name ? (
+                  <span className="text-arc-text-muted"> — {course.name}</span>
+                ) : null}
+              </span>
+            </label>
+          ))}
+          {courses.data && (
+            <button
+              type="button"
+              onClick={onSaveSelection}
+              disabled={busy || picked === null}
+              className="h-[40px] rounded-[10px] border border-[#4a496b] px-4 text-sm disabled:opacity-60"
+            >
+              {saveCourses.isPending ? 'Saving…' : 'Save selection'}
+            </button>
+          )}
+        </fieldset>
+      )}
     </section>
   )
 }

@@ -30,3 +30,13 @@ export function listSyncLogs(params) {
 export function getSyncLog(id) {
   return apiClient.get(`canvas/sync-logs/${id}/`).then((res) => res.data)
 }
+
+export function getCanvasCourses() {
+  return apiClient.get('canvas/courses/').then((res) => res.data)
+}
+
+export function saveCanvasCourses(courseIds) {
+  return apiClient
+    .put('canvas/courses/', { course_ids: courseIds })
+    .then((res) => res.data)
+}

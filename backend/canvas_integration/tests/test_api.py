@@ -686,3 +686,43 @@ def test_sync_schedules_each_course_batch_once(connection, user):
     items = PlanningItem.objects.for_user(user).priority_eligible()
     assert items.count() == 2
     assert not items.filter(scheduled_date=None).exists()
+
+
+def test_sync_finishes_once_for_many_courses(connection, user, monkeypatch):
+    calls = []
+
+    def once(user, today=None):
+        calls.append(user.pk)
+
+    monkeypatch.setattr(sync.lifecycle, 'finish', once)
+    stub = StubCanvas(
+        courses=[
+            {'id': 11, 'course_code': 'ELEC3609'},
+            {'id': 12, 'course_code': 'COMP3888'},
+        ],
+        assignments={
+            11: [{'id': 501, 'name': 'A'}],
+            12: [{'id': 502, 'name': 'B'}],
+        },
+    )
+    log = sync.run_sync(connection, client=stub)
+    assert log.status == SyncStatus.SUCCESS
+    assert calls == [user.pk]
+    assert PlanningItem.objects.filter(user=user, canvas_object_type=CanvasObjectType.COURSE).count() == 2
+
+
+def test_a_scheduler_crash_after_import_still_counts_as_canvas_success(connection, user, monkeypatch):
+    def boom(user, today=None):
+        raise RuntimeError('v1 exploded')
+
+    monkeypatch.setattr(sync.lifecycle, 'finish', boom)
+    stub = StubCanvas(
+        courses=[{'id': 11, 'course_code': 'ELEC3609'}],
+        assignments={11: [{'id': 501, 'name': 'A'}]},
+    )
+    log = sync.run_sync(connection, client=stub)
+    assert log.status == SyncStatus.SUCCESS
+    assert 'Imported; scheduler failed: v1 exploded' == log.error_message
+    connection.refresh_from_db()
+    assert connection.last_sync_at == log.completed_at
+    assert PlanningItem.objects.filter(user=user, canvas_object_id='11').exists()

@@ -24,7 +24,7 @@ from django.utils.dateparse import parse_datetime
 from canvas_integration.client import CanvasClient, CanvasError
 from canvas_integration.models import SyncLog, SyncStatus
 from planning.models import AssignmentDetail, CanvasObjectType, ItemType, PlanningItem, Timezone
-from planning.services import scheduling, priority, lifecycle
+from planning.services import priority, lifecycle
 
 
 def _as_date(value):
@@ -168,7 +168,6 @@ def _import_course(user, client, course, counts):
                 weight=_weight_percent(assignment, groups_by_id, point_totals),
                 mark=_mark_percent(assignment, submissions_by_id),
             )
-        lifecycle.finish(user)
 
 
 def _import_assignment(user, root, assignment, counts, weight=None, mark=None):
@@ -248,6 +247,12 @@ def run_sync(connection, client=None):
     log.status = SyncStatus.SUCCESS
     log.completed_at = timezone.now()
     log.error_message = None
+
+    try:
+        lifecycle.finish(user)
+    except Exception as exc:
+        log.error_message = f'Imported; scheduler failed: {exc}'
+
     log.save(update_fields=['status', 'completed_at', 'error_message'])
 
     connection.canvas_user_id = str(profile.get('id') or '') or None

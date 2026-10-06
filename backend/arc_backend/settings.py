@@ -26,6 +26,10 @@ env = environ.Env(
     CORS_ALLOWED_ORIGINS=(list, []),
     ARC_FIELD_ENCRYPTION_KEY=(str, ''),
     CANVAS_BASE_URL=(str, 'https://canvas.sydney.edu.au'),
+    LLM_API_BASE=(str, 'https://api.openai.com/v1'),
+    LLM_API_KEY=(str, ''),
+    LLM_MODEL=(str, 'gpt-4o-mini'),
+    LLM_TIMEOUT_SECONDS=(int, 20),
 )
 environ.Env.read_env(BASE_DIR / '.env')
 
@@ -208,6 +212,13 @@ SPECTACULAR_SETTINGS = {
 # The institution's Canvas host. No trailing /api/v1: the client appends it.
 
 CANVAS_BASE_URL = env('CANVAS_BASE_URL')
+
+# Study plans. The key stays in this process. An empty key is a configured
+# outage: the planner still works and the study-plan view falls back.
+LLM_API_BASE = env('LLM_API_BASE')
+LLM_API_KEY = env('LLM_API_KEY')
+LLM_MODEL = env('LLM_MODEL')
+LLM_TIMEOUT_SECONDS = env('LLM_TIMEOUT_SECONDS')
 
 
 # Field-level encryption (core.fields.EncryptedCharField)

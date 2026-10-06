@@ -626,6 +626,11 @@ class SchedulingState(OwnedModel):
         default=0,
     )
 
+    # Last successful study-plan suggestion. Kept off scheduler_runtime
+    # because a flavour change wipes that field, and planner undo restores it.
+    study_plan = models.JSONField(default=dict, blank=True)
+    study_preferences = models.JSONField(default=dict, blank=True)
+
     class Meta:
         constraints = [
             models.UniqueConstraint(

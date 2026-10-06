@@ -124,3 +124,26 @@ def test_scheduler_settings_are_user_scoped(
 
     assert response.status_code == 200
     assert response.json()["flavour"] == "monk"
+
+
+def test_flavour_change_keeps_saved_study_plan(api_for, user):
+    """A flavour change clears scheduler_runtime. The study plan must stay."""
+    SchedulingState.objects.create(
+        user=user,
+        scheduler_flavour="monk",
+        scheduler_runtime={"sessions": [{"item_id": 1}]},
+        study_plan={"sessions": [{"item_id": 9, "order": 1}]},
+        study_preferences={"availability": [{"weekday": 0}]},
+    )
+
+    response = api_for(user).put(
+        "/api/planning/scheduler/settings/",
+        {"flavour": "lock-in"},
+        format="json",
+    )
+
+    assert response.status_code == 200
+    state = SchedulingState.objects.get(user=user)
+    assert state.scheduler_runtime == {}
+    assert state.study_plan == {"sessions": [{"item_id": 9, "order": 1}]}
+    assert state.study_preferences == {"availability": [{"weekday": 0}]}

@@ -527,6 +527,20 @@ def test_a_rejected_token_records_a_failure_log(connection, user):
     assert connection.last_sync_at is None
 
 
+def test_an_unexpected_sync_crash_is_logged_not_a_blank_500(connection, user):
+    class BoomCanvas(StubCanvas):
+        def assignments(self, course_id):
+            raise RuntimeError('planner exploded')
+
+    log = sync.run_sync(
+        connection,
+        client=BoomCanvas(courses=[{'id': 11, 'course_code': 'X'}]),
+    )
+    assert log.status == SyncStatus.FAILED
+    assert log.error_message == 'planner exploded'
+    assert log.completed_at is not None
+
+
 def test_a_failure_partway_through_still_logs(connection, user):
     log = sync.run_sync(
         connection,
@@ -574,6 +588,20 @@ def test_the_sync_endpoint_reports_a_canvas_failure_as_502(client, connection,
     assert response.status_code == 502
     assert response.data['status'] == SyncStatus.FAILED
     assert 'rejected the API token' in response.data['error_message']
+
+
+def test_the_sync_endpoint_reports_an_unexpected_crash_as_502(
+    client, connection, canvas_returns,
+):
+    class BoomCanvas(StubCanvas):
+        def assignments(self, course_id):
+            raise RuntimeError('planner exploded')
+
+    canvas_returns(BoomCanvas(courses=[{'id': 11, 'course_code': 'X'}]))
+    response = client.post('/api/canvas/sync/')
+    assert response.status_code == 502
+    assert response.data['status'] == SyncStatus.FAILED
+    assert response.data['error_message'] == 'planner exploded'
 
 
 def test_the_sync_endpoint_needs_a_connection_first(client):

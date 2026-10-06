@@ -239,6 +239,11 @@ def run_sync(connection, client=None):
         log.error_message = str(exc)
         log.save(update_fields=['completed_at', 'error_message'])
         return log
+    except Exception as exc:
+        log.completed_at = timezone.now()
+        log.error_message = str(exc)
+        log.save(update_fields=['completed_at', 'error_message'])
+        return log
 
     log.status = SyncStatus.SUCCESS
     log.completed_at = timezone.now()

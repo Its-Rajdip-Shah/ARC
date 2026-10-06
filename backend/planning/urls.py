@@ -20,6 +20,13 @@ router.register(
 urlpatterns = [
     path('priority/', views.PriorityView.as_view(), name='priority'),
     path('priority/reorder/', views.PriorityReorderView.as_view(), name='priority-reorder'),
+    path('focus/', views.FocusView.as_view(), name='focus'),
+    path('focus/current/', views.FocusCurrentView.as_view(), name='focus-current'),
+    path('focus/anchor/', views.FocusAnchorView.as_view(), name='focus-anchor'),
+    path('focus/anchor/batch/', views.FocusAnchorBatchView.as_view(), name='focus-anchor-batch'),
+    path('focus/do-today/', views.FocusDoTodayView.as_view(), name='focus-do-today'),
+    path('focus/automatic/', views.FocusAutomaticView.as_view(), name='focus-automatic'),
+    path('focus/reprioritise/', views.FocusReprioritiseView.as_view(), name='focus-reprioritise'),
     path(
         'scheduler/settings/',
         views.SchedulerSettingsView.as_view(),

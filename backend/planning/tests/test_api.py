@@ -765,3 +765,479 @@ def test_a_real_bearer_token_reaches_the_planning_api(api, db, make_item):
     response = api.get('/api/planning/items/')
     assert response.status_code == 200
     assert response.data['results'][0]['title'] == 'Read chapter 4'
+
+
+def test_compound_move_can_adopt_following_branch_in_one_history_action(
+    client,
+    user,
+    make_item,
+):
+    from planning.models import PlanningHistoryEntry
+
+    root = make_item(
+        user,
+        'Research',
+        ItemType.GOAL,
+    )
+
+    one = make_item(
+        user,
+        '1',
+        ItemType.GOAL,
+        parent=root,
+    )
+
+    two = make_item(
+        user,
+        '2',
+        ItemType.GOAL,
+        parent=root,
+    )
+
+    one_two = make_item(
+        user,
+        '1.2',
+        ItemType.GOAL,
+        parent=one,
+    )
+
+    moving = make_item(
+        user,
+        '1.2.2',
+        ItemType.GOAL,
+        parent=one_two,
+    )
+
+    following = make_item(
+        user,
+        '1.3',
+        ItemType.GOAL,
+        parent=one,
+    )
+
+    before_history = (
+        PlanningHistoryEntry.objects
+        .filter(user=user)
+        .count()
+    )
+
+    response = client.post(
+        f'/api/planning/items/{moving.pk}/move/',
+        {
+            'parent_id':
+                root.pk,
+
+            'sibling_order':
+                2,
+
+            'adopt_child_ids': [
+                following.pk,
+            ],
+        },
+        format='json',
+    )
+
+    assert response.status_code == 200, response.data
+
+    moving.refresh_from_db()
+    following.refresh_from_db()
+    two.refresh_from_db()
+
+    assert moving.parent_id == root.pk
+    assert moving.sibling_order == 2
+
+    assert following.parent_id == moving.pk
+    assert following.sibling_order == 1
+
+    assert two.parent_id == root.pk
+    assert two.sibling_order == 3
+
+    assert (
+        PlanningHistoryEntry.objects
+        .filter(user=user)
+        .count()
+    ) == before_history + 1
+
+
+# --- Planner drag integration ----------------------------------------------
+
+
+def _planner_drag_root_child_titles(client, root_pk):
+    tree = client.get('/api/planning/items/tree/')
+
+    assert tree.status_code == 200, tree.data
+
+    root = next(
+        row
+        for row in tree.data
+        if row['id'] == root_pk
+    )
+
+    return [
+        child['title']
+        for child in root['children']
+    ]
+
+
+def test_planner_drag_integration_root_sibling_move_persists_exact_slot(
+    client,
+    user,
+    make_item,
+):
+    """Equivalent backend call for dragging 5 visually between 7 and 6."""
+    root = make_item(
+        user,
+        'Research',
+        ItemType.GOAL,
+    )
+
+    children = {}
+
+    for order, title in enumerate(
+        [
+            '2',
+            '3',
+            '1',
+            '4',
+            '7',
+            '6',
+            '5',
+            '8',
+        ],
+        start=1,
+    ):
+        children[title] = make_item(
+            user,
+            title,
+            ItemType.GOAL,
+            parent=root,
+            sibling_order=order,
+        )
+
+    response = client.post(
+        f'/api/planning/items/{children["5"].pk}/move/',
+        {
+            'parent_id':
+                root.pk,
+
+            'sibling_order':
+                6,
+
+            'adopt_child_ids':
+                [],
+        },
+        format='json',
+    )
+
+    assert response.status_code == 200, response.data
+
+    assert _planner_drag_root_child_titles(
+        client,
+        root.pk,
+    ) == [
+        '2',
+        '3',
+        '1',
+        '4',
+        '7',
+        '5',
+        '6',
+        '8',
+    ]
+
+
+def test_planner_drag_integration_nested_sibling_move_persists_exact_slot(
+    client,
+    user,
+    make_item,
+):
+    """Equivalent backend call for shuffling 1.1/1.2/1.3."""
+    root = make_item(
+        user,
+        'Research',
+        ItemType.GOAL,
+    )
+
+    one = make_item(
+        user,
+        '1',
+        ItemType.GOAL,
+        parent=root,
+        sibling_order=1,
+    )
+
+    one_one = make_item(
+        user,
+        '1.1',
+        ItemType.GOAL,
+        parent=one,
+        sibling_order=1,
+    )
+
+    one_two = make_item(
+        user,
+        '1.2',
+        ItemType.GOAL,
+        parent=one,
+        sibling_order=2,
+    )
+
+    one_three = make_item(
+        user,
+        '1.3',
+        ItemType.GOAL,
+        parent=one,
+        sibling_order=3,
+    )
+
+    response = client.post(
+        f'/api/planning/items/{one_three.pk}/move/',
+        {
+            'parent_id':
+                one.pk,
+
+            'sibling_order':
+                2,
+
+            'adopt_child_ids':
+                [],
+        },
+        format='json',
+    )
+
+    assert response.status_code == 200, response.data
+
+    tree = client.get(
+        '/api/planning/items/tree/',
+    )
+
+    one_payload = (
+        tree.data[0]['children'][0]
+    )
+
+    assert [
+        child['title']
+        for child
+        in one_payload['children']
+    ] == [
+        '1.1',
+        '1.3',
+        '1.2',
+    ]
+
+    assert one_one.parent_id == one.pk
+    assert one_two.parent_id == one.pk
+
+
+def test_planner_drag_integration_nested_item_outdents_to_exact_root_slot(
+    client,
+    user,
+    make_item,
+):
+    """Equivalent backend call for 1.2.2 -> root gap between 7 and 6."""
+    root = make_item(
+        user,
+        'Research',
+        ItemType.GOAL,
+    )
+
+    root_children = {}
+
+    for order, title in enumerate(
+        [
+            '2',
+            '3',
+            '1',
+            '4',
+            '7',
+            '6',
+            '5',
+            '8',
+        ],
+        start=1,
+    ):
+        root_children[title] = make_item(
+            user,
+            title,
+            ItemType.GOAL,
+            parent=root,
+            sibling_order=order,
+        )
+
+    one_two = make_item(
+        user,
+        '1.2',
+        ItemType.GOAL,
+        parent=root_children['1'],
+        sibling_order=1,
+    )
+
+    moving = make_item(
+        user,
+        '1.2.2',
+        ItemType.GOAL,
+        parent=one_two,
+        sibling_order=1,
+    )
+
+    existing_child = make_item(
+        user,
+        '1.2.2.1',
+        ItemType.GOAL,
+        parent=moving,
+        sibling_order=1,
+    )
+
+    response = client.post(
+        f'/api/planning/items/{moving.pk}/move/',
+        {
+            'parent_id':
+                root.pk,
+
+            'sibling_order':
+                6,
+
+            'adopt_child_ids':
+                [],
+        },
+        format='json',
+    )
+
+    assert response.status_code == 200, response.data
+
+    assert _planner_drag_root_child_titles(
+        client,
+        root.pk,
+    ) == [
+        '2',
+        '3',
+        '1',
+        '4',
+        '7',
+        '1.2.2',
+        '6',
+        '5',
+        '8',
+    ]
+
+    moving.refresh_from_db()
+    existing_child.refresh_from_db()
+
+    assert moving.parent_id == root.pk
+    assert moving.sibling_order == 6
+
+    assert existing_child.parent_id == moving.pk
+    assert existing_child.sibling_order == 1
+
+
+def test_planner_drag_integration_parent_subtree_reorder_keeps_subtree(
+    client,
+    user,
+    make_item,
+):
+    """A parent drag changes only the parent's sibling slot."""
+    root = make_item(
+        user,
+        'Research',
+        ItemType.GOAL,
+    )
+
+    two = make_item(
+        user,
+        '2',
+        ItemType.GOAL,
+        parent=root,
+        sibling_order=1,
+    )
+
+    one = make_item(
+        user,
+        '1',
+        ItemType.GOAL,
+        parent=root,
+        sibling_order=2,
+    )
+
+    four = make_item(
+        user,
+        '4',
+        ItemType.GOAL,
+        parent=root,
+        sibling_order=3,
+    )
+
+    seven = make_item(
+        user,
+        '7',
+        ItemType.GOAL,
+        parent=root,
+        sibling_order=4,
+    )
+
+    six = make_item(
+        user,
+        '6',
+        ItemType.GOAL,
+        parent=root,
+        sibling_order=5,
+    )
+
+    one_one = make_item(
+        user,
+        '1.1',
+        ItemType.GOAL,
+        parent=one,
+        sibling_order=1,
+    )
+
+    one_one_one = make_item(
+        user,
+        '1.1.1',
+        ItemType.GOAL,
+        parent=one_one,
+        sibling_order=1,
+    )
+
+    response = client.post(
+        f'/api/planning/items/{one.pk}/move/',
+        {
+            'parent_id':
+                root.pk,
+
+            'sibling_order':
+                4,
+
+            'adopt_child_ids':
+                [],
+        },
+        format='json',
+    )
+
+    assert response.status_code == 200, response.data
+
+    assert _planner_drag_root_child_titles(
+        client,
+        root.pk,
+    ) == [
+        '2',
+        '4',
+        '7',
+        '1',
+        '6',
+    ]
+
+    one.refresh_from_db()
+    one_one.refresh_from_db()
+    one_one_one.refresh_from_db()
+
+    assert one.parent_id == root.pk
+    assert one.sibling_order == 4
+
+    assert one_one.parent_id == one.pk
+    assert one_one_one.parent_id == one_one.pk
+
+    # Silence accidental-unused fixture objects while documenting the setup.
+    assert two.parent_id == root.pk
+    assert four.parent_id == root.pk
+    assert seven.parent_id == root.pk
+    assert six.parent_id == root.pk

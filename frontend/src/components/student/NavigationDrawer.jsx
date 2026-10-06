@@ -7,8 +7,9 @@ const menuItems = [
   { label: 'Account' },
   { label: 'Settings' },
   { label: 'Marks' },
-  { label: 'Planner' },
-  { label: 'Timeline' },
+  { label: 'Planner', to: '/planner' },
+  { label: 'Timeline', to: '/timeline' },
+  { label: 'Focus', to: '/focus' },
 ]
 
 export default function NavigationDrawer({ isOpen, onClose }) {
@@ -68,13 +69,25 @@ export default function NavigationDrawer({ isOpen, onClose }) {
         >
           {menuItems.map((item) => {
             const isActive =
-              item.label === 'Settings' &&
-              location.pathname.startsWith('/settings')
+              Boolean(
+                item.to
+                && location.pathname === item.to,
+              )
+              || (
+                item.label === 'Settings'
+                && location.pathname.startsWith('/settings')
+              )
 
             return (
               <button
                 key={item.label}
                 type="button"
+                onClick={() => {
+                  if (item.to) {
+                    navigate(item.to)
+                    onClose()
+                  }
+                }}
                 className={`
                   w-fit whitespace-nowrap text-left
                   transition-opacity hover:opacity-70

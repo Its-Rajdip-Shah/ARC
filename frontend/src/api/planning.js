@@ -84,6 +84,44 @@ export function getTimeline(params) {
   return apiClient.get('planning/timeline/', { params }).then((res) => res.data)
 }
 
+export function getFocus() {
+  return apiClient.get('planning/focus/').then((res) => res.data)
+}
+
+export function setCurrentFocus(payload) {
+  return apiClient
+    .post('planning/focus/current/', payload)
+    .then((res) => res.data)
+}
+
+export function doTodayFocus(payload) {
+  return apiClient
+    .post('planning/focus/do-today/', payload)
+    .then((res) => res.data)
+}
+
+export function returnFocusToAutomatic(payload) {
+  return apiClient
+    .post('planning/focus/automatic/', payload)
+    .then((res) => res.data)
+}
+
+
+export function anchorFocusBatch(payload) {
+  return apiClient
+    .post(
+      'planning/focus/anchor/batch/',
+      payload,
+    )
+    .then((res) => res.data)
+}
+
+export function reprioritiseFocus(payload) {
+  return apiClient
+    .post('planning/focus/reprioritise/', payload)
+    .then((res) => res.data)
+}
+
 export function getOverdue() {
   return apiClient.get('planning/overdue/').then((res) => res.data)
 }

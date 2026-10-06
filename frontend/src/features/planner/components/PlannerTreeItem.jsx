@@ -9,13 +9,36 @@ import {
 } from 'lucide-react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useSortable } from '@dnd-kit/sortable'
-import { CSS } from '@dnd-kit/utilities'
 
 import { completeItem, deleteItem } from '../../../api/planning'
+import {
+  createLatestIntentQueue,
+  createSerialActionQueue,
+} from '../../../lib/latestIntentQueue'
+import {
+  patchPlanningTreeCompletion,
+} from '../../../lib/planningOptimistic'
+
+
+const plannerCompletionRequests =
+  createSerialActionQueue(
+    ({
+      itemId,
+      completed,
+    }) =>
+      completeItem(
+        itemId,
+        {
+          completed,
+        },
+      ),
+  )
+
 
 export default function PlannerTreeItem({
   item,
   depth = 0,
+  previewDepth = null,
   selectedItemId,
   panelOwnerId,
   hoveredItemId,
@@ -31,6 +54,32 @@ export default function PlannerTreeItem({
 }) {
   const queryClient = useQueryClient()
   const clickTimerRef = useRef(null)
+
+  const completionDesiredRef =
+    useRef(
+      Boolean(
+        item.is_completed,
+      ),
+    )
+
+  const completionQueueRef =
+    useRef(null)
+
+  if (
+    completionQueueRef.current
+    === null
+  ) {
+    completionQueueRef.current =
+      createLatestIntentQueue(
+        (completed) =>
+          plannerCompletionRequests.push({
+            itemId:
+              item.id,
+
+            completed,
+          }),
+      )
+  }
 
   const isSelected = selectedItemId === item.id
   const isHovered = hoveredItemId === item.id
@@ -104,29 +153,104 @@ export default function PlannerTreeItem({
     disabled: !dndEnabled,
   })
 
-  const completionMutation = useMutation({
-    mutationFn: () =>
-      completeItem(
+  const completionMutation =
+    useMutation({
+      mutationKey: [
+        'planning',
+        'scheduler',
+        'planner',
+        'complete',
         item.id,
-        item.is_completed
-          ? { completed: false }
-          : {},
-      ),
+      ],
 
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({
-        queryKey: ['planning', 'tree'],
-      })
+      mutationFn({
+        promise,
+      }) {
+        return promise
+      },
 
-      await queryClient.invalidateQueries({
-        queryKey: ['planning', 'priority'],
-      })
+      async onSettled() {
+        /*
+         * Multiple Planner rows share one FIFO network queue. Do not refetch
+         * after row A while row B still contains newer optimistic intent.
+         */
+        await plannerCompletionRequests.whenIdle()
 
-      await queryClient.invalidateQueries({
-        queryKey: ['planning', 'history'],
-      })
-    },
-  })
+        void queryClient.invalidateQueries({
+          queryKey: [
+            'planning',
+          ],
+        })
+      },
+    })
+
+  useEffect(() => {
+    if (
+      !completionQueueRef
+        .current
+        .isRunning()
+    ) {
+      completionDesiredRef.current =
+        Boolean(
+          item.is_completed,
+        )
+    }
+  }, [
+    item.is_completed,
+  ])
+
+  function queueCompletion() {
+    const completed =
+      !completionDesiredRef
+        .current
+
+    completionDesiredRef.current =
+      completed
+
+    /*
+     * React Query cache is presentation state only. The canonical mutation is
+     * still performed by Django and the synchronous scheduler.
+     */
+    void queryClient.cancelQueries({
+      queryKey: [
+        'planning',
+        'tree',
+      ],
+    })
+
+    queryClient.setQueryData(
+      [
+        'planning',
+        'tree',
+      ],
+      (tree) =>
+        patchPlanningTreeCompletion(
+          tree,
+          item.id,
+          completed,
+        ),
+    )
+
+    const queue =
+      completionQueueRef
+        .current
+
+    const wasRunning =
+      queue.isRunning()
+
+    const promise =
+      queue.push(
+        completed,
+      )
+
+    if (wasRunning) {
+      return
+    }
+
+    completionMutation.mutate({
+      promise,
+    })
+  }
 
   useEffect(() => {
     if (!isDragging) {
@@ -182,9 +306,7 @@ export default function PlannerTreeItem({
   function handleCompletion(event) {
     event.stopPropagation()
 
-    if (!completionMutation.isPending) {
-      completionMutation.mutate()
-    }
+    queueCompletion()
   }
 
   return (
@@ -193,8 +315,23 @@ export default function PlannerTreeItem({
       data-planner-item-id={item.id}
       className="relative scroll-mt-[150px]"
       style={{
-        transform: CSS.Transform.toString(transform),
+        /*
+         * Planner uses translation-only movement.
+         *
+         * Descendants are intentionally hidden while their parent is dragged,
+         * but they remain structurally attached and reappear after DragEnd.
+         */
+        transform:
+          transform
+            ? `translate3d(${
+                transform.x ?? 0
+              }px, ${
+                transform.y ?? 0
+              }px, 0)`
+            : undefined,
+
         transition,
+
         opacity: isDragging ? 0.5 : 1,
         zIndex: isDragging ? 20 : undefined,
       }}
@@ -214,6 +351,7 @@ export default function PlannerTreeItem({
       ))}
 
       <div
+        data-arc-planner-card-id={item.id}
         {...attributes}
         {...listeners}
         onMouseEnter={() => onHoverItem?.(item.id)}
@@ -226,6 +364,44 @@ export default function PlannerTreeItem({
           paddingLeft: `${indent}px`,
         }}
       >
+        {isDragging && previewDepth != null && (
+          <>
+            <span
+              aria-hidden="true"
+              className="
+                pointer-events-none absolute inset-y-0
+                z-30 w-[2px] bg-[#c3d19b]
+              "
+              style={{
+                left:
+                  depth === 0
+                    ? '0px'
+                    : `${(depth - 1) * 42 + 33}px`,
+              }}
+            />
+
+            {previewDepth > 1 && (
+              <span
+                aria-hidden="true"
+                className="
+                  pointer-events-none absolute inset-y-0
+                  z-30 w-[2px] bg-[#7c9cde]/60
+                "
+                style={{
+                  left:
+                    depth === 0
+                      ? '-42px'
+                      : `${
+                          (depth - 1) * 42
+                          + 33
+                          - 42
+                        }px`,
+                }}
+              />
+            )}
+          </>
+        )}
+
         {isSearchMatch ? (
           <div
             aria-hidden="true"
@@ -267,7 +443,7 @@ export default function PlannerTreeItem({
               : `Mark ${item.title} complete`
           }
           aria-pressed={item.is_completed}
-          disabled={completionMutation.isPending}
+          aria-busy={completionMutation.isPending}
           onPointerDown={(event) => event.stopPropagation()}
           onClick={handleCompletion}
           className={`
@@ -277,7 +453,6 @@ export default function PlannerTreeItem({
             rounded-[10px]
             border-2 border-[#7c9cde]
             transition-colors
-            disabled:cursor-wait disabled:opacity-60
             ${
               item.is_completed
                 ? 'bg-[#7c9cde] text-[#171a36]'

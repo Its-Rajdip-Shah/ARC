@@ -340,10 +340,15 @@ def test_v1_reschedule_undo_redo_restores_complete_disposable_state(
         second.execution_rank,
     )
     after_allocations = _allocation_snapshot(user)
+    state = SchedulingState.objects.get(
+        user=user,
+    )
+
     after_runtime = dict(
-        SchedulingState.objects.get(
-            user=user,
-        ).scheduler_runtime
+        state.scheduler_runtime
+    )
+    revision_after_reschedule = (
+        state.scheduling_revision
     )
 
     assert history.undo(user) is not None
@@ -361,11 +366,21 @@ def test_v1_reschedule_undo_redo_restores_complete_disposable_state(
 
     assert _allocation_snapshot(user) == before_allocations
 
+    state.refresh_from_db()
+
+    assert state.scheduler_runtime == before_runtime
+
     assert (
-        SchedulingState.objects.get(
-            user=user,
-        ).scheduler_runtime
-        == before_runtime
+        state.scheduling_revision
+        == revision_after_reschedule + 1
+    )
+    assert (
+        state.applied_scheduling_revision
+        == state.scheduling_revision
+    )
+
+    revision_after_undo = (
+        state.scheduling_revision
     )
 
     assert history.redo(user) is not None
@@ -385,9 +400,111 @@ def test_v1_reschedule_undo_redo_restores_complete_disposable_state(
 
     assert _allocation_snapshot(user) == after_allocations
 
+    state.refresh_from_db()
+
+    assert state.scheduler_runtime == after_runtime
+
     assert (
-        SchedulingState.objects.get(
-            user=user,
-        ).scheduler_runtime
-        == after_runtime
+        state.scheduling_revision
+        == revision_after_undo + 1
+    )
+    assert (
+        state.applied_scheduling_revision
+        == state.scheduling_revision
+    )
+
+
+def test_reconcile_tracks_requested_and_applied_revision(
+    user,
+    make_item,
+):
+    SchedulingState.objects.create(
+        user=user,
+        scheduler_flavour='lock-in',
+    )
+
+    make_item(
+        user,
+        'Revisioned work',
+        duration_category=DurationCategory.UNDER_1_HOUR,
+        due_date=TODAY + timedelta(days=5),
+    )
+
+    scheduling.reconcile(
+        user,
+        today=TODAY,
+    )
+
+    state = SchedulingState.objects.get(
+        user=user,
+    )
+
+    assert state.scheduling_revision == 1
+    assert state.applied_scheduling_revision == 1
+
+    scheduling.reconcile(
+        user,
+        today=TODAY,
+    )
+
+    state.refresh_from_db()
+
+    assert state.scheduling_revision == 2
+    assert state.applied_scheduling_revision == 2
+
+
+def test_stale_configured_result_cannot_replace_newer_schedule(
+    user,
+    make_item,
+):
+    state = SchedulingState.objects.create(
+        user=user,
+        scheduler_flavour='lock-in',
+        scheduling_revision=2,
+        applied_scheduling_revision=2,
+        scheduler_runtime={
+            'sentinel':
+                'newest',
+        },
+    )
+
+    item = make_item(
+        user,
+        'Stale work',
+        duration_category=DurationCategory.UNDER_1_HOUR,
+        scheduled_date=TODAY + timedelta(days=4),
+        execution_rank=7,
+        due_date=TODAY + timedelta(days=10),
+    )
+
+    original = (
+        item.scheduled_date,
+        item.execution_rank,
+    )
+
+    with pytest.raises(
+        scheduling.StaleSchedulingRevision
+    ):
+        scheduling.schedule(
+            user,
+            today=TODAY,
+            expected_revision=1,
+        )
+
+    item.refresh_from_db()
+    state.refresh_from_db()
+
+    assert (
+        item.scheduled_date,
+        item.execution_rank,
+    ) == original
+
+    assert state.scheduler_runtime == {
+        'sentinel':
+            'newest',
+    }
+
+    assert (
+        state.applied_scheduling_revision
+        == 2
     )

@@ -1,7 +1,11 @@
 import pytest
 
+from datetime import timedelta
+
+from django.utils import timezone
+
 from planning.models import PlanningHistoryEntry, PlanningItem
-from planning.services import history
+from planning.services import history, scheduling
 
 
 pytestmark = pytest.mark.django_db
@@ -374,3 +378,101 @@ def test_pruned_delete_hard_deletes_still_deleted_rows(user):
     # DELETE checkpoint is gone and its row was still soft-deleted,
     # therefore it is now permanently unreachable and should be gone.
     assert not PlanningItem.objects.filter(pk=doomed_id).exists()
+
+
+
+def test_sequential_unanchors_are_independent_history_actions(
+    user,
+    monkeypatch,
+):
+    today = timezone.localdate()
+
+    items = [
+        make_item(
+            user,
+            f"Anchored {index}",
+        )
+        for index
+        in range(1, 5)
+    ]
+
+    for index, item in enumerate(
+        items,
+        start=1,
+    ):
+        PlanningItem.objects.filter(
+            pk=item.pk,
+        ).update(
+            manual_requested_date=
+                today
+                + timedelta(
+                    days=index,
+                ),
+
+            manual_requested_order=
+                index,
+        )
+
+    monkeypatch.setattr(
+        scheduling,
+        "schedule",
+        lambda *args, **kwargs: {
+            "changed_ids": [],
+            "conflicts": [],
+            "scheduler": {},
+        },
+    )
+
+    original_dates = []
+
+    for item in items:
+        item.refresh_from_db()
+
+        original_dates.append(
+            item.manual_requested_date
+        )
+
+        scheduling.remove_anchor(
+            item
+        )
+
+    assert (
+        PlanningHistoryEntry.objects
+        .filter(
+            user=user,
+            action_type="SCHEDULE",
+        )
+        .count()
+        == 4
+    )
+
+    for item in items:
+        item.refresh_from_db()
+        assert (
+            item.manual_requested_date
+            is None
+        )
+
+    history.undo(
+        user
+    )
+
+    for item in items[:3]:
+        item.refresh_from_db()
+
+        assert (
+            item.manual_requested_date
+            is None
+        )
+
+    items[3].refresh_from_db()
+
+    assert (
+        items[3].manual_requested_date
+        == original_dates[3]
+    )
+
+    assert (
+        items[3].manual_requested_order
+        == 4
+    )

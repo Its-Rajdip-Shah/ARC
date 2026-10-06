@@ -234,6 +234,14 @@ def build_scheduler_input(
             remaining_fraction=_remaining_fraction(item),
             is_residual=bool(item.is_residual),
             existing_scheduled_date=item.scheduled_date,
+            anchor_order=(
+                item.manual_requested_order
+                if (
+                    item.manual_requested_date is not None
+                    and item.manual_requested_date >= today
+                )
+                else None
+            ),
         )
         for item in items
     )

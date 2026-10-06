@@ -133,3 +133,65 @@ def is_blocked(item):
         prerequisite__is_completed=False,
         prerequisite__is_deleted=False,
     ).exists()
+
+
+
+def blocking_edges(item):
+    """Unfinished prerequisite edges currently blocking this item."""
+
+    return PlanningDependency.objects.filter(
+        dependent=item,
+        prerequisite__is_completed=False,
+        prerequisite__is_deleted=False,
+    ).select_related(
+        "prerequisite",
+        "dependent",
+    )
+
+
+@transaction.atomic
+def remove_blocking(
+    item: PlanningItem,
+    *,
+    finish=True,
+):
+    """Explicitly dissolve all currently blocking hard-precedence edges.
+
+    ``finish=False`` is for a larger atomic operation that will reconcile and
+    schedule once after several canonical mutations have been applied.
+    """
+
+    _validate_endpoint(item)
+
+    from . import priority
+
+    priority._lock(
+        item.user
+    )
+
+    edges = list(
+        blocking_edges(
+            item
+        )
+    )
+
+    if not edges:
+        return []
+
+    edge_ids = [
+        edge.pk
+        for edge in edges
+    ]
+
+    PlanningDependency.objects.filter(
+        pk__in=edge_ids,
+    ).delete()
+
+    if finish:
+        from . import lifecycle
+
+        lifecycle.finish(
+            item.user
+        )
+
+    return edges

@@ -13,6 +13,9 @@ import {
 
 import DurationGlyph from './DurationGlyph'
 import useHoverIntent from './useHoverIntent'
+import {
+  writeTimelineDragItem,
+} from '../../dnd/timeline/timelineDragPayload'
 
 export default function TimelineCard({
   item,
@@ -112,25 +115,10 @@ export default function TimelineCard({
           return
         }
 
-        event.dataTransfer
-          .effectAllowed =
-          'move'
-
-        event.dataTransfer
-          .setData(
-            'application/x-arc-item',
-            String(
-              item.id,
-            ),
-          )
-
-        event.dataTransfer
-          .setData(
-            'text/plain',
-            String(
-              item.id,
-            ),
-          )
+        writeTimelineDragItem(
+          event.dataTransfer,
+          item.id,
+        )
       }}
       className={
         'timeline-card ' +

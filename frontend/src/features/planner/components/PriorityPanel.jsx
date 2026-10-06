@@ -1,15 +1,16 @@
 import { useEffect, useMemo, useState } from 'react'
-import { DndContext, PointerSensor, KeyboardSensor, closestCenter, useSensor, useSensors } from '@dnd-kit/core'
-import { SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { usePriorityOrder, useReorderPriority } from '../../../hooks/usePriorityOrder'
 import { usePlanningTree } from '../../../hooks/usePlanningTree'
 import PriorityCard from './PriorityCard'
 import PriorityToolbar from './PriorityToolbar'
 import usePriorityFind from '../hooks/usePriorityFind'
+import {
+  reorderPriorityRows,
+} from '../../../lib/planningOptimistic'
+import PriorityDnd from '../../../dnd/priority/PriorityDnd'
 import './PriorityPanel.css'
 
 const EMPTY = []
-const verticalOnly = ({ transform }) => ({ ...transform, x: 0 })
 
 // Read the hierarchy once; root identity and execution positions come from Priority.
 function hierarchyContext(tree) {
@@ -29,7 +30,36 @@ function PriorityContent({ canUndo, canRedo, onUndo, onRedo, historyBusy }) {
   const priority = usePriorityOrder()
   const tree = usePlanningTree()
   const reorder = useReorderPriority()
-  const rows = priority.data ?? EMPTY
+
+  const authoritativeRows =
+    priority.data
+    ?? EMPTY
+
+  const [
+    rows,
+    setRows,
+  ] =
+    useState(
+      authoritativeRows,
+    )
+
+  useEffect(() => {
+    /*
+     * Server/query data may only replace the local drag projection after the
+     * complete coalesced Priority request chain has settled.
+     */
+    if (
+      !reorder.isPending
+    ) {
+      setRows(
+        authoritativeRows,
+      )
+    }
+  }, [
+    authoritativeRows,
+    reorder.isPending,
+  ])
+
   const roots = tree.data ?? EMPTY
   const paths = useMemo(() => hierarchyContext(roots), [roots])
   const columns = useMemo(() => {
@@ -49,22 +79,45 @@ function PriorityContent({ canUndo, canRedo, onUndo, onRedo, historyBusy }) {
     return () => window.clearTimeout(timeout)
   }, [isSuccess, reset])
   const columnIndex = new Map(columns.map((root, index) => [root.id, index]))
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
-  )
-  const busy = reorder.isPending || historyBusy
+  /*
+   * Reconciliation no longer freezes Priority interaction.
+   *
+   * useReorderPriority() serialises requests and keeps only the newest
+   * not-yet-started intent while the visible order updates immediately.
+   * Undo/redo remain blocking history commands.
+   */
+  const busy = historyBusy
+  const reconciling = reorder.isPending
   const unavailable = priority.isError || tree.isError
 
   function move(itemId, position) {
-    if (busy || unavailable) return
-    reorder.mutate({ item_id: itemId, new_position: position })
-  }
+    if (
+      busy
+      || unavailable
+    ) {
+      return
+    }
 
-  function drop({ active, over }) {
-    if (!over || active.id === over.id) return
-    const target = rows.find((row) => row.item_id === over.id)
-    if (target) move(active.id, target.position)
+    /*
+     * Own the visual position synchronously before dnd-kit tears down its
+     * transform. This removes the one-frame return to the old slot.
+     */
+    setRows(
+      (current) =>
+        reorderPriorityRows(
+          current,
+          itemId,
+          position,
+        ),
+    )
+
+    reorder.mutate({
+      item_id:
+        itemId,
+
+      new_position:
+        position,
+    })
   }
 
   return (
@@ -74,7 +127,12 @@ function PriorityContent({ canUndo, canRedo, onUndo, onRedo, historyBusy }) {
       </header>
       <PriorityToolbar find={find} canUndo={canUndo} canRedo={canRedo} onUndo={onUndo} onRedo={onRedo} busy={busy} />
       <div className="priority-feedback" role="status" aria-live="polite">
-        {busy ? 'Saving…' : reorder.isSuccess ? 'Priority saved.' : ''}
+        {
+          !reconciling
+          && reorder.isSuccess
+            ? 'Priority saved.'
+            : ''
+        }
       </div>
       {reorder.isError && <p role="alert" className="mx-5 my-3 text-arc-danger-light sm:mx-12">Could not save priority. Your last saved order is shown. Try again.</p>}
       {unavailable ? (
@@ -105,17 +163,22 @@ function PriorityContent({ canUndo, canRedo, onUndo, onRedo, historyBusy }) {
             <div className="priority-guides" aria-hidden="true">
               {columns.map((root, index) => <span key={root.id} style={{ left: `calc(var(--number-width) + ${index} * var(--column-width))` }} />)}
             </div>
-            <DndContext sensors={sensors} collisionDetection={closestCenter} modifiers={[verticalOnly]} onDragEnd={drop}>
-              <SortableContext items={visibleRows.map((row) => row.item_id)} strategy={verticalListSortingStrategy}>
-                <ol className="relative m-0 list-none p-0 pb-8" aria-label="Global priority order" aria-busy={busy}>
-                  {visibleRows.map((row) => (
-                    <PriorityCard key={row.item_id} row={row} column={columnIndex.get(row.root.id)}
-                      matched={find.matchIds.has(row.item_id)} currentMatch={find.currentId === row.item_id} registerCard={find.registerCard}
-                      ancestors={paths.get(row.item_id)} count={rows.length} disabled={busy || unavailable} onMove={move} />
-                  ))}
-                </ol>
-              </SortableContext>
-            </DndContext>
+            <PriorityDnd
+              rows={visibleRows}
+              onMove={move}
+            >
+              <ol
+                className="relative m-0 list-none p-0 pb-8"
+                aria-label="Global priority order"
+                aria-busy={busy || reconciling}
+              >
+                {visibleRows.map((row) => (
+                  <PriorityCard key={row.item_id} row={row} column={columnIndex.get(row.root.id)}
+                    matched={find.matchIds.has(row.item_id)} currentMatch={find.currentId === row.item_id} registerCard={find.registerCard}
+                    ancestors={paths.get(row.item_id)} count={rows.length} disabled={busy || unavailable} onMove={move} />
+                ))}
+              </ol>
+            </PriorityDnd>
           </div>
         </div>
       )}

@@ -268,10 +268,150 @@ class MoveSerializer(serializers.Serializer):
         queryset=PlanningItem.objects.all(), allow_null=True
     )
     sibling_order = serializers.IntegerField(required=False, min_value=1)
+    adopt_child_ids = UserScopedPrimaryKeyRelatedField(
+        queryset=PlanningItem.objects.all(),
+        many=True,
+        required=False,
+    )
+
+    def validate_adopt_child_ids(self, value):
+        ids = [item.pk for item in value]
+
+        if len(ids) != len(set(ids)):
+            raise serializers.ValidationError(
+                'Each adopted child may appear only once.'
+            )
+
+        return value
 
 
 class CompleteSerializer(serializers.Serializer):
     completed = serializers.BooleanField(default=True)
+    reschedule = serializers.BooleanField(default=True)
+
+
+class FocusCandidateSerializer(serializers.Serializer):
+    item_id = serializers.IntegerField()
+    title = serializers.CharField()
+    duration_category = serializers.CharField(
+        allow_null=True,
+    )
+    focus_bucket = serializers.CharField()
+    scheduled_date = serializers.DateField(
+        allow_null=True,
+    )
+    priority_position = serializers.IntegerField(
+        allow_null=True,
+    )
+    execution_rank = serializers.IntegerField(
+        allow_null=True,
+    )
+    is_current = serializers.BooleanField()
+    hierarchy_path = serializers.ListField(
+        child=serializers.CharField(),
+    )
+    description = serializers.CharField(
+        allow_blank=True,
+        allow_null=True,
+    )
+    start_date = serializers.DateField(
+        allow_null=True,
+    )
+    due_date = serializers.DateField(
+        allow_null=True,
+    )
+    manual_requested_date = serializers.DateField(
+        allow_null=True,
+    )
+    manual_requested_order = serializers.IntegerField(
+        allow_null=True,
+    )
+    percent_completed = serializers.FloatField()
+
+
+class FocusProjectionSerializer(serializers.Serializer):
+    today = serializers.DateField()
+    groups = serializers.DictField()
+    candidates = FocusCandidateSerializer(
+        many=True,
+    )
+    current_item_id = serializers.IntegerField(
+        allow_null=True,
+    )
+
+
+class FocusCurrentSerializer(serializers.Serializer):
+    item_id = serializers.IntegerField(
+        allow_null=True,
+    )
+
+
+class FocusReprioritiseSerializer(serializers.Serializer):
+    item_id = serializers.IntegerField()
+    new_position = serializers.IntegerField(
+        min_value=1,
+    )
+
+
+
+
+class FocusAnchorSerializer(serializers.Serializer):
+    """Explicit Focus date + within-day execution-order intent."""
+
+    item_id = serializers.IntegerField()
+    date = serializers.DateField()
+    order = serializers.IntegerField(min_value=1)
+
+    change_deadline = serializers.BooleanField(
+        default=False,
+    )
+    change_release = serializers.BooleanField(
+        default=False,
+    )
+    allow_overload = serializers.BooleanField(
+        default=False,
+    )
+    acknowledge_dependency_block = serializers.BooleanField(
+        default=False,
+    )
+
+    dissolve_dependencies = serializers.BooleanField(
+        default=False,
+    )
+
+
+
+class FocusAnchorBatchChangeSerializer(
+    FocusAnchorSerializer
+):
+    """One staged Focus queue placement."""
+
+
+class FocusAnchorBatchSerializer(
+    serializers.Serializer
+):
+    """One atomic staged Focus queue Apply."""
+
+    changes = FocusAnchorBatchChangeSerializer(
+        many=True,
+        allow_empty=False,
+    )
+
+
+class FocusDoTodaySerializer(serializers.Serializer):
+    item_id = serializers.IntegerField()
+    change_deadline = serializers.BooleanField(
+        default=False,
+    )
+    change_release = serializers.BooleanField(
+        default=False,
+    )
+    allow_overload = serializers.BooleanField(
+        default=False,
+    )
+    acknowledge_dependency_block = serializers.BooleanField(
+        default=False,
+    )
 
 
 class SchedulerAllocationProjectionSerializer(serializers.Serializer):
@@ -300,7 +440,8 @@ class TimelineItemSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'parent', 'title', 'description', 'item_type', 'start_date', 'due_date',
             'scheduled_date', 'execution_rank', 'completed_display_date',
-            'manual_requested_date', 'duration_category',
+            'manual_requested_date', 'manual_requested_order',
+            'duration_category',
             'is_completed', 'priority_position', 'tags', 'overdue', 'submission_url',
             'hierarchy_path', 'has_children', 'allocations',
         ]

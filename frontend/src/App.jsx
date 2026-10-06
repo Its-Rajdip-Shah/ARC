@@ -11,6 +11,7 @@ import StudentLoginPage from './pages/student/StudentLoginPage'
 import AdminUsersPage from './pages/admin/AdminUsersPage'
 import PlannerPage from './features/planner/PlannerPage'
 import TimelinePage from './features/timeline/TimelinePage'
+import FocusPage from './features/focus/FocusPage'
 import SettingsPage from './pages/student/SettingsPage'
 
 export default function App() {
@@ -26,6 +27,7 @@ export default function App() {
             <Route element={<StudentLayout />}>
               <Route path="/planner" element={<PlannerPage />} />
               <Route path="/timeline" element={<TimelinePage />} />
+              <Route path="/focus" element={<FocusPage />} />
               <Route path="/settings" element={<SettingsPage />} />
             </Route>
           </Route>

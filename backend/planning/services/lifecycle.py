@@ -61,6 +61,6 @@ def finish(user, today=None):
     from planning.services import scheduling, focus
     validate_graph(user)
     priority.reconcile(user)
-    result = scheduling.schedule(user, today)
+    result = scheduling.reconcile(user, today)
     focus.reconcile_current(user)
     return result

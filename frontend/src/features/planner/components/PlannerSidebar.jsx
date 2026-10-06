@@ -1,21 +1,39 @@
-import { useState } from 'react'
 import {
-  DndContext,
-  PointerSensor,
-  closestCenter,
-  useSensor,
-  useSensors,
-} from '@dnd-kit/core'
+  useEffect,
+  useState,
+} from 'react'
+
 import {
-  SortableContext,
   useSortable,
-  verticalListSortingStrategy,
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 
 import arcLogo from '../../../assets/brand/arc-logo.svg'
 import { createItem, moveItem } from '../../../api/planning'
+
+import PlannerSidebarDnd from '../../../dnd/planner/PlannerSidebarDnd'
+
+import {
+  reorderPlannerSidebarRoots,
+} from '../../../dnd/planner/plannerSidebarProjection'
+
+import {
+  createSerialActionQueue,
+} from '../../../lib/latestIntentQueue'
+
+
+const plannerSidebarRootRequests =
+  createSerialActionQueue(
+    async ({
+      id,
+      siblingOrder,
+    }) =>
+      moveItem(id, {
+        parent_id: null,
+        sibling_order: siblingOrder,
+      }),
+  )
 
 function SortableRoot({
   root,
@@ -50,6 +68,7 @@ function SortableRoot({
   return (
     <button
       ref={setNodeRef}
+      data-arc-planner-sidebar-root-id={root.id}
       type="button"
       title={root.title}
       onClick={() => onNavigate?.(root.id)}
@@ -84,34 +103,35 @@ export default function PlannerSidebar({
   const [title, setTitle] = useState('')
   const queryClient = useQueryClient()
 
-  const sensors = useSensors(
-    useSensor(PointerSensor, {
-      activationConstraint: {
-        distance: 4,
-      },
-    }),
-  )
+  /*
+   * Exactly like Priority:
+   *
+   * local ordered state owns presentation while server reconciliation is
+   * happening. Authoritative query data is not allowed to snap the card back
+   * underneath an active persistence chain.
+   */
+  const [
+    displayedRoots,
+    setDisplayedRoots,
+  ] =
+    useState(roots)
 
+  const [
+    reconcilingRoots,
+    setReconcilingRoots,
+  ] =
+    useState(false)
 
-  const moveRootMutation = useMutation({
-    mutationFn: ({ id, siblingOrder }) =>
-      moveItem(id, {
-        parent_id: null,
-        sibling_order: siblingOrder,
-      }),
-
-    onSuccess: async () => {
-      await Promise.all([
-        queryClient.invalidateQueries({
-          queryKey: ['planning', 'tree'],
-        }),
-        queryClient.invalidateQueries({
-          queryKey: ['planning', 'history'],
-        }),
-      ])
-    },
-
-  })
+  useEffect(() => {
+    if (!reconcilingRoots) {
+      setDisplayedRoots(
+        roots,
+      )
+    }
+  }, [
+    roots,
+    reconcilingRoots,
+  ])
 
   const createRootMutation = useMutation({
     mutationFn: (rootTitle) =>
@@ -131,44 +151,119 @@ export default function PlannerSidebar({
     },
   })
 
-  function handleRootDragEnd(event) {
-    const { active, over } = event
-
-    if (
-      moveRootMutation.isPending ||
-      !over ||
-      active.id === over.id
-    ) {
-      return
-    }
-
-    const oldIndex = roots.findIndex(
-      (root) => root.id === active.id,
+  function handleRootMove(
+    itemId,
+    position,
+  ) {
+    /*
+     * Priority's essential behavior:
+     *
+     * own the visible result immediately before dnd-kit removes transforms.
+     */
+    setDisplayedRoots(
+      (current) =>
+        reorderPlannerSidebarRoots(
+          current,
+          itemId,
+          position,
+        ),
     )
-
-    const newIndex = roots.findIndex(
-      (root) => root.id === over.id,
-    )
-
-    if (
-      oldIndex === -1 ||
-      newIndex === -1 ||
-      oldIndex === newIndex
-    ) {
-      return
-    }
 
     /*
-     * dnd-kit has already shown the user the prospective
-     * position visually.
-     *
-     * Persist that final 1-based root sibling position.
-     * parent_id remains null, so this is ONLY a root reorder.
+     * Keep the shared Planner tree visually coherent too, but sidebar display
+     * correctness no longer depends on React Query cache timing.
      */
-    moveRootMutation.mutate({
-      id: active.id,
-      siblingOrder: newIndex + 1,
-    })
+    queryClient.setQueryData(
+      [
+        'planning',
+        'tree',
+      ],
+      (tree) =>
+        reorderPlannerSidebarRoots(
+          tree ?? roots,
+          itemId,
+          position,
+        ),
+    )
+
+    setReconcilingRoots(
+      true,
+    )
+
+    plannerSidebarRootRequests
+      .push({
+        id:
+          itemId,
+
+        siblingOrder:
+          position,
+      })
+      .then(
+        async () => {
+          /*
+           * Each queued action gets a promise. Only the final completed action
+           * owns reconciliation.
+           */
+          if (
+            plannerSidebarRootRequests
+              .isRunning()
+          ) {
+            return
+          }
+
+          await Promise.all([
+            queryClient.invalidateQueries({
+              queryKey: [
+                'planning',
+                'tree',
+              ],
+            }),
+
+            queryClient.invalidateQueries({
+              queryKey: [
+                'planning',
+                'history',
+              ],
+            }),
+          ])
+
+          setReconcilingRoots(
+            false,
+          )
+        },
+        async () => {
+          if (
+            plannerSidebarRootRequests
+              .isRunning()
+          ) {
+            return
+          }
+
+          /*
+           * A failed final request must reconcile back to canonical server
+           * truth rather than leaving an optimistic lie on screen.
+           */
+          await Promise.all([
+            queryClient.invalidateQueries({
+              queryKey: [
+                'planning',
+                'tree',
+              ],
+            }),
+
+            queryClient.invalidateQueries({
+              queryKey: [
+                'planning',
+                'history',
+              ],
+            }),
+          ])
+
+          setReconcilingRoots(
+            false,
+          )
+        },
+      )
   }
 
   function handleSubmit(event) {
@@ -280,24 +375,18 @@ export default function PlannerSidebar({
             </form>
           )}
 
-          <DndContext
-            sensors={sensors}
-            collisionDetection={closestCenter}
-            onDragEnd={handleRootDragEnd}
+          <PlannerSidebarDnd
+            roots={displayedRoots}
+            onMove={handleRootMove}
           >
-            <SortableContext
-              items={roots.map((root) => root.id)}
-              strategy={verticalListSortingStrategy}
-            >
-              {roots.map((root) => (
-                <SortableRoot
-                  key={root.id}
-                  root={root}
-                  onNavigate={onNavigateToRoot}
-                />
-              ))}
-            </SortableContext>
-          </DndContext>
+            {displayedRoots.map((root) => (
+              <SortableRoot
+                key={root.id}
+                root={root}
+                onNavigate={onNavigateToRoot}
+              />
+            ))}
+          </PlannerSidebarDnd>
         </div>
       </nav>
     </aside>

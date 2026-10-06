@@ -8,6 +8,7 @@ planning/services/ in Phase 4 rather than here.
 
 from datetime import timedelta
 
+from django.conf import settings
 from django.db import models
 from django.db.models import Count, F, Q
 
@@ -204,6 +205,16 @@ class PlanningItem(OwnedModel, TimestampedModel):
     # This is deliberately distinct from
     # scheduled_date, which is a disposable scheduler proposal.
     manual_requested_date = models.DateField(null=True, blank=True)
+
+    # Optional canonical within-day ordering intent paired with
+    # manual_requested_date. This is user intent, NOT scheduler output.
+    #
+    # execution_rank remains disposable scheduler-owned state.
+    manual_requested_order = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+    )
+
     # Last missed explicit intent, retained for recovery after hard expiry.
     expired_manual_requested_date = models.DateField(null=True, blank=True)
 
@@ -279,6 +290,20 @@ class PlanningItem(OwnedModel, TimestampedModel):
                 condition=Q(percent_completed__gte=0) & Q(percent_completed__lte=100),
                 name='planning_item_percent_completed_range',
             ),
+            models.CheckConstraint(
+                condition=(
+                    Q(manual_requested_order__isnull=True)
+                    | Q(manual_requested_order__gte=1)
+                ),
+                name='planning_item_manual_order_positive',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    Q(manual_requested_order__isnull=True)
+                    | Q(manual_requested_date__isnull=False)
+                ),
+                name='planning_item_manual_order_requires_date',
+            ),
         ]
 
     def __str__(self):
@@ -292,6 +317,34 @@ class PlanningItem(OwnedModel, TimestampedModel):
     def has_deadline(self):
         """Whether this item has a factual deadline constraint."""
         return self.due_date is not None
+
+
+class FocusState(models.Model):
+    """Durable convenience-only current Focus selection.
+
+    This is intentionally separate from PlanningItem. Selecting what the user
+    is working on now is not canonical planning intent and must not affect
+    priority, dates, hierarchy, dependencies, duration, or scheduler input.
+    """
+
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='focus_state',
+        db_column='user_id',
+    )
+    current_item = models.ForeignKey(
+        'PlanningItem',
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='focus_states',
+        db_column='current_item_id',
+    )
+
+    class Meta:
+        db_table = 'planning_focus_state'
+
 
 
 class PlanningDependency(models.Model):
@@ -561,6 +614,16 @@ class SchedulingState(OwnedModel):
     scheduler_runtime = models.JSONField(
         default=dict,
         blank=True,
+    )
+
+    # Monotonic freshness token for disposable scheduling work.
+    # Every requested reconciliation receives a new revision. Only a result
+    # computed for the current revision may replace derived schedule state.
+    scheduling_revision = models.PositiveBigIntegerField(
+        default=0,
+    )
+    applied_scheduling_revision = models.PositiveBigIntegerField(
+        default=0,
     )
 
     class Meta:

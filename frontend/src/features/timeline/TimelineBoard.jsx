@@ -26,6 +26,13 @@ import {
 
 import TimelineCard from './TimelineCard'
 import useHoverIntent from './useHoverIntent'
+import {
+  hasTimelineDragItem,
+  readTimelineDragItem,
+} from '../../dnd/timeline/timelineDragPayload'
+import {
+  projectTimelineDrop,
+} from '../../dnd/timeline/timelineProjection'
 
 function Constraint({
   item,
@@ -573,19 +580,13 @@ export default function TimelineBoard({
       : null
 
   function handleDrop(event) {
-    const raw =
-      event.dataTransfer
-        .getData(
-          'application/x-arc-item',
-        )
-
     const itemId =
-      Number(raw)
+      readTimelineDragItem(
+        event.dataTransfer,
+      )
 
     if (
-      !Number.isSafeInteger(
-        itemId,
-      )
+      itemId === null
     ) {
       return
     }
@@ -607,16 +608,22 @@ export default function TimelineBoard({
       event.currentTarget
         .getBoundingClientRect()
 
-    const date =
-      dateAtPosition(
-        event.clientX -
+    const intent =
+      projectTimelineDrop({
+        clientX:
+          event.clientX,
+
+        boardLeft:
           rect.left,
+
         scale,
-      )
+
+        dateAtPosition,
+      })
 
     onRequestAnchor?.(
       item,
-      date,
+      intent.date,
     )
   }
 
@@ -643,11 +650,8 @@ export default function TimelineBoard({
         }}
         onDragOver={(event) => {
           if (
-            Array.from(
-              event.dataTransfer
-                .types,
-            ).includes(
-              'application/x-arc-item',
+            hasTimelineDragItem(
+              event.dataTransfer,
             )
           ) {
             event.preventDefault()

@@ -64,8 +64,8 @@ Git commit pinned in `backend/requirements.txt`.
 Current frozen scheduler package:
 
     ARC-Scheduler-Arena
-    commit 17b33d1db1a24dc96dbd9845a1bfe52290c7f5d4
-    tag v1.0.0
+    commit 0adf31715ae40aec6a93e15021c114e13241ad35
+    package version 1.0.0
 
 Installing backend dependencies therefore retrieves the exact scheduler
 implementation used by this branch:

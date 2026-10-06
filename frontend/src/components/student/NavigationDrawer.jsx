@@ -9,6 +9,7 @@ const menuItems = [
   { label: 'Marks' },
   { label: 'Planner', to: '/planner' },
   { label: 'Timeline', to: '/timeline' },
+  { label: 'Focus', to: '/focus' },
 ]
 
 export default function NavigationDrawer({ isOpen, onClose }) {

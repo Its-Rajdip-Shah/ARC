@@ -43,8 +43,8 @@ The backend scheduler implementation is locked by:
 At the current frozen scheduler boundary, ARC installs:
 
     ARC-Scheduler-Arena
-    tag: v1.0.0
-    commit: 17b33d1db1a24dc96dbd9845a1bfe52290c7f5d4
+    package version: 1.0.0
+    commit: 0adf31715ae40aec6a93e15021c114e13241ad35
 
 Do not replace that commit pin with an unpinned scheduler branch.
 

@@ -266,3 +266,54 @@ def test_timeline_read_respects_policy_manual_overload_and_constraints(user, api
     assert overdue.scheduled_date >= TODAY
     assert {'item_id': overdue.pk, 'code': 'overdue'} in response.data['conflicts']
     assert not PlanningHistoryEntry.objects.filter(user=user).exists()
+
+
+def test_timeline_move_runs_public_scheduler_once_after_preflight(
+    user,
+    make_item,
+    monkeypatch,
+):
+    item = make_item(
+        user,
+        'Timeline de-dup',
+        duration_category=DurationCategory.UNDER_1_HOUR,
+        priority_position=1,
+    )
+
+    legacy_calls = []
+    schedule_calls = []
+
+    real_legacy = scheduling._legacy_schedule
+    real_schedule = scheduling.schedule
+
+    def counted_legacy(*args, **kwargs):
+        legacy_calls.append((args, kwargs))
+        return real_legacy(*args, **kwargs)
+
+    def counted_schedule(*args, **kwargs):
+        schedule_calls.append((args, kwargs))
+        return real_schedule(*args, **kwargs)
+
+    monkeypatch.setattr(
+        scheduling,
+        '_legacy_schedule',
+        counted_legacy,
+    )
+
+    monkeypatch.setattr(
+        scheduling,
+        'schedule',
+        counted_schedule,
+    )
+
+    scheduling.move_to_date(
+        user,
+        item.pk,
+        TODAY + timedelta(days=1),
+        today=TODAY,
+    )
+
+    # One legacy compatibility preflight, plus the legacy compatibility
+    # pass performed inside the single final public schedule() invocation.
+    assert len(schedule_calls) == 1
+    assert len(legacy_calls) == 2

@@ -5,7 +5,9 @@ import NavigationDrawer from './NavigationDrawer'
 import StudentViewNav from './StudentViewNav'
 
 export default function StudentLayout() {
-  const isTimeline = useLocation().pathname === '/timeline'
+  const pathname = useLocation().pathname
+  const isTimeline = pathname === '/timeline'
+  const isFocus = pathname === '/focus'
   const [isNavigationOpen, setIsNavigationOpen] = useState(false)
 
   function toggleNavigation() {
@@ -17,9 +19,15 @@ export default function StudentLayout() {
   }
 
   return (
-    <div className="relative min-h-screen overflow-x-clip bg-arc-bg text-arc-text">
+    <div
+      className="relative min-h-screen overflow-x-clip bg-arc-bg text-arc-text"
+      style={{
+        background:
+          'radial-gradient(circle at 48% 14%, rgba(76,83,151,.18), transparent 34%), radial-gradient(circle at 86% 72%, rgba(56,73,132,.10), transparent 33%), var(--color-arc-bg)',
+      }}
+    >
       <header
-        className={`pointer-events-none fixed left-arc-sidebar right-0 top-0 z-30 bg-arc-bg ${isTimeline ? 'h-14' : 'h-20'}`}
+        className={`pointer-events-none fixed ${isFocus ? 'left-0' : 'left-arc-sidebar'} right-0 top-0 z-30 bg-arc-bg ${isTimeline ? 'h-14' : 'h-20'}`}
       >
         <div
           className="

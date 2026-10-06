@@ -30,4 +30,4 @@ freezegun==1.5.5
 responses==0.26.3
 
 # ARC scheduling engine — v1.0.0
-arc-scheduler @ git+https://github.com/Its-Rajdip-Shah/ARC-Scheduler-Arena.git@17b33d1db1a24dc96dbd9845a1bfe52290c7f5d4
+arc-scheduler @ git+https://github.com/Its-Rajdip-Shah/ARC-Scheduler-Arena.git@0adf31715ae40aec6a93e15021c114e13241ad35

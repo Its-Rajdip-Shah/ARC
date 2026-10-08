@@ -6,7 +6,6 @@ import { useAuthStore } from '../../stores/authStore'
 const menuItems = [
   { label: 'Account', to: '/settings' },
   { label: 'Settings', to: '/settings' },
-  { label: 'Marks' },
   { label: 'Planner', to: '/planner' },
   { label: 'Timeline', to: '/timeline' },
   { label: 'Focus', to: '/focus' },

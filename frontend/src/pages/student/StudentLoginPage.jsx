@@ -109,13 +109,6 @@ export default function StudentLoginPage() {
             />
 
             <button
-              type="button"
-              className="mt-1 block w-full text-right text-sm text-[#D8CDF8]"
-            >
-              forgot password
-            </button>
-
-            <button
               type="submit"
               disabled={busy}
               className="mx-auto mt-10 block h-[58px] w-[172px] bg-[#C3D19B] text-lg font-semibold text-black disabled:opacity-60"

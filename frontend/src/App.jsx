@@ -8,6 +8,7 @@ import ConnectionStatus from './pages/ConnectionStatus'
 import AdminDashboardPage from './pages/admin/AdminDashboardPage'
 import AdminLoginPage from './pages/admin/AdminLoginPage'
 import StudentLoginPage from './pages/student/StudentLoginPage'
+import StudentRegisterPage from './pages/student/StudentRegisterPage'
 import AdminUsersPage from './pages/admin/AdminUsersPage'
 import PlannerPage from './features/planner/PlannerPage'
 import TimelinePage from './features/timeline/TimelinePage'
@@ -22,6 +23,7 @@ export default function App() {
           <Route path="/" element={<Navigate to="/login" replace />} />
 
           <Route path="/login" element={<StudentLoginPage />} />
+          <Route path="/register" element={<StudentRegisterPage />} />
 
           <Route element={<StudentRoute />}>
             <Route element={<StudentLayout />}>

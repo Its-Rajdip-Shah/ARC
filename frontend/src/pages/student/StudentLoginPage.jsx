@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 
 import { login, verifyMfa } from '../../api/auth'
 import loginBackground from '../../assets/auth/login-background.png'
@@ -174,7 +174,10 @@ export default function StudentLoginPage() {
 
         {!mfaToken && (
           <p className="mt-3 text-center text-lg text-[#D8CDF8]">
-            Not logged in? <span className="underline">Sign Up</span>
+            New to ARC?{' '}
+            <Link to="/register" className="underline">
+              Create an account
+            </Link>
           </p>
         )}
       </section>

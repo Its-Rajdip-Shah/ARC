@@ -225,7 +225,7 @@ Viewsets inherit `UserScopedMixin`. Custom actions delegate to Phase 4 services.
 - Keys live in `LLM_API_KEY` through `LLM_API_KEY_5`. Empty slots are skipped. The chain shares one `LLM_TIMEOUT_SECONDS` budget, so a hung primary cannot stack a full timeout on every fallback.
 - A saved plan is kept when the call fails or no key is set. A local deadline order is stored only when there is no saved plan.
 - `SchedulingState.study_plan` is separate from `scheduler_runtime`. A flavour change clears the runtime and leaves the study plan.
-- Conflict flags (`outside_availability`, `after_deadline`) are computed in Django. A window whose start equals its end is stored, and any session of at least one minute is outside that window.
+- Conflict flags (`outside_availability`, `after_deadline`) are computed in Django on save. GET also returns the saved availability, note, and each session's due date so the modal can refill those fields and update the same flags while the student edits. A window whose start equals its end is stored, and any session of at least one minute is outside that window.
 - Sessions are kept only when `item_id` belongs to the caller's open items. The suggestion does not write planner rows.
 
 ### Canvas upsert

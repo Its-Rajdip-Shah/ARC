@@ -72,6 +72,18 @@ def load_plan(user):
     return {'plan': plan, 'source': 'cache' if plan else None, 'error': None}
 
 
+def present(user, result):
+    """Add the saved windows and each session's due date for the modal."""
+    state = SchedulingState.objects.filter(user=user).first()
+    plan = result.get('plan')
+    if plan and plan.get('sessions') is not None:
+        plan = {
+            **plan,
+            'sessions': _with_due_dates(plan['sessions'], _open_items(user)),
+        }
+    return {**result, 'plan': plan, 'preferences': _preferences(state)}
+
+
 def request_plan(user, availability, notes=''):
     """Call the model. On failure, return the last saved plan and an error."""
     state, _ = SchedulingState.objects.get_or_create(user=user)
@@ -288,6 +300,24 @@ def _store(state, sessions, items):
     state.study_plan = plan
     state.save(update_fields=['study_plan'])
     return plan
+
+
+def _preferences(state):
+    raw = (state.study_preferences if state else None) or {}
+    return {
+        'availability': raw.get('availability') or [],
+        'notes': raw.get('notes') or '',
+    }
+
+
+def _with_due_dates(sessions, items):
+    by_id = {item.id: item for item in items}
+    annotated = []
+    for session in sessions:
+        item = by_id.get(session.get('item_id'))
+        due = item.due_date.isoformat() if item and item.due_date else None
+        annotated.append({**session, 'due_date': due})
+    return annotated
 
 
 def _fallback(state, message):

@@ -268,6 +268,30 @@ def test_blank_days_and_equal_times_still_return_a_plan(api_for, user, monkeypat
     assert cleared.json()['plan']['sessions'][0]['item_id'] == item.id
 
 
+def test_get_returns_saved_availability_and_due_date(api_for, user):
+    item = _item(user)
+    SchedulingState.objects.create(
+        user=user,
+        study_preferences={'availability': WINDOWS, 'notes': 'mornings'},
+        study_plan={'sessions': [{
+            'item_id': item.id,
+            'title': 'Essay',
+            'date': '2026-10-05',
+            'start_time': '10:00',
+            'duration_minutes': 60,
+            'order': 1,
+            'conflicts': [],
+        }]},
+    )
+
+    response = api_for(user).get(URL)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body['preferences'] == {'availability': WINDOWS, 'notes': 'mornings'}
+    assert body['plan']['sessions'][0]['due_date'] == '2026-10-12'
+
+
 def test_missing_key_keeps_the_saved_plan(api_for, user, monkeypatch):
     item = _item(user, title='Keep the model plan')
     SchedulingState.objects.create(

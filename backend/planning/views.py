@@ -75,7 +75,7 @@ from planning.serializers import (
     TimezoneSerializer,
 )
 from planning.services import dependencies, focus, hierarchy, leaf_order_sync, overdue, priority, progress, scheduling
-from planning.services.study_plan import load_plan, request_plan, save_edited_plan
+from planning.services.study_plan import load_plan, present, request_plan, save_edited_plan
 from planning.services import deletion, history, lifecycle
 from planning.services.focus_buckets import focus_bucket_key
 
@@ -1324,17 +1324,17 @@ class StudyPlanView(APIView):
     """
 
     def get(self, request):
-        return Response(load_plan(request.user))
+        return Response(present(request.user, load_plan(request.user)))
 
     def post(self, request):
         serializer = StudyPlanRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
-        result = request_plan(
+        result = present(request.user, request_plan(
             request.user,
             data['availability'],
             data.get('notes', ''),
-        )
+        ))
         status = 200 if result['plan'] is not None else 502
         return Response(result, status=status)
 
@@ -1342,10 +1342,10 @@ class StudyPlanView(APIView):
         serializer = StudyPlanEditSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         try:
-            result = save_edited_plan(
+            result = present(request.user, save_edited_plan(
                 request.user,
                 serializer.validated_data['sessions'],
-            )
+            ))
         except ValueError as exc:
             raise ValidationError({'sessions': str(exc)}) from exc
         return Response(result)

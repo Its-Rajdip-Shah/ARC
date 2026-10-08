@@ -3,6 +3,7 @@ import { X } from 'lucide-react'
 
 import { useStudyPlan } from '../../../hooks/useStudyPlan'
 import { errorMessage } from '../../../lib/errors'
+import { sessionConflicts } from '../studyPlanConflicts'
 
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 
@@ -35,6 +36,19 @@ function firstFieldMessage(fields) {
   return null
 }
 
+function windowsFromAvailability(availability) {
+  const rows = DAYS.map(() => ({ start: '', end: '' }))
+  for (const window of availability || []) {
+    if (window.weekday >= 0 && window.weekday < DAYS.length) {
+      rows[window.weekday] = {
+        start: String(window.start || '').slice(0, 5),
+        end: String(window.end || '').slice(0, 5),
+      }
+    }
+  }
+  return rows
+}
+
 function notice(error) {
   const data = error?.response?.data
   if (typeof data?.error === 'string' && data.error) return data.error
@@ -48,6 +62,17 @@ export default function StudyPlanModal({ onClose }) {
   const { result, loading, generate, save } = useStudyPlan()
   const [notes, setNotes] = useState('')
   const [windows, setWindows] = useState(() => DAYS.map(() => ({ start: '', end: '' })))
+  const [availabilityTouched, setAvailabilityTouched] = useState(false)
+  const preferences = result?.preferences
+  const preferenceKey = preferences
+    ? `${JSON.stringify(preferences.availability)}\n${preferences.notes || ''}`
+    : null
+  const [appliedPreferenceKey, setAppliedPreferenceKey] = useState(null)
+  if (preferenceKey && preferenceKey !== appliedPreferenceKey && !availabilityTouched) {
+    setAppliedPreferenceKey(preferenceKey)
+    setWindows(windowsFromAvailability(preferences.availability))
+    setNotes(preferences.notes || '')
+  }
   const generatedAt = result?.plan?.generated_at
   const sessions = result?.plan?.sessions ?? []
   const [draft, setDraft] = useState(sessions)
@@ -69,13 +94,14 @@ export default function StudyPlanModal({ onClose }) {
     || (generate.isError ? notice(generate.error) : null)
     || (save.isError ? notice(save.error) : null)
 
+  const availability = windows.flatMap((window, weekday) => (
+    window.start && window.end
+      ? [{ weekday, start: window.start.slice(0, 5), end: window.end.slice(0, 5) }]
+      : []
+  ))
+
   async function onGenerate(event) {
     event.preventDefault()
-    const availability = windows.flatMap((window, weekday) => (
-      window.start && window.end
-        ? [{ weekday, start: window.start.slice(0, 5), end: window.end.slice(0, 5) }]
-        : []
-    ))
     try {
       await generate.mutateAsync({ availability, notes })
     } catch {
@@ -153,26 +179,35 @@ export default function StudyPlanModal({ onClose }) {
                   type="time"
                   aria-label={`${label} start`}
                   value={windows[weekday].start}
-                  onChange={(event) => setWindows((rows) => rows.map((row, index) => (
-                    index === weekday ? { ...row, start: event.target.value } : row
-                  )))}
+                  onChange={(event) => {
+                    setAvailabilityTouched(true)
+                    setWindows((rows) => rows.map((row, index) => (
+                      index === weekday ? { ...row, start: event.target.value } : row
+                    )))
+                  }}
                   className={inputClass}
                 />
                 <input
                   type="time"
                   aria-label={`${label} end`}
                   value={windows[weekday].end}
-                  onChange={(event) => setWindows((rows) => rows.map((row, index) => (
-                    index === weekday ? { ...row, end: event.target.value } : row
-                  )))}
+                  onChange={(event) => {
+                    setAvailabilityTouched(true)
+                    setWindows((rows) => rows.map((row, index) => (
+                      index === weekday ? { ...row, end: event.target.value } : row
+                    )))
+                  }}
                   className={inputClass}
                 />
                 <button
                   type="button"
                   aria-label={`Clear ${label}`}
-                  onClick={() => setWindows((rows) => rows.map((row, index) => (
-                    index === weekday ? { start: '', end: '' } : row
-                  )))}
+                  onClick={() => {
+                    setAvailabilityTouched(true)
+                    setWindows((rows) => rows.map((row, index) => (
+                      index === weekday ? { start: '', end: '' } : row
+                    )))
+                  }}
                   className="text-[12px] text-arc-text-muted hover:text-white"
                 >
                   Clear
@@ -185,7 +220,10 @@ export default function StudyPlanModal({ onClose }) {
             Note for the suggestion
             <input
               value={notes}
-              onChange={(event) => setNotes(event.target.value)}
+              onChange={(event) => {
+                setAvailabilityTouched(true)
+                setNotes(event.target.value)
+              }}
               maxLength={500}
               className={inputClass}
             />
@@ -229,7 +267,9 @@ export default function StudyPlanModal({ onClose }) {
 
         {draft.length > 0 && (
           <ul className="mt-3 flex flex-col gap-3">
-            {draft.map((session, index) => (
+            {draft.map((session, index) => {
+              const conflicts = sessionConflicts(session, availability)
+              return (
               <li key={`${session.item_id}-${index}`} className="rounded-[10px] bg-arc-panel-light p-3">
                 <p className="mb-2 text-[13px]">
                   {session.order}. {session.title}
@@ -258,13 +298,14 @@ export default function StudyPlanModal({ onClose }) {
                     className={inputClass}
                   />
                 </div>
-                {(session.conflicts ?? []).length > 0 && (
+                {conflicts.length > 0 && (
                   <p className="mt-2 text-[12px] text-arc-accent">
-                    {(session.conflicts ?? []).map((flag) => CONFLICT_LABELS[flag] ?? flag).join(' · ')}
+                    {conflicts.map((flag) => CONFLICT_LABELS[flag] ?? flag).join(' · ')}
                   </p>
                 )}
               </li>
-            ))}
+              )
+            })}
           </ul>
         )}
 

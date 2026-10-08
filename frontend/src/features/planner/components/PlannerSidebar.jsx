@@ -21,6 +21,7 @@ import {
 import {
   createSerialActionQueue,
 } from '../../../lib/latestIntentQueue'
+import { subjectLabel } from '../../../lib/subjectLabel'
 
 
 const plannerSidebarRootRequests =
@@ -71,12 +72,13 @@ function SortableRoot({
       data-arc-planner-sidebar-root-id={root.id}
       type="button"
       title={root.title}
+      aria-label={root.title}
       onClick={() => onNavigate?.(root.id)}
       style={style}
       className={`
-        block w-full rounded-arc-sm
+        block w-full min-w-0 rounded-arc-sm
         px-3 py-2 text-left
-        text-sm text-arc-text
+        text-sm whitespace-normal break-words text-arc-text
         touch-none select-none
         transition-colors
         hover:bg-white/5
@@ -85,9 +87,7 @@ function SortableRoot({
       {...attributes}
       {...listeners}
     >
-      {root.title.length > 30
-        ? `${root.title.slice(0, 30)}...`
-        : root.title}
+      {subjectLabel(root.title)}
     </button>
   )
 }
@@ -305,7 +305,7 @@ export default function PlannerSidebar({
       <nav aria-label="Planner navigation" className="mt-20">
         <div className="mb-3 flex items-center gap-2 px-3">
           <h2 className="text-[22px] font-bold tracking-[0.12em] text-arc-text-secondary">
-            ROOTS
+            Subjects
           </h2>
 
           <button
@@ -345,7 +345,7 @@ export default function PlannerSidebar({
                 type="text"
                 value={title}
                 disabled={createRootMutation.isPending}
-                placeholder="Root name..."
+                placeholder="Subject name..."
                 aria-label="Root name"
                 onChange={(event) => setTitle(event.target.value)}
                 onKeyDown={(event) => {

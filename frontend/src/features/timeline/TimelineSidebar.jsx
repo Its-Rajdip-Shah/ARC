@@ -1,4 +1,5 @@
 import arcLogo from '../../assets/brand/arc-logo.svg'
+import { subjectLabel } from '../../lib/subjectLabel'
 
 import SchedulerRunButton from './SchedulerRunButton'
 
@@ -44,7 +45,7 @@ export default function TimelineSidebar({
               text-arc-text-secondary
             "
           >
-            ROOTS
+            Subjects
           </h2>
         </div>
 
@@ -88,6 +89,9 @@ export default function TimelineSidebar({
                   title={
                     root.title
                   }
+                  aria-label={
+                    root.title
+                  }
                   onClick={() =>
                     toggle(
                       root.id,
@@ -99,6 +103,8 @@ export default function TimelineSidebar({
                     px-3 py-2
                     text-left
                     text-sm
+                    whitespace-normal
+                    break-words
                     text-arc-text
                     transition-colors
                     hover:bg-white/5
@@ -109,12 +115,11 @@ export default function TimelineSidebar({
                     }
                   `}
                 >
-                  {
-                    root.title.length >
-                    30
-                      ? `${root.title.slice(0, 30)}...`
-                      : root.title
-                  }
+                  <span>
+                    {subjectLabel(
+                      root.title,
+                    )}
+                  </span>
                 </button>
               )
             },

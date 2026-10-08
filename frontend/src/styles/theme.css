@@ -84,3 +84,13 @@ select {
 .arc-display {
   font-family: var(--font-display);
 }
+
+@media (width < 48rem) {
+  :root {
+    --spacing-arc-sidebar: 0px;
+  }
+
+  .left-arc-sidebar {
+    left: 0;
+  }
+}

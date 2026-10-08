@@ -26,6 +26,23 @@ env = environ.Env(
     CORS_ALLOWED_ORIGINS=(list, []),
     ARC_FIELD_ENCRYPTION_KEY=(str, ''),
     CANVAS_BASE_URL=(str, 'https://canvas.sydney.edu.au'),
+    LLM_API_BASE=(str, 'https://api.openai.com/v1'),
+    LLM_API_KEY=(str, ''),
+    LLM_MODEL=(str, 'gpt-4o-mini'),
+    LLM_TIMEOUT_SECONDS=(int, 45),
+    # Failover slots. Empty keys are skipped.
+    LLM_API_BASE_2=(str, 'https://api.x.ai/v1'),
+    LLM_API_KEY_2=(str, ''),
+    LLM_MODEL_2=(str, 'grok-3-mini'),
+    LLM_API_BASE_3=(str, 'https://api.groq.com/openai/v1'),
+    LLM_API_KEY_3=(str, ''),
+    LLM_MODEL_3=(str, 'openai/gpt-oss-20b'),
+    LLM_API_BASE_4=(str, ''),
+    LLM_API_KEY_4=(str, ''),
+    LLM_MODEL_4=(str, ''),
+    LLM_API_BASE_5=(str, ''),
+    LLM_API_KEY_5=(str, ''),
+    LLM_MODEL_5=(str, ''),
 )
 environ.Env.read_env(BASE_DIR / '.env')
 
@@ -208,6 +225,26 @@ SPECTACULAR_SETTINGS = {
 # The institution's Canvas host. No trailing /api/v1: the client appends it.
 
 CANVAS_BASE_URL = env('CANVAS_BASE_URL')
+
+# Study plans. Keys stay in this process. Providers are tried in order
+# inside one shared timeout. With no saved plan, a missing key or a failed
+# call falls back to a local deadline order; a saved plan is kept.
+LLM_API_BASE = env('LLM_API_BASE')
+LLM_API_KEY = env('LLM_API_KEY')
+LLM_MODEL = env('LLM_MODEL')
+LLM_TIMEOUT_SECONDS = env('LLM_TIMEOUT_SECONDS')
+LLM_API_BASE_2 = env('LLM_API_BASE_2')
+LLM_API_KEY_2 = env('LLM_API_KEY_2')
+LLM_MODEL_2 = env('LLM_MODEL_2')
+LLM_API_BASE_3 = env('LLM_API_BASE_3')
+LLM_API_KEY_3 = env('LLM_API_KEY_3')
+LLM_MODEL_3 = env('LLM_MODEL_3')
+LLM_API_BASE_4 = env('LLM_API_BASE_4')
+LLM_API_KEY_4 = env('LLM_API_KEY_4')
+LLM_MODEL_4 = env('LLM_MODEL_4')
+LLM_API_BASE_5 = env('LLM_API_BASE_5')
+LLM_API_KEY_5 = env('LLM_API_KEY_5')
+LLM_MODEL_5 = env('LLM_MODEL_5')
 
 
 # Field-level encryption (core.fields.EncryptedCharField)

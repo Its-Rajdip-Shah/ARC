@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 
 import {
   useCanvasConnection,
@@ -29,6 +30,11 @@ const TABS = [
   { id: 'integration', label: 'Integration' },
   { id: 'account', label: 'Account' },
 ]
+
+function selectedTab(searchParams) {
+  const value = searchParams.get('tab')
+  return TABS.some((item) => item.id === value) ? value : 'integration'
+}
 
 function canvasMessage(error, fallback = 'Request failed') {
   const data = error?.response?.data
@@ -388,7 +394,8 @@ function AccountPanel() {
 }
 
 export default function SettingsPage() {
-  const [tab, setTab] = useState('integration')
+  const [searchParams, setSearchParams] = useSearchParams()
+  const tab = selectedTab(searchParams)
 
   return (
     <div className="mx-auto max-w-2xl px-6 pb-16 pt-24">
@@ -410,7 +417,7 @@ export default function SettingsPage() {
             type="button"
             role="tab"
             aria-selected={tab === item.id}
-            onClick={() => setTab(item.id)}
+            onClick={() => setSearchParams({ tab: item.id })}
             className={`h-[26px] flex-1 rounded-[28px] text-[15px] transition-colors ${
               tab === item.id
                 ? 'bg-arc-blue text-arc-text'

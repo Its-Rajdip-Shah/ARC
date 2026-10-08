@@ -21,6 +21,7 @@ import {
 import {
   createSerialActionQueue,
 } from '../../../lib/latestIntentQueue'
+import { subjectLabel } from '../../../lib/subjectLabel'
 
 
 const plannerSidebarRootRequests =
@@ -71,12 +72,13 @@ function SortableRoot({
       data-arc-planner-sidebar-root-id={root.id}
       type="button"
       title={root.title}
+      aria-label={root.title}
       onClick={() => onNavigate?.(root.id)}
       style={style}
       className={`
-        block w-full rounded-arc-sm
+        block w-full min-w-0 rounded-arc-sm
         px-3 py-2 text-left
-        text-sm text-arc-text
+        text-sm whitespace-normal break-words text-arc-text
         touch-none select-none
         transition-colors
         hover:bg-white/5
@@ -85,9 +87,7 @@ function SortableRoot({
       {...attributes}
       {...listeners}
     >
-      {root.title.length > 30
-        ? `${root.title.slice(0, 30)}...`
-        : root.title}
+      {subjectLabel(root.title)}
     </button>
   )
 }
@@ -100,6 +100,7 @@ export default function PlannerSidebar({
   onNavigateToRoot,
 }) {
   const [isCreating, setIsCreating] = useState(false)
+  const [subjectsOpen, setSubjectsOpen] = useState(false)
   const [title, setTitle] = useState('')
   const queryClient = useQueryClient()
 
@@ -290,40 +291,66 @@ export default function PlannerSidebar({
   return (
     <aside
       className="
-        sticky top-0 z-30 flex h-screen w-arc-sidebar shrink-0
-        flex-col overflow-y-auto overscroll-contain
-        border-r border-white/10 bg-arc-surface
-        px-5 pb-6 pt-5
+        flex w-full flex-col overflow-y-auto overscroll-contain
+        border-white/10 bg-arc-surface px-5
+        max-md:border-b max-md:pt-20 max-md:pb-3
+        md:sticky md:top-0 md:z-30 md:h-screen md:w-arc-sidebar md:shrink-0
+        md:border-r md:pb-6 md:pt-5
       "
     >
       <img
         src={arcLogo}
         alt="ARC"
-        className="h-auto w-[92px]"
+        className="hidden h-auto w-[92px] md:block"
       />
 
-      <nav aria-label="Planner navigation" className="mt-20">
+      <nav aria-label="Planner navigation" className="md:mt-20">
         <div className="mb-3 flex items-center gap-2 px-3">
-          <h2 className="text-[22px] font-bold tracking-[0.12em] text-arc-text-secondary">
-            ROOTS
+          <h2 className="hidden text-[22px] font-bold tracking-[0.12em] text-arc-text-secondary md:block">
+            Subjects
           </h2>
 
           <button
             type="button"
-            aria-label="Add root"
-            onClick={() => setIsCreating(true)}
             className="
+              flex min-h-11 flex-1 items-center justify-between
+              py-2 text-left text-[22px] font-bold tracking-[0.12em]
+              text-arc-text-secondary
+              md:hidden
+            "
+            aria-expanded={subjectsOpen}
+            aria-controls="planner-subjects"
+            onClick={() => setSubjectsOpen((open) => !open)}
+          >
+            Subjects
+            <span aria-hidden="true" className="text-sm tracking-normal">
+              {subjectsOpen ? '▾' : '▸'}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            aria-label="Add root"
+            onClick={() => {
+              setSubjectsOpen(true)
+              setIsCreating(true)
+            }}
+            className={`
               flex h-6 w-6 items-center justify-center
               rounded-arc-sm bg-arc-accent
               text-lg leading-none text-arc-bg
               transition-[filter] hover:brightness-110
-            "
+              ${subjectsOpen ? '' : 'max-md:hidden'}
+            `}
           >
             +
           </button>
         </div>
 
-        <div className="space-y-1">
+        <div
+          id="planner-subjects"
+          className={subjectsOpen ? 'space-y-1' : 'hidden space-y-1 md:block'}
+        >
           <button
             type="button"
             aria-pressed={showOverdue}
@@ -345,7 +372,7 @@ export default function PlannerSidebar({
                 type="text"
                 value={title}
                 disabled={createRootMutation.isPending}
-                placeholder="Root name..."
+                placeholder="Subject name..."
                 aria-label="Root name"
                 onChange={(event) => setTitle(event.target.value)}
                 onKeyDown={(event) => {

@@ -11,6 +11,7 @@ import {
   durationLabel,
   scheduledRelativeLabel,
 } from './focusModel'
+import { plainText } from '../../lib/plainText'
 
 
 function DetailLine({
@@ -71,6 +72,11 @@ export default function FocusTaskRow({
     Boolean(
       candidate
         .manual_requested_date,
+    )
+
+  const descriptionText =
+    plainText(
+      candidate.description,
     )
 
   return (
@@ -219,9 +225,9 @@ export default function FocusTaskRow({
             : '',
         ].join(' ')}
       >
-        {candidate.description && (
+        {descriptionText && (
           <p className="focus-description">
-            {candidate.description}
+            {descriptionText}
           </p>
         )}
 

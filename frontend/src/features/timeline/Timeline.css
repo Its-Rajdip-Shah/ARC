@@ -1809,3 +1809,36 @@ a.timeline-marker::after { content: ""; position: absolute; inset: -7px -2px; }
 .scheduler-aura-front {
   z-index: 1;
 }
+
+@media (width < 48rem) {
+  .timeline-page {
+    margin-left: 0;
+  }
+
+  .timeline-heading {
+    position: static;
+    top: auto;
+    left: auto;
+    z-index: auto;
+    margin: 0 0 8px;
+  }
+
+  .timeline-sidebar {
+    position: static;
+    inset: auto;
+    flex-shrink: 0;
+    width: 100%;
+    height: auto;
+    max-height: 50dvh;
+    z-index: auto;
+  }
+
+  .timeline-sidebar > img {
+    display: none;
+  }
+
+  .timeline-sidebar.is-subjects-closed .timeline-subject-list,
+  .timeline-sidebar.is-subjects-closed .timeline-sidebar-scheduler {
+    display: none;
+  }
+}

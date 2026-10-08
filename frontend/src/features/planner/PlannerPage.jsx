@@ -4,6 +4,7 @@ import PlannerTree from './components/PlannerTree'
 import PriorityPanel from './components/PriorityPanel'
 import PriorityToggle from './components/PriorityToggle'
 import CreatePlanningItemPanel from './components/CreatePlanningItemPanel'
+import StudyPlanModal from './components/StudyPlanModal'
 import { usePlanningTree } from '../../hooks/usePlanningTree'
 import { useIsMutating, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
@@ -166,6 +167,7 @@ export default function PlannerPage() {
 
 
   const [isPriorityOpen, setIsPriorityOpen] = useState(false)
+  const [studyPlanOpen, setStudyPlanOpen] = useState(false)
   const [selectedItemId, setSelectedItemId] = useState(null)
   const [toolbarPreferences] = useState(
     loadToolbarPreferences,
@@ -347,7 +349,7 @@ export default function PlannerPage() {
   const items = planningTree ?? []
 
   return (
-    <div className="relative flex min-h-screen">
+    <div className="relative flex min-h-screen flex-col md:flex-row">
       <PlannerSidebar
         roots={items}
         showOverdue={showOverdue}
@@ -504,6 +506,18 @@ export default function PlannerPage() {
               >
                 <Redo2 size={18} strokeWidth={1.8} />
               </button>
+
+              <button
+                type="button"
+                onClick={() => setStudyPlanOpen(true)}
+                className="
+                  h-[28px] shrink-0 rounded-[6px] px-2
+                  text-[12px] text-[#9db6e8]
+                  hover:bg-white/10 hover:text-white
+                "
+              >
+                Study plan
+              </button>
             </div>
 
             <div className="mt-[80px]">
@@ -564,6 +578,10 @@ export default function PlannerPage() {
         isOpen={isPriorityOpen}
         onToggle={togglePriority}
       />
+
+      {studyPlanOpen && (
+        <StudyPlanModal onClose={() => setStudyPlanOpen(false)} />
+      )}
     </div>
   )
 }

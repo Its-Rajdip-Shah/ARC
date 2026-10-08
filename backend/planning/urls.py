@@ -27,6 +27,7 @@ urlpatterns = [
     path('focus/do-today/', views.FocusDoTodayView.as_view(), name='focus-do-today'),
     path('focus/automatic/', views.FocusAutomaticView.as_view(), name='focus-automatic'),
     path('focus/reprioritise/', views.FocusReprioritiseView.as_view(), name='focus-reprioritise'),
+    path('study-plans/', views.StudyPlanView.as_view(), name='study-plans'),
     path(
         'scheduler/settings/',
         views.SchedulerSettingsView.as_view(),

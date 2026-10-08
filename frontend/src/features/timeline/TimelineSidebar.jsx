@@ -1,4 +1,7 @@
+import { useState } from 'react'
+
 import arcLogo from '../../assets/brand/arc-logo.svg'
+import { subjectLabel } from '../../lib/subjectLabel'
 
 import SchedulerRunButton from './SchedulerRunButton'
 
@@ -12,9 +15,14 @@ export default function TimelineSidebar({
   schedulerRuntime,
   actions,
 }) {
+  const [
+    subjectsOpen,
+    setSubjectsOpen,
+  ] = useState(false)
+
   return (
     <aside
-      className="
+      className={`
         timeline-sidebar
         fixed left-0 top-0 z-30
         flex h-screen w-arc-sidebar
@@ -23,20 +31,49 @@ export default function TimelineSidebar({
         border-r border-white/10
         bg-arc-surface
         px-5 pb-6 pt-5
-      "
+        ${subjectsOpen ? '' : 'is-subjects-closed'}
+      `}
       aria-label="Timeline root filters"
     >
       <img
         src={arcLogo}
         alt="ARC"
-        className="h-auto w-[92px]"
+        className="hidden h-auto w-[92px] md:block"
       />
+
+      <button
+        type="button"
+        className="
+          mb-3 flex min-h-11 w-full
+          items-center justify-between
+          px-3 py-2 text-left
+          text-[22px] font-bold
+          tracking-[0.12em]
+          text-arc-text-secondary
+          md:hidden
+        "
+        aria-expanded={subjectsOpen}
+        aria-controls="timeline-subjects"
+        onClick={() =>
+          setSubjectsOpen(
+            (open) => !open,
+          )
+        }
+      >
+        Subjects
+        <span
+          aria-hidden="true"
+          className="text-sm tracking-normal"
+        >
+          {subjectsOpen ? '▾' : '▸'}
+        </span>
+      </button>
 
       <nav
         aria-label="Filter by root goal"
-        className="mt-20"
+        className="md:mt-20"
       >
-        <div className="mb-3 px-3">
+        <div className="mb-3 hidden px-3 md:block">
           <h2
             className="
               text-[22px] font-bold
@@ -44,33 +81,36 @@ export default function TimelineSidebar({
               text-arc-text-secondary
             "
           >
-            ROOTS
+            Subjects
           </h2>
         </div>
 
-        {loading && (
-          <p
-            role="status"
-            className="px-3 text-sm"
-          >
-            Loading roots…
-          </p>
-        )}
+        <div
+          id="timeline-subjects"
+          className="timeline-subject-list space-y-1"
+        >
+          {loading && (
+            <p
+              role="status"
+              className="px-3 text-sm"
+            >
+              Loading roots…
+            </p>
+          )}
 
-        {error && (
-          <button
-            type="button"
-            className="
-              mx-3 rounded-arc-sm
-              px-3 py-2 text-sm
-            "
-            onClick={retry}
-          >
-            Retry root list
-          </button>
-        )}
+          {error && (
+            <button
+              type="button"
+              className="
+                mx-3 rounded-arc-sm
+                px-3 py-2 text-sm
+              "
+              onClick={retry}
+            >
+              Retry root list
+            </button>
+          )}
 
-        <div className="space-y-1">
           {roots.map(
             (root) => {
               const active =
@@ -88,6 +128,9 @@ export default function TimelineSidebar({
                   title={
                     root.title
                   }
+                  aria-label={
+                    root.title
+                  }
                   onClick={() =>
                     toggle(
                       root.id,
@@ -99,6 +142,8 @@ export default function TimelineSidebar({
                     px-3 py-2
                     text-left
                     text-sm
+                    whitespace-normal
+                    break-words
                     text-arc-text
                     transition-colors
                     hover:bg-white/5
@@ -109,12 +154,11 @@ export default function TimelineSidebar({
                     }
                   `}
                 >
-                  {
-                    root.title.length >
-                    30
-                      ? `${root.title.slice(0, 30)}...`
-                      : root.title
-                  }
+                  <span>
+                    {subjectLabel(
+                      root.title,
+                    )}
+                  </span>
                 </button>
               )
             },

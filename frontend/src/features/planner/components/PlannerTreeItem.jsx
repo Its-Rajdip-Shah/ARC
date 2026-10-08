@@ -18,6 +18,7 @@ import {
 import {
   patchPlanningTreeCompletion,
 } from '../../../lib/planningOptimistic'
+import { plainText } from '../../../lib/plainText'
 
 
 const plannerCompletionRequests =
@@ -98,6 +99,8 @@ export default function PlannerTreeItem({
     showAllDetails ||
     localDetailsOpen ||
     isSearchMatch
+
+  const descriptionText = plainText(item.description)
 
   useEffect(() => {
     if (!isHovered) {
@@ -639,9 +642,9 @@ export default function PlannerTreeItem({
             paddingLeft: `${indent + 40}px`,
           }}
         >
-          {item.description && (
+          {descriptionText && (
             <p className="mb-1 whitespace-pre-wrap text-white/70">
-              {item.description}
+              {descriptionText}
             </p>
           )}
 

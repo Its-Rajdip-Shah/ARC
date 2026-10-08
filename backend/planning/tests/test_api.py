@@ -726,6 +726,7 @@ def test_every_planning_endpoint_refuses_an_anonymous_request(db, api):
         '/api/planning/timeline/',
         '/api/planning/overdue/',
         '/api/planning/marks/',
+        '/api/planning/study-plans/',
     ):
         assert api.get(path).status_code == 401, path
 

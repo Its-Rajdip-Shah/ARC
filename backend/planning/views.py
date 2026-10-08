@@ -51,6 +51,8 @@ from planning.serializers import (
     SchedulerRuntimeSerializer,
     SchedulerSettingsSerializer,
     SchedulerSettingsUpdateSerializer,
+    StudyPlanEditSerializer,
+    StudyPlanRequestSerializer,
     CompleteSerializer,
     FocusCurrentSerializer,
     FocusAnchorSerializer,
@@ -73,6 +75,7 @@ from planning.serializers import (
     TimezoneSerializer,
 )
 from planning.services import dependencies, focus, hierarchy, leaf_order_sync, overdue, priority, progress, scheduling
+from planning.services.study_plan import load_plan, present, request_plan, save_edited_plan
 from planning.services import deletion, history, lifecycle
 from planning.services.focus_buckets import focus_bucket_key
 
@@ -1311,6 +1314,41 @@ class MarksReorderView(APIView):
                 AssignmentDetail.objects.bulk_update(changed, ['marks_position'])
 
         return Response({'reordered': len(ordered_ids)})
+
+
+class StudyPlanView(APIView):
+    """Suggest a study plan for the signed-in student.
+
+    The model call stays in this process. A failure returns the last saved
+    plan when there is one, and never writes planner rows.
+    """
+
+    def get(self, request):
+        return Response(present(request.user, load_plan(request.user)))
+
+    def post(self, request):
+        serializer = StudyPlanRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        result = present(request.user, request_plan(
+            request.user,
+            data['availability'],
+            data.get('notes', ''),
+        ))
+        status = 200 if result['plan'] is not None else 502
+        return Response(result, status=status)
+
+    def patch(self, request):
+        serializer = StudyPlanEditSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            result = present(request.user, save_edited_plan(
+                request.user,
+                serializer.validated_data['sessions'],
+            ))
+        except ValueError as exc:
+            raise ValidationError({'sessions': str(exc)}) from exc
+        return Response(result)
 
 
 class SchedulerSettingsView(APIView):

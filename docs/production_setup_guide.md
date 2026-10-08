@@ -164,6 +164,8 @@ Place them into:
 
 These values are local validation secrets only.
 
+Study-plan provider keys (`LLM_API_KEY` through `LLM_API_KEY_5` in `.env.example`) are optional. Leave them empty unless this environment should call a model. Do not put those keys in the frontend.
+
 Never copy a real deployed secret into a test clone unless that specific environment requires it.
 
 ---

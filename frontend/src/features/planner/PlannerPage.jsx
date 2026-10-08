@@ -349,7 +349,7 @@ export default function PlannerPage() {
   const items = planningTree ?? []
 
   return (
-    <div className="relative flex min-h-screen">
+    <div className="relative flex min-h-screen flex-col md:flex-row">
       <PlannerSidebar
         roots={items}
         showOverdue={showOverdue}

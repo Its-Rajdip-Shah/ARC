@@ -79,6 +79,10 @@ The Priority toggle:
 
 Its exact routing/state model will be decided when the Priority feature is implemented.
 
+## Study plan
+
+The Planner study-plan control opens `StudyPlanModal`. It reads and writes `/api/planning/study-plans/` through `useStudyPlan`. It does not call a model host, and a suggestion does not change the planner tree. Availability left blank is skipped. A day whose start time equals its end time is a zero-length window, so returned sessions are flagged outside availability until the student widens the window or edits the session.
+
 ## Implementation principles
 
 - Do not translate Figma groups 1:1 into React components.

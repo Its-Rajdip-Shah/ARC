@@ -6,7 +6,7 @@ supplied, and due dates loaded from that student's own items.
 """
 
 import json
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 from django.utils import timezone
 
@@ -94,7 +94,21 @@ def request_plan(user, availability, notes=''):
                 'The study plan service returned a plan that could not be read.'
             )
     except LLMError as exc:
-        return _fallback(state, str(exc))
+        cached = _fallback(state, str(exc))
+        if cached['plan'] is not None:
+            # A saved suggestion wins over a fresh local order, including
+            # when no key is configured. Replacing it would drop the last
+            # model plan the student actually kept.
+            return cached
+        if exc.code == 'not_configured':
+            return _local_plan(state, items)
+        # No saved plan yet: still return a usable suggestion so a busy
+        # provider does not leave the student with a blank 502.
+        local = _local_plan(state, items)
+        if local['plan'] is not None:
+            local['error'] = str(exc)
+            return local
+        return cached
 
     return {
         'plan': _store(state, cleaned, items),
@@ -115,6 +129,70 @@ def save_edited_plan(user, sessions):
         'source': 'cache',
         'error': None,
     }
+
+
+def _local_plan(state, items):
+    """Order open work from deadlines when no model key is configured."""
+    if not items:
+        return {
+            'plan': None,
+            'source': None,
+            'error': 'You have no open tasks to schedule.',
+        }
+    windows = (state.study_preferences or {}).get('availability') or []
+    sessions = _place_locally(items, windows, timezone.localdate())
+    return {
+        'plan': _store(state, sessions, items),
+        'source': 'local',
+        'error': None,
+    }
+
+
+def _place_locally(items, availability, today):
+    ordered = sorted(
+        items,
+        key=lambda item: (item.due_date or date.max, item.id),
+    )
+    sessions = []
+    for index, item in enumerate(ordered, start=1):
+        day, start_time = _local_slot(item, availability, today)
+        sessions.append({
+            'item_id': item.id,
+            'title': item.title,
+            'date': day.isoformat(),
+            'start_time': start_time,
+            'duration_minutes': _local_minutes(item),
+            'order': index,
+        })
+    return sessions
+
+
+def _local_slot(item, availability, today):
+    if availability:
+        for offset in range(21):
+            day = today + timedelta(days=offset)
+            if item.due_date and day > item.due_date:
+                break
+            matches = [
+                window for window in availability
+                if window['weekday'] == day.weekday()
+            ]
+            if matches:
+                return day, matches[0]['start']
+    day = item.due_date or today
+    start_time = availability[0]['start'] if availability else '09:00'
+    return day, start_time
+
+
+def _local_minutes(item):
+    return {
+        'UNDER_20_MINUTES': 20,
+        'UNDER_1_HOUR': 60,
+        'UNDER_4_HOURS': 90,
+        'UNDER_8_HOURS': 120,
+        'UNDER_16_HOURS': 180,
+        'OVER_16_HOURS': 180,
+    }.get(item.duration_category, 60)
 
 
 def _open_items(user):

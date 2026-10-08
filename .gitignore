@@ -39,3 +39,6 @@ Thumbs.db
 
 # Local diagnostic / scratch archives
 *.zip
+graphify-out/
+tasks/
+

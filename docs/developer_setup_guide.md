@@ -317,6 +317,8 @@ Important:
 - do not commit them;
 - do not casually replace the encryption key for an existing shared database, because encrypted stored values would become unreadable.
 
+Study-plan keys are optional. `backend/.env.example` lists up to five OpenAI-compatible providers (`LLM_API_KEY` through `LLM_API_KEY_5`). Leave them empty and Suggest a plan still returns a local deadline order. Keys stay in Django; the frontend never calls the model host.
+
 ---
 
 # 6. PostgreSQL setup

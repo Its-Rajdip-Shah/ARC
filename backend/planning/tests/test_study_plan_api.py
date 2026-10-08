@@ -134,7 +134,7 @@ def test_timeout_returns_the_cached_plan_and_leaves_workload_alone(
     assert str(item.assignment_detail.mark_achieved) == '15.00'
 
 
-def test_malformed_plan_without_a_cache_is_an_error_and_leaves_the_item(
+def test_malformed_plan_without_a_cache_falls_back_to_local_order(
     api_for, user, monkeypatch
 ):
     item = _item(user, title='Keep me')
@@ -147,10 +147,34 @@ def test_malformed_plan_without_a_cache_is_an_error_and_leaves_the_item(
 
     response = api_for(user).post(URL, {'availability': WINDOWS}, format='json')
 
-    assert response.status_code == 502
-    assert response.json()['plan'] is None
+    assert response.status_code == 200
+    body = response.json()
+    assert body['source'] == 'local'
+    assert body['error']
+    assert body['plan']['sessions'][0]['item_id'] == item.id
     item.refresh_from_db()
     assert item.title == 'Keep me'
+
+
+def test_busy_provider_without_a_cache_falls_back_to_local_order(
+    api_for, user, monkeypatch
+):
+    item = _item(user, title='Busy fallback')
+    _install(
+        monkeypatch,
+        _Client(error=LLMError(
+            'The study plan service is busy. Try again in a moment.',
+            code='unavailable',
+        )),
+    )
+
+    response = api_for(user).post(URL, {'availability': WINDOWS}, format='json')
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body['source'] == 'local'
+    assert 'busy' in body['error'].lower()
+    assert body['plan']['sessions'][0]['title'] == 'Busy fallback'
 
 
 def test_edit_saves_sessions_without_calling_the_model(api_for, user, monkeypatch):
@@ -213,6 +237,119 @@ def test_another_user_cannot_read_the_saved_plan(api_for, user, other_user, monk
     assert leaked.status_code == 200
     assert leaked.json()['plan'] is None
     assert 'Alice only' not in leaked.content.decode()
+
+
+def test_blank_days_and_equal_times_still_return_a_plan(api_for, user, monkeypatch):
+    """An empty day is skipped. A day that starts and ends together is kept."""
+    item = _item(user)
+    client = _Client(result={'sessions': [{
+        'item_id': item.id,
+        'date': '2026-10-05',
+        'start_time': '09:00',
+        'duration_minutes': 30,
+        'order': 1,
+    }]})
+    _install(monkeypatch, client)
+
+    response = api_for(user).post(URL, {'availability': [
+        {'weekday': 0, 'start': '09:00', 'end': '09:00'},
+    ]}, format='json')
+
+    assert response.status_code == 200, response.content
+    body = response.json()
+    assert body['error'] is None
+    assert body['plan']['sessions'][0]['item_id'] == item.id
+    assert SchedulingState.objects.get(user=user).study_preferences['availability'] == [
+        {'weekday': 0, 'start': '09:00', 'end': '09:00'},
+    ]
+
+    cleared = api_for(user).post(URL, {'availability': []}, format='json')
+    assert cleared.status_code == 200, cleared.content
+    assert cleared.json()['plan']['sessions'][0]['item_id'] == item.id
+
+
+def test_missing_key_keeps_the_saved_plan(api_for, user, monkeypatch):
+    item = _item(user, title='Keep the model plan')
+    SchedulingState.objects.create(
+        user=user,
+        study_plan={'generated_at': 'earlier', 'sessions': [{
+            'item_id': item.id,
+            'title': 'Keep the model plan',
+            'date': '2026-10-05',
+            'start_time': '10:00',
+            'duration_minutes': 45,
+            'order': 1,
+            'conflicts': [],
+        }]},
+    )
+    _install(monkeypatch, _Client(error=LLMError(
+        'The study plan service is not configured.',
+        code='not_configured',
+    )))
+
+    response = api_for(user).post(URL, {'availability': WINDOWS}, format='json')
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body['source'] == 'cache'
+    assert 'not configured' in body['error'].lower()
+    assert body['plan']['sessions'][0]['duration_minutes'] == 45
+
+
+def test_missing_key_without_a_cache_uses_local_order(api_for, user, monkeypatch):
+    item = _item(user, title='Local only')
+    _install(monkeypatch, _Client(error=LLMError(
+        'The study plan service is not configured.',
+        code='not_configured',
+    )))
+
+    response = api_for(user).post(URL, {'availability': WINDOWS}, format='json')
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body['source'] == 'local'
+    assert body['error'] is None
+    assert body['plan']['sessions'][0]['item_id'] == item.id
+
+
+def test_patch_drops_another_users_item(api_for, user, other_user):
+    mine = _item(user, title='Mine')
+    theirs = _item(other_user, title='Theirs')
+
+    mixed = api_for(user).patch(URL, {'sessions': [
+        {
+            'item_id': mine.id,
+            'date': '2026-10-05',
+            'start_time': '10:00',
+            'duration_minutes': 30,
+            'order': 1,
+        },
+        {
+            'item_id': theirs.id,
+            'date': '2026-10-05',
+            'start_time': '11:00',
+            'duration_minutes': 30,
+            'order': 2,
+        },
+    ]}, format='json')
+
+    assert mixed.status_code == 200
+    body = mixed.json()
+    assert [row['item_id'] for row in body['plan']['sessions']] == [mine.id]
+    assert 'Theirs' not in mixed.content.decode()
+
+    foreign_only = api_for(user).patch(URL, {'sessions': [{
+        'item_id': theirs.id,
+        'date': '2026-10-05',
+        'start_time': '11:00',
+        'duration_minutes': 30,
+        'order': 1,
+    }]}, format='json')
+
+    assert foreign_only.status_code == 400
+    assert 'Theirs' not in foreign_only.content.decode()
+    saved = SchedulingState.objects.get(user=user).study_plan['sessions']
+    assert [row['item_id'] for row in saved] == [mine.id]
 
 
 def test_invalid_availability_does_not_clear_the_saved_plan(api_for, user):

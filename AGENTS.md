@@ -15,3 +15,4 @@
 - Ensure strict data isolation (users can only access their own data).
 - Use `core` apps for shared mixins and permissions.
 - Do not invent missing Canvas API data; handle nulls gracefully.
+- Study-plan model calls stay in Django. The browser only uses `/api/planning/study-plans/`.

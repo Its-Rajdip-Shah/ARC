@@ -211,12 +211,22 @@ Mounted under `/api/`:
 | Prefix | Role |
 | --- | --- |
 | `/api/auth/` | Register, MFA, login, refresh, logout, me |
-| `/api/planning/` | Items (tree/move/complete), tags, timezones, assignment-details, priority, timeline, overdue, marks |
+| `/api/planning/` | Items (tree/move/complete), tags, timezones, assignment-details, priority, timeline, overdue, marks, study plans |
 | `/api/canvas/` | Singleton connection, test, sync, sync-logs |
 | `/api/admin/` | Stats, users, lock/unlock (`IsAdminAccount`) |
 | `/api/schema/`, `/api/docs/` | OpenAPI + Swagger UI |
 
 Viewsets inherit `UserScopedMixin`. Custom actions delegate to Phase 4 services. `PlanningItemSerializer` treats `priority_position`, `scheduled_date` and Canvas linkage as read-only: clients cannot forge the global order or an adaptive date.
+
+### Study plans
+
+`POST /api/planning/study-plans/` suggests sessions for the signed-in student's open work. The model call stays in Django (`planning/services/llm.py`). The browser only talks to this API.
+
+- Keys live in `LLM_API_KEY` through `LLM_API_KEY_5`. Empty slots are skipped. The chain shares one `LLM_TIMEOUT_SECONDS` budget, so a hung primary cannot stack a full timeout on every fallback.
+- A saved plan is kept when the call fails or no key is set. A local deadline order is stored only when there is no saved plan.
+- `SchedulingState.study_plan` is separate from `scheduler_runtime`. A flavour change clears the runtime and leaves the study plan.
+- Conflict flags (`outside_availability`, `after_deadline`) are computed in Django. A window whose start equals its end is stored, and any session of at least one minute is outside that window.
+- Sessions are kept only when `item_id` belongs to the caller's open items. The suggestion does not write planner rows.
 
 ### Canvas upsert
 

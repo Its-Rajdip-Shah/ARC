@@ -686,8 +686,13 @@ class AvailabilityWindowSerializer(serializers.Serializer):
     end = serializers.TimeField(format='%H:%M', input_formats=['%H:%M'])
 
     def validate(self, data):
-        if data['end'] <= data['start']:
-            raise serializers.ValidationError('End must be after start.')
+        # end == start is kept on purpose: the day is not skipped. It is a
+        # zero-length window, so flag_conflicts treats any session of at
+        # least one minute as outside_availability.
+        if data['end'] < data['start']:
+            raise serializers.ValidationError(
+                'End is before start. Clear both times to skip that day.'
+            )
         return {
             'weekday': data['weekday'],
             'start': data['start'].strftime('%H:%M'),

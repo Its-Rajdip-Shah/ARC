@@ -17,9 +17,30 @@ const CONFLICT_LABELS = {
   after_deadline: 'After the deadline',
 }
 
+function firstFieldMessage(fields) {
+  if (Array.isArray(fields)) {
+    for (const item of fields) {
+      if (typeof item === 'string') return item
+      const found = firstFieldMessage(item)
+      if (found) return found
+    }
+    return null
+  }
+  if (!fields || typeof fields !== 'object') return null
+  for (const value of Object.values(fields)) {
+    if (Array.isArray(value) && typeof value[0] === 'string') return value[0]
+    const found = firstFieldMessage(value)
+    if (found) return found
+  }
+  return null
+}
+
 function notice(error) {
-  const message = error?.response?.data?.error
-  if (typeof message === 'string' && message) return message
+  const data = error?.response?.data
+  if (typeof data?.error === 'string' && data.error) return data.error
+  if (data?.error && typeof data.error === 'object') {
+    return firstFieldMessage(data.error.fields) || data.error.message || errorMessage(error)
+  }
   return errorMessage(error)
 }
 
@@ -120,11 +141,13 @@ export default function StudyPlanModal({ onClose }) {
           </button>
         </div>
 
-        <form onSubmit={onGenerate} className="flex flex-col gap-3">
+        <form onSubmit={onGenerate} noValidate className="flex flex-col gap-3">
           <fieldset className="flex flex-col gap-2">
-            <legend className="text-[12px] text-arc-text-muted">When you can study</legend>
+            <legend className="text-[12px] text-arc-text-muted">
+              When you can study. Leave a day blank to skip it. If start and end match, the window has no length and sessions are flagged as outside your availability.
+            </legend>
             {DAYS.map((label, weekday) => (
-              <div key={label} className="grid grid-cols-[3rem_1fr_1fr] items-center gap-2">
+              <div key={label} className="grid grid-cols-[3rem_1fr_1fr_auto] items-center gap-2">
                 <span className="text-[12px]">{label}</span>
                 <input
                   type="time"
@@ -144,6 +167,16 @@ export default function StudyPlanModal({ onClose }) {
                   )))}
                   className={inputClass}
                 />
+                <button
+                  type="button"
+                  aria-label={`Clear ${label}`}
+                  onClick={() => setWindows((rows) => rows.map((row, index) => (
+                    index === weekday ? { start: '', end: '' } : row
+                  )))}
+                  className="text-[12px] text-arc-text-muted hover:text-white"
+                >
+                  Clear
+                </button>
               </div>
             ))}
           </fieldset>
@@ -170,10 +203,21 @@ export default function StudyPlanModal({ onClose }) {
           </button>
         </form>
 
+        {result?.source === 'local' && result?.plan && !result?.error && (
+          <p className="mt-3 text-[13px] text-arc-text-muted">
+            No model key is set, so this plan is ordered from your deadlines.
+          </p>
+        )}
+
         {banner && (
           <p role="alert" className="mt-3 text-[13px] text-arc-danger-light">
             {banner}
-            {result?.source === 'cache' && result?.plan ? ' Showing your last saved plan.' : ''}
+            {result?.source === 'cache' && result?.plan
+              ? ' Showing your last saved plan.'
+              : ''}
+            {result?.source === 'local' && result?.plan
+              ? ' Showing a deadline order instead.'
+              : ''}
           </p>
         )}
 

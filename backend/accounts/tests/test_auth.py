@@ -324,6 +324,15 @@ def test_logout_blacklists_the_refresh_token(api, user, secret):
     assert api.post(REFRESH, {'refresh': body['refresh']}, format='json').status_code == 401
 
 
+def test_logout_works_without_an_access_token(api, user, secret):
+    """Refresh is the credential — clients must be able to revoke after expiry."""
+    body = login_through_mfa(api, user, secret)
+    api.credentials()
+
+    assert api.post(LOGOUT, {'refresh': body['refresh']}, format='json').status_code == 205
+    assert api.post(REFRESH, {'refresh': body['refresh']}, format='json').status_code == 401
+
+
 # --------------------------------------------------------------------------
 # Administrator entry point (FR-15)
 # --------------------------------------------------------------------------

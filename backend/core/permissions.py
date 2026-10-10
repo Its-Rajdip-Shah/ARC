@@ -3,6 +3,16 @@
 from rest_framework.permissions import BasePermission
 
 
+def _resolve_owner(obj, field):
+    """Walk ``user`` or ``planning_item__user``-style ownership paths."""
+    current = obj
+    for part in field.replace('__', '.').split('.'):
+        current = getattr(current, part, None)
+        if current is None:
+            return None
+    return current
+
+
 class IsOwner(BasePermission):
     """Allow access only to objects belonging to the requesting user.
 
@@ -21,7 +31,12 @@ class IsOwner(BasePermission):
             return False
         if obj == user:
             return True
-        return getattr(obj, getattr(view, 'owner_field', self.owner_field), None) == user
+        field = (
+            getattr(view, 'owner_field', None)
+            or getattr(view, 'user_field', None)
+            or self.owner_field
+        )
+        return _resolve_owner(obj, field) == user
 
 
 class IsAdminAccount(BasePermission):

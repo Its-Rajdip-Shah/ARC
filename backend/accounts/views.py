@@ -13,6 +13,7 @@ from rest_framework import serializers, status
 from rest_framework.exceptions import AuthenticationFailed, PermissionDenied
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -62,6 +63,8 @@ class PublicAuthView(APIView):
 
     permission_classes = [AllowAny]
     authentication_classes = []
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'auth'
 
     def get_authenticate_header(self, request):
         return 'Bearer realm="api"'
@@ -160,6 +163,7 @@ class LoginView(PublicAuthView):
     """POST /api/auth/login/ - step one (FR-02)."""
 
     require_admin = False
+    throttle_scope = 'auth_strict'
 
     @extend_schema(
         request=LoginSerializer,
@@ -213,6 +217,7 @@ class MFAVerifyView(PublicAuthView):
     """POST /api/auth/login/mfa/ - step two (FR-02)."""
 
     require_admin = False
+    throttle_scope = 'auth_strict'
 
     @extend_schema(
         request=MFAVerifySerializer,
@@ -269,10 +274,14 @@ class AdminMFAVerifyView(MFAVerifyView):
     require_admin = True
 
 
-class LogoutView(APIView):
-    """POST /api/auth/logout/ - blacklists the refresh token."""
+class LogoutView(PublicAuthView):
+    """POST /api/auth/logout/ - blacklists the refresh token.
 
-    permission_classes = [IsAuthenticated]
+    The refresh token is the credential: logout must work even when the access
+    token has already expired, otherwise a client cannot revoke a session.
+    """
+
+    throttle_scope = 'auth'
 
     @extend_schema(request=LogoutSerializer, responses={205: None})
     def post(self, request):

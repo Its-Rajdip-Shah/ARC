@@ -1,6 +1,8 @@
 import { LogOut, X } from 'lucide-react'
 import { useLocation, useNavigate } from 'react-router-dom'
 
+import { logout } from '../../api/auth'
+import { queryClient } from '../../lib/queryClient'
 import { useAuthStore } from '../../stores/authStore'
 
 const menuItems = [
@@ -14,14 +16,21 @@ const menuItems = [
 export default function NavigationDrawer({ isOpen, onClose }) {
   const navigate = useNavigate()
   const location = useLocation()
-  const clearSession = useAuthStore((state) => state.clearSession)
+  const refreshToken = useAuthStore((state) => state.refreshToken)
 
   if (!isOpen) {
     return null
   }
 
-  function handleLogout() {
-    clearSession()
+  async function handleLogout() {
+    try {
+      if (refreshToken) await logout(refreshToken)
+    } catch {
+      // Blacklisting can fail on an already-rotated token; the local session
+      // still has to go.
+    }
+    useAuthStore.getState().clearSession()
+    queryClient.clear()
     onClose()
     navigate('/login', { replace: true })
   }

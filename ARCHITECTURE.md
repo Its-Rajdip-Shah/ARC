@@ -281,7 +281,9 @@ The academic requirement is a user-facing panel for privileged operators, not de
 
 `SessionHydrator` mints a fresh access token from the persisted refresh token after a reload so `AdminRoute` can read `is_admin` before painting. Axios 401s that occur on `/admin/*` redirect to `/admin/login`, not the student ping screen.
 
-The backend still registers `django.contrib.admin` for `manage.py` tasks. That URL is not part of the product surface and is not linked from any React view.
+`django.contrib.admin` stays in `INSTALLED_APPS` for `manage.py` tooling, but the `/admin/` URL is mounted only when `ENABLE_DJANGO_ADMIN=True` (default **False**). That closes the password-only MFA bypass. The product staff surface is the React console only.
+
+Security hardening beyond Phase 3 (throttles, TLS env flags, security headers, logout parity, `IsOwner` on scoped viewsets) is tracked in [`docs/A2_SECURITY_GAP_ANALYSIS.md`](docs/A2_SECURITY_GAP_ANALYSIS.md).
 
 
 ---

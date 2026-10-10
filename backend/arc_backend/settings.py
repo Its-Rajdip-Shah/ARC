@@ -25,6 +25,15 @@ env = environ.Env(
     ALLOWED_HOSTS=(list, []),
     CORS_ALLOWED_ORIGINS=(list, []),
     ARC_FIELD_ENCRYPTION_KEY=(str, ''),
+    # Production HTTPS hardening. Off by default so local HTTP keeps working.
+    SECURE_SSL_REDIRECT=(bool, False),
+    SESSION_COOKIE_SECURE=(bool, False),
+    CSRF_COOKIE_SECURE=(bool, False),
+    SECURE_HSTS_SECONDS=(int, 0),
+    SECURE_HSTS_INCLUDE_SUBDOMAINS=(bool, False),
+    SECURE_HSTS_PRELOAD=(bool, False),
+    # Django's built-in admin is a password-only surface (no TOTP). Off by default.
+    ENABLE_DJANGO_ADMIN=(bool, False),
     CANVAS_BASE_URL=(str, 'https://canvas.sydney.edu.au'),
     LLM_API_BASE=(str, 'https://api.openai.com/v1'),
     LLM_API_KEY=(str, ''),
@@ -56,6 +65,13 @@ DEBUG = env('DEBUG')
 
 ALLOWED_HOSTS = env('ALLOWED_HOSTS')
 
+ENABLE_DJANGO_ADMIN = env('ENABLE_DJANGO_ADMIN')
+# OpenAPI / Swagger follow DEBUG unless ENABLE_API_DOCS is set explicitly.
+if 'ENABLE_API_DOCS' in env.ENVIRON:
+    ENABLE_API_DOCS = env.bool('ENABLE_API_DOCS')
+else:
+    ENABLE_API_DOCS = DEBUG
+
 
 # Application definition
 
@@ -83,12 +99,13 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
-    'corsheaders.middleware.CorsMiddleware', # Add this line right here
+    'corsheaders.middleware.CorsMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'core.middleware.SecurityHeadersMiddleware',
 ]
 
 ROOT_URLCONF = 'arc_backend.urls'
@@ -116,6 +133,19 @@ WSGI_APPLICATION = 'arc_backend.wsgi.application'
 
 DATABASES = {
     'default': env.db('DATABASE_URL'),
+}
+
+
+# Cache
+# LocMem is fine for single-process local/dev. TOTP replay protection and DRF
+# throttles share this cache — multi-worker production should point at Redis
+# (or another shared backend) via CACHES in an override if needed.
+
+CACHES = {
+    'default': {
+        'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+        'LOCATION': 'arc-default',
+    },
 }
 
 
@@ -186,6 +216,10 @@ CORS_ALLOWED_ORIGINS = env('CORS_ALLOWED_ORIGINS')
 
 # Django REST Framework
 
+_RENDERERS = ['rest_framework.renderers.JSONRenderer']
+if DEBUG:
+    _RENDERERS.append('rest_framework.renderers.BrowsableAPIRenderer')
+
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
         'accounts.authentication.ArcJWTAuthentication',
@@ -193,15 +227,34 @@ REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.IsAuthenticated',
     ],
+    'DEFAULT_THROTTLE_RATES': {
+        # Public auth surface — caps password / TOTP spraying.
+        'auth': '30/min',
+        'auth_strict': '10/min',
+    },
     'EXCEPTION_HANDLER': 'core.exceptions.arc_exception_handler',
     'DEFAULT_PAGINATION_CLASS': 'core.pagination.ArcPageNumberPagination',
     'PAGE_SIZE': 50,
-    'DEFAULT_RENDERER_CLASSES': [
-        'rest_framework.renderers.JSONRenderer',
-        'rest_framework.renderers.BrowsableAPIRenderer',
-    ],
+    'DEFAULT_RENDERER_CLASSES': _RENDERERS,
     'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
 }
+
+
+# HTTPS / cookie hardening (A2 production bar)
+# Local HTTP keeps the defaults False/0. Production .env should flip these on
+# together with DEBUG=False — see docs/A2_SECURITY_GAP_ANALYSIS.md.
+
+SECURE_SSL_REDIRECT = env('SECURE_SSL_REDIRECT')
+SESSION_COOKIE_SECURE = env('SESSION_COOKIE_SECURE')
+CSRF_COOKIE_SECURE = env('CSRF_COOKIE_SECURE')
+SECURE_HSTS_SECONDS = env('SECURE_HSTS_SECONDS')
+SECURE_HSTS_INCLUDE_SUBDOMAINS = env('SECURE_HSTS_INCLUDE_SUBDOMAINS')
+SECURE_HSTS_PRELOAD = env('SECURE_HSTS_PRELOAD')
+SECURE_CONTENT_TYPE_NOSNIFF = True
+SECURE_REFERRER_POLICY = 'same-origin'
+X_FRAME_OPTIONS = 'DENY'
+SESSION_COOKIE_HTTPONLY = True
+CSRF_COOKIE_HTTPONLY = True
 
 
 # OpenAPI schema at /api/schema/, Swagger UI at /api/docs/

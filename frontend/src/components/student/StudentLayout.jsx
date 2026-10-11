@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import arcLogo from '../../assets/brand/arc-logo.svg'
 import { Outlet, useLocation } from 'react-router-dom'
 import HamburgerButton from './HamburgerButton'
 import NavigationDrawer from './NavigationDrawer'
@@ -8,6 +9,7 @@ export default function StudentLayout() {
   const pathname = useLocation().pathname
   const isTimeline = pathname === '/timeline'
   const isFocus = pathname === '/focus'
+  const isPriority = pathname === '/priority'
   const [isNavigationOpen, setIsNavigationOpen] = useState(false)
 
   function toggleNavigation() {
@@ -27,13 +29,15 @@ export default function StudentLayout() {
       }}
     >
       <header
-        className={`pointer-events-none fixed ${isFocus ? 'left-0' : 'left-arc-sidebar'} right-0 top-0 z-30 bg-arc-bg ${isTimeline ? 'h-14' : 'h-20'}`}
+        className={`pointer-events-none fixed ${isFocus || isPriority ? 'left-0' : 'left-arc-sidebar'} right-0 top-0 z-30 bg-arc-bg ${isPriority ? 'h-24 md:h-14' : isTimeline ? 'h-14' : 'h-20'}`}
       >
+        {isPriority && <img src={arcLogo} alt="ARC" className="absolute left-5 top-5 h-auto w-[92px]" />}
         <div
-          className="
+          className={`
             pointer-events-auto absolute
             left-1/2 top-4 -translate-x-1/2
-          "
+            ${isPriority ? 'priority-view-nav' : ''}
+          `}
         >
           <StudentViewNav />
         </div>

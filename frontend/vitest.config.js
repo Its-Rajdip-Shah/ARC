@@ -21,6 +21,8 @@ export default defineConfig({
       true,
 
     include: [
+      'src/features/timeline/SchedulerMonk.test.jsx',
+      'src/features/planner/PriorityNavigation.test.jsx',
       'src/features/timeline/TimelineWorkflows.test.jsx',
       'src/features/planner/components/CreatePlanningItemPanel.test.jsx',
       'src/hooks/usePriorityOrder.test.jsx',

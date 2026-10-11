@@ -28,6 +28,7 @@ export default function App() {
           <Route element={<StudentRoute />}>
             <Route element={<StudentLayout />}>
               <Route path="/planner" element={<PlannerPage />} />
+              <Route path="/priority" element={<PlannerPage />} />
               <Route path="/timeline" element={<TimelinePage />} />
               <Route path="/focus" element={<FocusPage />} />
               <Route path="/settings" element={<SettingsPage />} />

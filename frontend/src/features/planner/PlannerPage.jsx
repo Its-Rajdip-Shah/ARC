@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import PlannerSidebar from './components/PlannerSidebar'
+import FocusSchedulerMascot from '../focus/FocusSchedulerMascot'
 import PlannerTree from './components/PlannerTree'
 import PriorityPanel from './components/PriorityPanel'
-import PriorityToggle from './components/PriorityToggle'
 import CreatePlanningItemPanel from './components/CreatePlanningItemPanel'
 import StudyPlanModal from './components/StudyPlanModal'
 import { usePlanningTree } from '../../hooks/usePlanningTree'
@@ -79,6 +80,9 @@ function loadToolbarPreferences() {
 
 export default function PlannerPage() {
 
+  const isPriority = useLocation().pathname === '/priority'
+  const navigate = useNavigate()
+  const [pendingRootId, setPendingRootId] = useState(null)
   const queryClient = useQueryClient()
   const priorityReordering = useIsMutating({ mutationKey: ['planning', 'priority', 'reorder'] }) > 0
 
@@ -166,7 +170,6 @@ export default function PlannerPage() {
     && !historyUnsafe
 
 
-  const [isPriorityOpen, setIsPriorityOpen] = useState(false)
   const [studyPlanOpen, setStudyPlanOpen] = useState(false)
   const [selectedItemId, setSelectedItemId] = useState(null)
   const [toolbarPreferences] = useState(
@@ -189,27 +192,12 @@ export default function PlannerPage() {
   const [showOverdue, setShowOverdue] = useState(false)
 
   function handleNavigateToRoot(rootId) {
-    setIsPriorityOpen(false)
     // A filtered view may currently hide the requested root.
     setSearchQuery('')
     setShowOverdue(false)
-
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        const rootElement = document.querySelector(
-          `[data-planner-item-id="${rootId}"]`,
-        )
-
-        if (!rootElement) return
-
-        rootElement.scrollIntoView({
-          behavior: 'smooth',
-          block: 'start',
-        })
-      })
-    })
+    setPendingRootId(rootId)
+    if (isPriority) navigate('/planner')
   }
-
 
   useEffect(() => {
     try {
@@ -235,12 +223,6 @@ export default function PlannerPage() {
   const [createParentId, setCreateParentId] = useState(null)
 
   const { data: planningTree, isLoading, isError } = usePlanningTree()
-
-  function togglePriority() {
-    closePanel()
-    setHoveredItemId(null)
-    setIsPriorityOpen((current) => !current)
-  }
 
   function handleSelectItem(itemId) {
     // Hover/current task is independent from panel ownership.
@@ -346,25 +328,48 @@ export default function PlannerPage() {
     }
   }, [canUndo, canRedo, undoMutation, redoMutation])
 
+  // Wait for Planner and its tree to render before resolving sidebar navigation.
+  useEffect(() => {
+    if (isPriority || isLoading || isError || pendingRootId === null) return
+    const frame = requestAnimationFrame(() => {
+      const rootElement = document.querySelector(
+        `[data-planner-item-id="${pendingRootId}"]`,
+      )
+      rootElement?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      setPendingRootId(null)
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [isPriority, isLoading, isError, pendingRootId, planningTree])
+
   const items = planningTree ?? []
 
   return (
     <div className="relative flex min-h-screen flex-col md:flex-row">
-      <PlannerSidebar
+      {!isPriority && <PlannerSidebar
+        scheduler={<FocusSchedulerMascot className="planner-scheduler-mascot" />}
         roots={items}
         showOverdue={showOverdue}
         onToggleOverdue={() => {
           setShowOverdue((current) => !current)
         }}
         onNavigateToRoot={handleNavigateToRoot}
-      />
+      />}
 
-      <main className="min-w-0 flex-1 px-16 pb-16 pt-0">
+      <main className={isPriority ? 'min-w-0 flex-1 pt-24 md:pt-14' : 'min-w-0 flex-1 px-16 pb-16 pt-0'}>
+        {isPriority ? (
+          <PriorityPanel
+            canUndo={canUndo}
+            canRedo={canRedo}
+            historyBusy={historyBusy}
+            onUndo={() => undoMutation.mutate()}
+            onRedo={() => redoMutation.mutate()}
+          />
+        ) : (
         <div className="mx-auto w-full max-w-[620px]">
           {isLoading && <p>Loading planner...</p>}
           {isError && <p>Could not load planner.</p>}
 
-          {!isLoading && !isError && !isPriorityOpen && (
+          {!isLoading && !isError && (
             <>
             <div className="
               sticky top-[80px] z-20 mb-2 flex h-[38px]
@@ -541,9 +546,10 @@ export default function PlannerPage() {
             </>
           )}
         </div>
+        )}
       </main>
 
-      {panelMode && (
+      {!isPriority && panelMode && (
         <div
           className="
             fixed right-0 top-1/2 z-40
@@ -565,21 +571,7 @@ export default function PlannerPage() {
         </div>
       )}
 
-      <PriorityPanel
-        isOpen={isPriorityOpen}
-        canUndo={canUndo}
-        canRedo={canRedo}
-        historyBusy={historyBusy}
-        onUndo={() => undoMutation.mutate()}
-        onRedo={() => redoMutation.mutate()}
-      />
-
-      <PriorityToggle
-        isOpen={isPriorityOpen}
-        onToggle={togglePriority}
-      />
-
-      {studyPlanOpen && (
+      {!isPriority && studyPlanOpen && (
         <StudyPlanModal onClose={() => setStudyPlanOpen(false)} />
       )}
     </div>

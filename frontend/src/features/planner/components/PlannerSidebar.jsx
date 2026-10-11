@@ -94,6 +94,7 @@ function SortableRoot({
 
 
 export default function PlannerSidebar({
+  scheduler,
   roots = [],
   showOverdue = false,
   onToggleOverdue,
@@ -416,6 +417,7 @@ export default function PlannerSidebar({
           </PlannerSidebarDnd>
         </div>
       </nav>
+      {scheduler}
     </aside>
   )
 }

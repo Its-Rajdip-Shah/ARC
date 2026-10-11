@@ -5,6 +5,8 @@ import { createServer } from 'vite'
 import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import {
+  addDays,
+  todayKey,
   makeScale,
   packLanes,
   colourZones,
@@ -707,19 +709,21 @@ test('offscreen execution plus visible deadline keeps a real clipped line and en
 
 
 test('date headers surface explicit overload and engine infeasible states', () => {
+  const future = addDays(todayKey(), 7)
   const html = render(
     {},
     {
+      scale: makeScale(future, 'day'),
       data: {
         timezones: [],
         overload_dates: [
-          '2026-09-20',
+          future,
         ],
         scheduler: {
           daily_load: [
             {
               scheduled_date:
-                '2026-09-21',
+                addDays(future, 1),
               hours:
                 '9.0000',
               status:
@@ -740,4 +744,48 @@ test('date headers surface explicit overload and engine infeasible states', () =
     html,
     /timeline-date-infeasible/,
   )
+})
+
+test('historical scheduling indicators are hidden while task cards remain visible', (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-10-11T12:00:00Z') })
+  const today = todayKey()
+
+  for (const offset of [-1, 0, 1]) {
+    const date = addDays(today, offset)
+
+    for (const status of ['overloaded', 'infeasible']) {
+      const title = `Task on ${date} with ${status}`
+      const html = render(
+        {
+          title,
+          scheduled_date: date,
+          start_date: null,
+          due_date: null,
+        },
+        {
+          scale: makeScale(date, 'day'),
+          data: {
+            timezones: [],
+            overload_dates: [date],
+            scheduler: {
+              daily_load: [{ scheduled_date: date, hours: '9.0000', status }],
+            },
+          },
+        },
+      )
+
+      if (offset < 0) {
+        assert.doesNotMatch(html, /timeline-date-overloaded/)
+        assert.doesNotMatch(html, /timeline-date-infeasible/)
+      } else {
+        assert.match(html, /timeline-date-overloaded/)
+        if (status === 'infeasible') {
+          assert.match(html, /timeline-date-infeasible/)
+        }
+      }
+
+      assert.match(html, /timeline-card-position/)
+      assert.ok(html.includes(title))
+    }
+  }
 })

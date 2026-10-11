@@ -1921,3 +1921,55 @@ def test_focus_projection_exposes_scheduler_canonical_bucket_for_residual(
         ]["focus_bucket"]
         == "boss"
     )
+
+
+@pytest.mark.parametrize('flavour', [None, 'lock-in'])
+@pytest.mark.parametrize('anchored', [False, True])
+def test_single_drag_batch_preserves_other_anchor_facts_and_history(user, make_item, api_for, flavour, anchored):
+    from datetime import date
+    from freezegun import freeze_time
+    from planning.models import SchedulingState
+    from planning.services import history, scheduler_v1
+
+    today = date(2026, 10, 1)
+    with freeze_time('2026-10-01T12:00:00Z'):
+        SchedulingState.objects.create(user=user, scheduler_flavour=flavour)
+        others = [make_item(user, title, duration_category=DurationCategory.UNDER_4_HOURS,
+                            manual_requested_date=today if anchored else None,
+                            manual_requested_order=index if anchored else None,
+                            manual_anchor_origin_date=today - timedelta(days=1) if anchored else None)
+                  for index, title in enumerate(['A', 'B'], 1)]
+        dragged = make_item(user, 'C', duration_category=DurationCategory.UNDER_4_HOURS)
+        scheduling.daily_schedule(user, today=today)
+
+        def anchor_facts(item):
+            item.refresh_from_db()
+            return item.manual_requested_date, item.manual_requested_order, item.manual_anchor_origin_date
+
+        before = [anchor_facts(item) for item in others]
+        client = api_for(user)
+        if anchored:
+            duplicate = client.post('/api/planning/focus/anchor/batch/', {'changes': [
+                {'item_id': dragged.pk, 'date': today.isoformat(), 'order': 1},
+            ]}, format='json')
+            assert duplicate.status_code == 409
+            assert any(row['code'] == 'anchor_order_taken' for row in duplicate.data['conflicts'])
+            assert anchor_facts(dragged) == (None, None, None)
+        order = 3 if anchored else 1
+        response = client.post('/api/planning/focus/anchor/batch/', {'changes': [
+            {'item_id': dragged.pk, 'date': today.isoformat(), 'order': order},
+        ]}, format='json')
+        assert response.status_code == 200, response.data
+        assert anchor_facts(dragged) == (today, order, today)
+        assert [anchor_facts(item) for item in others] == before
+        saved = next(row for row in response.data['focus']['candidates'] if row['item_id'] == dragged.pk)
+        assert saved['manual_requested_order'] == order
+        request = scheduler_v1.build_scheduler_input(user, flavour='lock-in', today=today)
+        slots = [(row.anchor_date, row.anchor_order) for row in request.tasks if row.anchor_date is not None]
+        assert len(slots) == len(set(slots))
+        history.undo(user)
+        assert anchor_facts(dragged) == (None, None, None)
+        assert [anchor_facts(item) for item in others] == before
+        history.redo(user)
+        assert anchor_facts(dragged) == (today, order, today)
+        assert [anchor_facts(item) for item in others] == before

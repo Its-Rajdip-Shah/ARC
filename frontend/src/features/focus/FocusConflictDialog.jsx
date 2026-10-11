@@ -86,12 +86,14 @@ function humanDate(
 
   const date =
     new Date(
-      `${value}T00:00:00`,
+      `${value}T00:00:00Z`,
     )
 
   return new Intl.DateTimeFormat(
     undefined,
     {
+      timeZone: 'UTC',
+
       day:
         'numeric',
 

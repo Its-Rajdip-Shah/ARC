@@ -13,7 +13,7 @@ from decimal import Decimal
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
 from django.db.models import Exists, OuterRef
-from django.utils import timezone
+from planning.services.calendar_dates import user_local_date
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import (
     OpenApiParameter,
@@ -114,7 +114,7 @@ def _root_lookup(user):
 
 def ensure_scheduled(user):
     """Re-evaluate current capacity and eligibility; same-day changes matter."""
-    return scheduling.daily_schedule(user, timezone.localdate())
+    return scheduling.daily_schedule(user, user_local_date(user))
 
 
 class TagViewSet(UserScopedMixin, viewsets.ModelViewSet):
@@ -729,7 +729,7 @@ class PriorityReorderView(APIView):
 def _focus_projection(user):
     projection = focus.build(
         user,
-        today=timezone.localdate(),
+        today=user_local_date(user),
     )
 
     parents = queries.parent_map(
@@ -821,6 +821,8 @@ def _focus_projection(user):
                 item.due_date,
             'manual_requested_date':
                 item.manual_requested_date,
+            'manual_anchor_origin_date':
+                item.manual_anchor_origin_date,
             'manual_requested_order':
                 item.manual_requested_order,
             'percent_completed':
@@ -1081,7 +1083,7 @@ class TimelineView(APIView):
         ),
     )
     def get(self, request):
-        today = timezone.localdate()
+        today = user_local_date(request.user)
         start = _date_param(request, 'from', today - timedelta(days=7))
         end = _date_param(request, 'to', today + timedelta(days=28))
         if end < start:
@@ -1204,7 +1206,7 @@ class OverdueView(APIView):
         description='Missed fixed deadlines, split into Recent (within 7 days) and Backlog.',
     )
     def get(self, request):
-        buckets = overdue.classify(request.user, timezone.localdate())
+        buckets = overdue.classify(request.user, user_local_date(request.user))
         return Response({
             'recent': OverdueEntrySerializer(buckets['recent'], many=True).data,
             'backlog': OverdueEntrySerializer(buckets['backlog'], many=True).data,
@@ -1441,6 +1443,8 @@ def _schedule_anchor_response(user, data):
                 item.pk,
             'manual_requested_date':
                 None,
+            'manual_anchor_origin_date':
+                None,
             'manual_requested_order':
                 None,
             'scheduled_date':
@@ -1455,7 +1459,7 @@ def _schedule_anchor_response(user, data):
 
     day = data['date']
 
-    if day < timezone.localdate():
+    if day < user_local_date(user):
         return Response(
             {
                 'conflicts': [
@@ -1620,6 +1624,8 @@ def _schedule_anchor_response(user, data):
             item.pk,
         'manual_requested_date':
             item.manual_requested_date,
+        'manual_anchor_origin_date':
+            item.manual_anchor_origin_date,
         'manual_requested_order':
             item.manual_requested_order,
         'scheduled_date':
@@ -1696,7 +1702,7 @@ class FocusAnchorBatchView(APIView):
             "changes"
         ]
 
-        today = timezone.localdate()
+        today = user_local_date(request.user)
 
         item_ids = [
             change[
@@ -2017,7 +2023,7 @@ class FocusDoTodayView(APIView):
             {
                 **serializer.validated_data,
                 'date':
-                    timezone.localdate(),
+                    user_local_date(request.user),
                 'remove':
                     False,
             },

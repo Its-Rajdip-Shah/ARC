@@ -65,6 +65,12 @@ class User(AbstractBaseUser):
 
     id = models.BigAutoField(primary_key=True, db_column='user_id')
     email = models.EmailField(max_length=255, unique=True)
+    time_zone = models.CharField(
+        max_length=64,
+        null=True,
+        blank=True,
+        default=None,
+    )
     # Widened from AbstractBaseUser's 128 to match the report's VARCHAR(255).
     password = models.CharField(max_length=255, db_column='password_hash')
     # NOT NULL per the report; empty until the user finishes TOTP enrolment,

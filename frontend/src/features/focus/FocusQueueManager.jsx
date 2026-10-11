@@ -44,7 +44,7 @@ import {
   hierarchyPaths,
 } from './focusModel'
 import {
-  changedQueueItemIds,
+  directMovementIntent,
   changesForTouchedRows,
   findQueuePosition,
   flattenQueue,
@@ -181,6 +181,8 @@ export default function FocusQueueManager({
 
   const saveInFlightRef =
     useRef(false)
+
+  const movementIntentsRef = useRef(new Map())
 
   const queuedSaveRef =
     useRef(null)
@@ -407,6 +409,8 @@ export default function FocusQueueManager({
     planningBusy
 
   function clearIntent() {
+    movementIntentsRef.current = new Map()
+
     setTouchedIds(
       new Set(),
     )
@@ -436,6 +440,7 @@ export default function FocusQueueManager({
       nextGroups,
       nextTouched,
       nextDirtyDates,
+      movementIntentsRef.current,
     )
   }
 
@@ -643,50 +648,22 @@ export default function FocusQueueManager({
     sourceDate,
     targetDate,
   ) {
-    /*
-     * A Focus move changes more than the grabbed card.
-     *
-     * Every row whose date/local slot changed is part of the explicit
-     * ordering action. Rows outside that displaced span remain automatic.
-     *
-     * Example:
-     *
-     *   1, 3, 2, 4
-     *        ↓ move 2 to position 2
-     *   1, 2, 3, 4
-     *
-     * Changed set = {2, 3}.
-     *
-     * Sending only {2} leaves task 3's resulting slot unspecified.
-     * Sending the entire bucket would incorrectly anchor untouched 1 and 4.
-     */
-    const displacedIds =
-      changedQueueItemIds(
-        groups,
-        nextGroups,
-      )
-
-    const nextTouched =
-      new Set(
-        touchedIds,
-      )
-
-    for (
-      const displacedId
-      of displacedIds
-    ) {
-      nextTouched.add(
-        displacedId,
-      )
-    }
-
-    /*
-     * Defensive guarantee: a genuine movement must always include the item
-     * the user directly acted on.
-     */
-    nextTouched.add(
+    // Drag, arrow and rank controls share this boundary. Each directly moves
+    // one task; projected displacement never creates another task's intent.
+    const intent = directMovementIntent(
+      nextGroups,
       itemId,
+      movementIntentsRef.current,
     )
+    if (!intent) return
+
+    movementIntentsRef.current.set(itemId, intent)
+    const destination = findQueuePosition(nextGroups, itemId)
+    if (intent.order !== destination.index + 1) {
+      nextGroups = moveQueueItem(nextGroups, itemId, intent.date, intent.order)
+    }
+    const nextTouched = new Set(touchedIds)
+    nextTouched.add(itemId)
 
     const nextDirty =
       new Set(

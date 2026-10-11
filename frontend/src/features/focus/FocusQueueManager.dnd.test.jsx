@@ -760,6 +760,11 @@ describe(
           'A',
           'B',
         ])
+        await act(async () => vi.advanceTimersByTime(180))
+        expect(harness.mutationCalls[0].variables.changes).toEqual([
+          { item_id: 3, date: '2026-10-01', order: 1 },
+        ])
+
       },
     )
   },
@@ -1344,3 +1349,110 @@ test(
 
   },
 )
+
+
+describe('B1.5 direct drag intent', () => {
+  beforeEach(() => {
+    harness.mutationCalls.length = 0
+    vi.useFakeTimers()
+  })
+  afterEach(() => {
+    act(() => vi.runOnlyPendingTimers())
+    vi.useRealTimers()
+  })
+
+  async function drop(id, overId, initialTop = 100, translatedTop = -25) {
+    const active = activeEvent({ id, initialTop, translatedTop })
+    await act(async () => {
+      harness.dndProps.onDragStart({ active })
+      harness.dndProps.onDragEnd({ active, over: overEvent({ id: overId, top: 0 }) })
+    })
+  }
+  async function save() {
+    await act(async () => vi.advanceTimersByTime(180))
+  }
+
+  test('dragging C across A and B anchors only C and accepts canonical refresh', async () => {
+    const rows = [candidate(1, 'A', 1), candidate(2, 'B', 2), candidate(3, 'C', 3)]
+    const before = structuredClone(rows)
+    const { container, rerender } = renderManager(rows)
+    await drop(3, 1)
+    expect(queueTitles(container)).toEqual(['C', 'A', 'B'])
+    await save()
+    expect(harness.mutationCalls[0].variables.changes).toEqual([
+      { item_id: 3, date: '2026-10-01', order: 1 },
+    ])
+    expect(rows).toEqual(before)
+    await act(async () => harness.mutationCalls[0].callbacks.onSuccess())
+    rerender(<FocusQueueManager bucketId="boss"
+      data={{ today: '2026-10-01', candidates: [rows[2], rows[1], rows[0]] }}
+      globalFind={null} pinnedItemIds={new Set()} onTogglePinned={() => {}}
+      onSetCurrent={() => {}} onComplete={() => {}} onClose={() => {}} onAutomatic={() => {}}
+      currentBusy={false} completionBusy={false} planningBusy={false} />)
+    expect(queueTitles(container)).toEqual(['C', 'B', 'A'])
+  })
+
+  test('occupied destination anchors retain dates, orders and origins', async () => {
+    const rows = [candidate(1, 'A', 1), candidate(2, 'B', 2), candidate(3, 'C', 3)]
+    for (const row of rows.slice(0, 2)) Object.assign(row, {
+      manual_requested_date: '2026-10-01', manual_requested_order: row.item_id,
+      manual_anchor_origin_date: '2026-09-30',
+    })
+    const before = structuredClone(rows)
+    const { container } = renderManager(rows)
+    await drop(3, 1)
+    await save()
+    expect(harness.mutationCalls[0].variables.changes).toEqual([
+      { item_id: 3, date: '2026-10-01', order: 3 },
+    ])
+    expect(queueTitles(container)).toEqual(['A', 'B', 'C'])
+    expect(rows).toEqual(before)
+  })
+
+  test('cross-date drag persists only the directly dragged task', async () => {
+    const rows = [candidate(1, 'A', 1), candidate(2, 'B', 2), {
+      ...candidate(3, 'C', 3), scheduled_date: '2026-10-02',
+    }]
+    renderManager(rows)
+    await drop(3, 'date-boundary:2026-10-01')
+    await save()
+    expect(harness.mutationCalls[0].variables.changes).toEqual([
+      { item_id: 3, date: '2026-10-01', order: 1 },
+    ])
+  })
+
+  test('no-op release sends no API mutation', async () => {
+    renderManager([candidate(1, 'A', 1), candidate(2, 'B', 2)])
+    await drop(2, 2, 60, 60)
+    await save()
+    expect(harness.mutationCalls).toHaveLength(0)
+  })
+
+  test('in-flight drags serialize only direct intents without incidental A', async () => {
+    renderManager([candidate(1, 'A', 1), candidate(2, 'B', 2), candidate(3, 'C', 3)])
+    await drop(3, 1)
+    await save()
+    await drop(2, 3)
+    await save()
+    expect(harness.mutationCalls).toHaveLength(1)
+    await act(async () => harness.mutationCalls[0].callbacks.onSuccess())
+    expect(harness.mutationCalls).toHaveLength(2)
+    expect(harness.mutationCalls[1].variables.changes).toEqual([
+      { item_id: 3, date: '2026-10-01', order: 1 },
+      { item_id: 2, date: '2026-10-01', order: 2 },
+    ])
+  })
+
+  test('failed save rolls back the visual projection and discards direct intent', async () => {
+    const { container } = renderManager([candidate(1, 'A', 1), candidate(2, 'B', 2), candidate(3, 'C', 3)])
+    await drop(3, 1)
+    await save()
+    await act(async () => harness.mutationCalls[0].callbacks.onError({ response: { status: 500 } }))
+    expect(queueTitles(container)).toEqual(['A', 'B', 'C'])
+    await drop(2, 1)
+    await save()
+    expect(harness.mutationCalls[1].variables.changes).toEqual([
+      { item_id: 2, date: '2026-10-01', order: 1 },
+    ])
+  })
+})

@@ -387,6 +387,9 @@ function TimelineContent({
         ),
     )
 
+  const today =
+    todayKey()
+
   const overloadDates =
     useMemo(
       () => {
@@ -418,10 +421,16 @@ function TimelineContent({
 
         return [
           ...dates,
-        ].sort()
+        ]
+          .filter(
+            (date) =>
+              date >= today,
+          )
+          .sort()
       },
       [
         query.data,
+        today,
       ],
     )
 
@@ -437,7 +446,9 @@ function TimelineContent({
           .filter(
             (row) =>
               row.status ===
-              'infeasible',
+                'infeasible' &&
+              row.scheduled_date >=
+                today,
           )
           .map(
             (row) =>
@@ -456,6 +467,7 @@ function TimelineContent({
           .sort(),
       [
         query.data,
+        today,
       ],
     )
 

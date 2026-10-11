@@ -21,6 +21,9 @@ export default defineConfig({
       true,
 
     include: [
+      'src/hooks/useFocus.test.js',
+      'src/components/SessionHydrator.test.jsx',
+      'src/lib/calendarDates.test.js',
       'src/features/focus/FocusQueueManager.dnd.test.jsx',
       'src/features/focus/FocusQueueManager.race.test.jsx',
       'src/lib/plainText.test.js',

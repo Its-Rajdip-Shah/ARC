@@ -54,3 +54,16 @@ def is_overdue(item, today):
         and item.due_date
         and item.due_date < today
     )
+
+
+def effective_due_date(item, today):
+    """Release a missed deadline only for automatic recovery placement.
+
+    Candidate eligibility (frontier, dependencies, release dates) remains the
+    caller's responsibility. This projection never changes canonical facts or
+    overdue classification. Active explicit anchors retain the canonical bound.
+    """
+    active_anchor = item.manual_requested_date and item.manual_requested_date >= today
+    if not item.is_deleted and not active_anchor and is_overdue(item, today):
+        return None
+    return item.due_date

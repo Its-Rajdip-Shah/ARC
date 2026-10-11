@@ -7,6 +7,7 @@ mutation itself.
 
 from django.db import transaction
 
+from planning.services.calendar_dates import user_local_date
 from planning.models import (
     AssignmentDetail,
     DurationCategory,
@@ -50,6 +51,7 @@ def serialize_item(item):
         ),
         "duration_category": item.duration_category,
         "manual_requested_date": item.manual_requested_date.isoformat() if item.manual_requested_date else None,
+        "manual_anchor_origin_date": item.manual_anchor_origin_date.isoformat() if item.manual_anchor_origin_date else None,
         "manual_requested_order": item.manual_requested_order,
         "expired_manual_requested_date": item.expired_manual_requested_date.isoformat() if item.expired_manual_requested_date else None,
         "percent_completed": str(item.percent_completed),
@@ -360,6 +362,7 @@ def _restore_item_states(user, states):
             ),
             "duration_category": _historical_duration(state.get("duration_category")),
             "manual_requested_date": state.get('manual_requested_date'),
+            "manual_anchor_origin_date": state.get("manual_anchor_origin_date"),
             "manual_requested_order": state.get('manual_requested_order'),
             "expired_manual_requested_date": state.get("expired_manual_requested_date"),
             "percent_completed": state.get('percent_completed', 0),
@@ -514,11 +517,16 @@ def _apply_delta(user, state, action_type):
                 'scheduled_date': row['scheduled_date'],
                 'manual_requested_date':
                     row.get('manual_requested_date'),
+                'manual_anchor_origin_date':
+                    row.get('manual_anchor_origin_date'),
                 'manual_requested_order':
                     row.get('manual_requested_order'),
                 'priority_restore_context':
                     row['priority_restore_context'],
             }
+
+            if 'expired_manual_requested_date' in row:
+                values['expired_manual_requested_date'] = row['expired_manual_requested_date']
 
             if 'execution_rank' in row:
                 values['execution_rank'] = row[
@@ -704,7 +712,6 @@ def history_status(user):
 
 def _validated_delta(user, state, action_type, expected):
     from planning.services import lifecycle, priority, scheduling
-    from django.utils import timezone
     priority._lock(user)
     from copy import deepcopy
     from django.core.exceptions import ValidationError
@@ -746,10 +753,24 @@ def _validated_delta(user, state, action_type, expected):
             user
         )
 
-        scheduling._expire_past_manual_anchors(
-            user,
-            timezone.localdate(),
+        today = user_local_date(user)
+        restored = {
+            pk: (day, order)
+            for pk, day, order in PlanningItem.objects.filter(user=user).values_list(
+                'pk', 'manual_requested_date', 'manual_requested_order',
+            )
+        }
+        anchor_changes = scheduling._reconcile_manual_anchors(user, today)
+        placements_changed = any(
+            restored[pk] != (day, order)
+            for pk, day, order in PlanningItem.objects.filter(
+                user=user, pk__in=anchor_changes,
+            ).values_list('pk', 'manual_requested_date', 'manual_requested_order')
         )
+        if placements_changed:
+            # A historical proposal cannot remain attached to a carried date.
+            scheduling.reconcile(user, today)
+            return
 
         # Undo/redo is itself newer user intent. Do not restore historical
         # revision numbers: revisions are monotonic. Advance freshness so an

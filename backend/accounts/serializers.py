@@ -1,5 +1,7 @@
 """Request and response shapes for the authentication endpoints."""
 
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
 from django.contrib.auth import get_user_model
 from django.contrib.auth.password_validation import validate_password
 from rest_framework import serializers
@@ -14,8 +16,30 @@ class UserSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
-        fields = ['id', 'email', 'is_admin', 'is_locked', 'mfa_enabled', 'created_at', 'last_login']
+        fields = ['id', 'email', 'is_admin', 'is_locked', 'mfa_enabled', 'created_at', 'last_login', 'time_zone']
         read_only_fields = fields
+
+
+class TimeZoneUpdateSerializer(serializers.Serializer):
+    """Only the authenticated account's geographical timezone is writable."""
+
+    time_zone = serializers.CharField(max_length=64, allow_null=True, trim_whitespace=False)
+
+    def to_internal_value(self, data):
+        if isinstance(data, dict):
+            unknown = set(data) - {'time_zone'}
+            if unknown:
+                raise serializers.ValidationError({key: 'This field is not writable.' for key in unknown})
+        return super().to_internal_value(data)
+
+    def validate_time_zone(self, value):
+        if value is None:
+            return None
+        try:
+            ZoneInfo(value)
+        except (ZoneInfoNotFoundError, ValueError):
+            raise serializers.ValidationError('Enter a valid IANA timezone identifier.')
+        return value
 
 
 class RegisterSerializer(serializers.Serializer):

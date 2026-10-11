@@ -1,6 +1,7 @@
 import { useEffect, useMemo } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 
+import { userDateKey } from '../../../lib/calendarDates'
 import { deleteItem, moveItem } from '../../../api/planning'
 import PlannerTreeItem from './PlannerTreeItem'
 import PlannerDnd from '../../../dnd/planner/PlannerDnd'
@@ -143,15 +144,6 @@ function searchPlanningTree(items, rawQuery) {
   }
 }
 
-function getLocalDateString() {
-  const now = new Date()
-  const year = now.getFullYear()
-  const month = String(now.getMonth() + 1).padStart(2, '0')
-  const day = String(now.getDate()).padStart(2, '0')
-
-  return `${year}-${month}-${day}`
-}
-
 function filterOverdueTree(items, today) {
   const matchedIds = new Set()
 
@@ -222,7 +214,7 @@ export default function PlannerTree({
     if (showOverdue) {
       return filterOverdueTree(
         items,
-        getLocalDateString(),
+        userDateKey(),
       )
     }
 

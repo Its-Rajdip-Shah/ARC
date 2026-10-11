@@ -389,6 +389,9 @@ export function useBatchAnchorFocus() {
 
             manual_requested_order:
               change.order,
+
+            manual_anchor_origin_date:
+              change.date,
           }
         }
 

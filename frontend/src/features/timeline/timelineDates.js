@@ -1,3 +1,5 @@
+import { userDateKey } from '../../lib/calendarDates.js'
+
 // Date-only arithmetic uses UTC internally.
 export const DAY = 86400000
 export const COLUMN_WIDTH = 112
@@ -9,17 +11,7 @@ export const dateKey = (date) =>
   date.toISOString().slice(0, 10)
 
 export function todayKey() {
-  const now = new Date()
-
-  return dateKey(
-    new Date(
-      Date.UTC(
-        now.getFullYear(),
-        now.getMonth(),
-        now.getDate(),
-      ),
-    ),
-  )
+  return userDateKey()
 }
 
 export const addDays = (key, days) =>

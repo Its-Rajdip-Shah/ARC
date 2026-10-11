@@ -94,7 +94,7 @@ class TimelineNavigationItemSerializer(serializers.ModelSerializer):
             'due_date',
             'scheduled_date',
             'completed_display_date',
-            'manual_requested_date',
+            'manual_requested_date', 'manual_anchor_origin_date',
             'duration_category',
             'is_completed',
             'tags',
@@ -118,7 +118,7 @@ class PlanningItemSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'parent', 'item_type', 'title', 'description', 'sibling_order',
             'start_date', 'due_date', 'scheduled_date', 'execution_rank',
-            'completed_display_date', 'manual_requested_date',
+            'completed_display_date', 'manual_requested_date', 'manual_anchor_origin_date',
             'duration_category', 'percent_completed',
             'priority_position', 'is_completed', 'has_deadline',
             'canvas_object_type', 'canvas_object_id',
@@ -127,7 +127,7 @@ class PlanningItemSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = [
             'priority_position', 'scheduled_date', 'execution_rank',
-            'completed_display_date', 'manual_requested_date',
+            'completed_display_date', 'manual_requested_date', 'manual_anchor_origin_date',
             'percent_completed', 'canvas_object_type',
             'canvas_object_id', 'created_at', 'updated_at',
         ]
@@ -323,6 +323,7 @@ class FocusCandidateSerializer(serializers.Serializer):
     manual_requested_date = serializers.DateField(
         allow_null=True,
     )
+    manual_anchor_origin_date = serializers.DateField(allow_null=True, read_only=True)
     manual_requested_order = serializers.IntegerField(
         allow_null=True,
     )
@@ -440,7 +441,7 @@ class TimelineItemSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'parent', 'title', 'description', 'item_type', 'start_date', 'due_date',
             'scheduled_date', 'execution_rank', 'completed_display_date',
-            'manual_requested_date', 'manual_requested_order',
+            'manual_requested_date', 'manual_anchor_origin_date', 'manual_requested_order',
             'duration_category',
             'is_completed', 'priority_position', 'tags', 'overdue', 'submission_url',
             'hierarchy_path', 'has_children', 'allocations',
@@ -448,8 +449,8 @@ class TimelineItemSerializer(serializers.ModelSerializer):
 
     @extend_schema_field(serializers.BooleanField())
     def get_overdue(self, item):
-        from django.utils import timezone
-        return bool(not item.is_completed and item.due_date and item.due_date < timezone.localdate())
+        from planning.services.calendar_dates import user_local_date
+        return bool(not item.is_completed and item.due_date and item.due_date < user_local_date(item.user))
 
     @extend_schema_field(serializers.ListField(child=serializers.DictField()))
     def get_hierarchy_path(self, item):

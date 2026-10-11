@@ -1,43 +1,7 @@
-function localDate(value) {
-  return new Date(
-    `${value}T00:00:00`,
-  )
-}
+import { addDays } from '../timeline/timelineDates.js'
+import { bucketForCandidate } from './focusModel.js'
 
-
-export function addDaysIso(
-  value,
-  days,
-) {
-  const date =
-    localDate(value)
-
-  date.setDate(
-    date.getDate()
-    + days,
-  )
-
-  const year =
-    date.getFullYear()
-
-  const month =
-    String(
-      date.getMonth() + 1,
-    ).padStart(
-      2,
-      '0',
-    )
-
-  const day =
-    String(
-      date.getDate(),
-    ).padStart(
-      2,
-      '0',
-    )
-
-  return `${year}-${month}-${day}`
-}
+export const addDaysIso = addDays
 
 
 export function makeQueueGroups(
@@ -511,6 +475,7 @@ export function changesForTouchedRows(
   groups,
   touchedIds,
   dirtyDates,
+  intents = null,
 ) {
   const changes = []
 
@@ -533,22 +498,11 @@ export function changesForTouchedRows(
             row.item_id,
           )
 
-        /*
-         * A date-only Timeline anchor is not a Focus ordering anchor.
-         *
-         * Only an existing date + order intent should be carried forward
-         * automatically when another row on this date is reordered.
-         */
-        const alreadyFocusAnchored =
-          row.manual_requested_date
-          != null
-          && row.manual_requested_order
-          != null
+        if (!touched) return
 
-        if (
-          !touched
-          && !alreadyFocusAnchored
-        ) {
+        const intent = intents?.get(row.item_id)
+        if (intent) {
+          changes.push({ ...intent })
           return
         }
 
@@ -654,4 +608,29 @@ export function moveQueueItemToSlot(
   )
 
   return next
+}
+
+
+// Resolve only the directly moved task against canonical and pending slots.
+// Reuse the canonical Focus bucket projection, including residual work.
+export function directMovementIntent(groups, itemId, intents = new Map()) {
+  const entries = flattenQueue(groups)
+  const moving = entries.find(({ row }) => row.item_id === itemId)
+  if (!moving) return null
+  const bucket = bucketForCandidate(moving.row)?.id
+  const occupied = new Set()
+  for (const { row } of entries) {
+    if (row.item_id === itemId || bucketForCandidate(row)?.id !== bucket) continue
+    const pending = intents.get(row.item_id)
+    const date = pending?.date ?? row.manual_requested_date
+    const order = pending?.order ?? row.manual_requested_order
+    if (date === moving.date && order != null) occupied.add(order)
+  }
+  let order = moving.localPosition
+  if (occupied.has(order)) {
+    // Match sticky carry-forward's existing lowest-free-positive convention.
+    order = 1
+    while (occupied.has(order)) order += 1
+  }
+  return { item_id: itemId, date: moving.date, order }
 }

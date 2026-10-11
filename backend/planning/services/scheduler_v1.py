@@ -36,6 +36,8 @@ from arc_scheduler.contracts import (
     OUTPUT_CONTRACT_VERSION,
 )
 
+from planning.services.calendar_dates import user_local_date
+from planning.services.overdue import effective_due_date
 from planning.models import (
     PlanningDependency,
     PlanningItem,
@@ -196,7 +198,7 @@ def build_scheduler_input(
     silently invent one.
     """
 
-    today = today or timezone.localdate()
+    today = user_local_date(user, explicit_date=today)
     flavour = SchedulerFlavourV1(flavour)
 
     items, dependency_pairs = _schedulable_frontier(user)
@@ -221,7 +223,7 @@ def build_scheduler_input(
             duration_category=str(item.duration_category),
             priority_position=item.priority_position,
             release_date=item.start_date,
-            due_date=item.due_date,
+            due_date=effective_due_date(item, today),
             anchor_date=(
                 item.manual_requested_date
                 if (
@@ -395,15 +397,12 @@ def apply_scheduler_output(
         for task in request.tasks
     }
 
-    owned_ids = set(
-        PlanningItem.objects.filter(
-            user=user,
-            pk__in=request_ids,
-        ).values_list(
-            "pk",
-            flat=True,
-        )
-    )
+    owned_items = PlanningItem.objects.filter(
+        user=user,
+        pk__in=request_ids,
+    ).in_bulk()
+
+    owned_ids = set(owned_items)
 
     if owned_ids != request_ids:
         missing = sorted(request_ids - owned_ids)
@@ -469,10 +468,7 @@ def apply_scheduler_output(
 
         first = rows[0]
 
-        item = PlanningItem.objects.get(
-            user=user,
-            pk=item_id,
-        )
+        item = owned_items[item_id]
 
         item.scheduled_date = first.scheduled_date
         item.execution_rank = first.execution_rank

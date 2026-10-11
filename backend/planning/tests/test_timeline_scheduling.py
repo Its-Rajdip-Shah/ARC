@@ -65,7 +65,7 @@ def test_missed_manual_work_retains_user_dates(user, make_item, monkeypatch):
 
 def test_manual_move_overload_and_undo_redo(user, other_user, make_item, monkeypatch):
     monkeypatch.setitem(scheduling.BASELINE_SCHEDULER_CAPACITY, DurationCategory.UNDER_1_HOUR, 1)
-    first = make_item(user, 'First', scheduled_date=TODAY, manual_requested_date=TODAY)
+    first = make_item(user, 'First', scheduled_date=TODAY, manual_requested_date=TODAY, manual_anchor_origin_date=TODAY)
     second = make_item(user, 'Second')
     third = make_item(user, 'Third')
     theirs = make_item(other_user, 'Other', scheduled_date=TODAY - timedelta(days=5))
@@ -260,7 +260,10 @@ def test_timeline_read_respects_policy_manual_overload_and_constraints(user, api
     for item in [*manual, missed, assignment, overdue]:
         item.refresh_from_db()
     assert all(item.scheduled_date == TODAY and item.manual_requested_date == item.scheduled_date for item in manual)
-    assert missed.scheduled_date == TODAY + timedelta(days=1)
+    # Overdue recovery keeps canonical deadline ordering and now consumes
+    # automatic capacity instead of overloading the missed deadline's day.
+    assert overdue.scheduled_date == TODAY + timedelta(days=1)
+    assert missed.scheduled_date == TODAY + timedelta(days=3)
     assert assignment.scheduled_date == assignment.start_date == assignment.due_date
     assert overdue.due_date == TODAY - timedelta(days=1)
     assert overdue.scheduled_date >= TODAY

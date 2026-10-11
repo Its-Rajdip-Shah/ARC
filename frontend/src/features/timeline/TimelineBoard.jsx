@@ -679,6 +679,7 @@ export default function TimelineBoard({
                   : null
 
               const overloaded =
+                column.from >= today &&
                 column.from ===
                   column.to &&
                 (
@@ -690,6 +691,7 @@ export default function TimelineBoard({
                 )
 
               const infeasible =
+                column.from >= today &&
                 column.from ===
                   column.to &&
                 load?.status ===

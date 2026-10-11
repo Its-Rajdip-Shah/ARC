@@ -54,6 +54,9 @@ def create_item(user, **values):
     item = PlanningItem(user=user, parent=parent, **values)
     if parent:
         item.manual_requested_date = parent.manual_requested_date
+        item.manual_anchor_origin_date = (
+            parent.manual_anchor_origin_date or parent.manual_requested_date
+        )
     validate_changes(item, {})
     item.save()
     if not completed:

@@ -19,5 +19,18 @@ export default defineConfig({
 
     clearMocks:
       true,
+
+    include: [
+      'src/features/focus/FocusQueueManager.dnd.test.jsx',
+      'src/features/focus/FocusQueueManager.race.test.jsx',
+      'src/lib/plainText.test.js',
+      'src/lib/subjectLabel.test.js',
+    ],
+
+    exclude: [
+      'src/**/*.node.test.{js,jsx}',
+      'e2e/**',
+      'node_modules/**',
+    ],
   },
 })

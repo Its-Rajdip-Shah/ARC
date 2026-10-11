@@ -42,3 +42,6 @@ Thumbs.db
 graphify-out/
 tasks/
 
+
+# Generated regression reports
+/tests/reports/

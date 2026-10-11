@@ -16,11 +16,12 @@ import {
   Layers,
   Redo2,
   Search,
-  SlidersHorizontal,
   TriangleAlert,
   Undo2,
   X,
 } from 'lucide-react'
+
+import monkSettingsIcon from '../../assets/icons/locked-in_monk-mode/monk-mode-hands-down-dark.png'
 
 import editCalendarIcon from '../../assets/icons/edit-calendar.svg'
 
@@ -460,6 +461,7 @@ export default function TimelineToolbar({
   update,
   settingsOpen,
   toggleSettings,
+  openSettings,
   anchorNav,
   overloadNav,
   infeasibleNav,
@@ -797,6 +799,7 @@ export default function TimelineToolbar({
 
       <IconButton
         label="Scheduler settings"
+        onDoubleClick={openSettings}
         aria-expanded={
           settingsOpen
         }
@@ -804,9 +807,7 @@ export default function TimelineToolbar({
           toggleSettings
         }
       >
-        <SlidersHorizontal
-          size={16}
-        />
+        <img src={monkSettingsIcon} alt="" className="timeline-scheduler-mode-icon" />
       </IconButton>
 
       <IconButton

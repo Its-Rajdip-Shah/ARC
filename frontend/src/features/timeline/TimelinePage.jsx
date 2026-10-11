@@ -32,6 +32,9 @@ import SchedulerPanel from './SchedulerPanel'
 import AnchorDialog from './AnchorDialog'
 import TimezonePanel from './TimezonePanel'
 import TimelineBoard from './TimelineBoard'
+import TimelineTaskNavigator from './TimelineTaskNavigator'
+import CreatePlanningItemPanel from '../planner/components/CreatePlanningItemPanel'
+import { buildRootLeafIndex, findInitialVisibleRootLeaf, findTreeItemById, stepRootLeaf } from './timelineRootNavigation'
 import TimelineSidebar from './TimelineSidebar'
 import TimelineToolbar from './TimelineToolbar'
 import useTimelineActions from './useTimelineActions'
@@ -178,27 +181,14 @@ function TimelineContent({
   const tree =
     usePlanningTree()
 
-  const roots =
-    tree.data ?? []
+  const roots = useMemo(() => tree.data ?? [], [tree.data])
 
-  const selectedRoots =
-    useMemo(
-      () =>
-        tree.data
-          ? options.roots.filter(
-              (id) =>
-                tree.data.some(
-                  (root) =>
-                    root.id ===
-                    id,
-                ),
-            )
-          : options.roots,
-      [
-        tree.data,
-        options.roots,
-      ],
-    )
+  const activeRoots = useMemo(() => roots.filter((root) => !root.is_completed), [roots])
+  // Effective selection only: persisted preferences and the canonical tree stay intact.
+  const selectedRoots = useMemo(
+    () => options.roots.filter((id) => activeRoots.some((root) => root.id === id)),
+    [activeRoots, options.roots],
+  )
 
   const [
     settingsOpen,
@@ -215,6 +205,10 @@ function TimelineContent({
     setAnchorRequest,
   ] = useState(null)
 
+  const explicitLeafByRoot = useRef(new Map())
+  const renderedTaskItems = useRef([])
+  const recordRenderedTasks = useCallback((rows) => { renderedTaskItems.current = rows }, [])
+
   const scrollRef =
     useRef(null)
 
@@ -227,7 +221,9 @@ function TimelineContent({
     useCallback(
       (
         date = todayKey(),
+        { rootNavigation = false } = {},
       ) => {
+        if (!rootNavigation) explicitLeafByRoot.current.clear()
         setAnchor(date)
 
         scrollRef.current
@@ -253,6 +249,10 @@ function TimelineContent({
         boardWidth,
       ],
     )
+
+  const visibleDateKeys = useMemo(
+    () => scale.columns.flatMap((column) => [column.from, column.to]), [scale],
+  )
 
   const query =
     useTimeline({
@@ -327,6 +327,20 @@ function TimelineContent({
       ],
     )
 
+  const rootLeafIndex = useMemo(
+    () => buildRootLeafIndex(roots, allUniverseItems, options.completed),
+    [roots, allUniverseItems, options.completed],
+  )
+  const [currentLeafByRoot, setCurrentLeafByRoot] = useState({})
+  const [activeNavigatorRootId, setActiveNavigatorRootId] = useState(null)
+  const [navigatorVisible, setNavigatorVisible] = useState(false)
+  const [navigatorMinimized, setNavigatorMinimized] = useState(false)
+  const [navigatorPosition, setNavigatorPosition] = useState(null)
+  const [navigationTarget, setNavigationTarget] = useState(null)
+  const [editingTaskId, setEditingTaskId] = useState(null)
+  const canonicalTreeItem = findTreeItemById(roots, editingTaskId)
+  const navigatorRoots = activeRoots.filter((root) => selectedRoots.includes(root.id))
+
   const find =
     usePriorityFind(
       searchUniverseItems,
@@ -349,10 +363,65 @@ function TimelineContent({
       },
     )
 
+  useEffect(() => {
+    if (find.query.trim()) setNavigationTarget(null)
+  }, [find.query])
+
   const [
     anchoredActive,
     setAnchoredActive,
   ] = useState(false)
+
+  function selectNavigationTask(entry, rootId) {
+    if (!entry?.date) return
+    setCurrentLeafByRoot((current) => ({ ...current, [rootId]: entry.id }))
+    setActiveNavigatorRootId(rootId)
+    setNavigationTarget({ id: entry.id, date: entry.date })
+    find.changeQuery('')
+    setAnchoredActive(false)
+    jump(entry.date, { rootNavigation: true })
+    explicitLeafByRoot.current.set(rootId, entry.id)
+  }
+
+  function navigateRoot(rootId, direction) {
+    const next = stepRootLeaf(rootLeafIndex.get(rootId) ?? [], displayCurrentLeafByRoot[rootId], direction)
+    if (next) selectNavigationTask(next, rootId)
+  }
+
+  function toggleRoot(id) {
+    const removing = selectedRoots.includes(id)
+    const next = removing ? selectedRoots.filter((root) => root !== id) : [...selectedRoots, id]
+    update({ roots: next })
+    if (!removing) {
+      const initial = findInitialVisibleRootLeaf(rootLeafIndex.get(id) ?? [], renderedTaskItems.current, visibleDateKeys)
+      if (initial && !explicitLeafByRoot.current.has(id)) setCurrentLeafByRoot((current) => ({ ...current, [id]: initial.id }))
+      setActiveNavigatorRootId(id)
+      setNavigatorVisible(true)
+    } else {
+      explicitLeafByRoot.current.delete(id)
+      if (activeNavigatorRootId === id) setActiveNavigatorRootId(next[0] ?? null)
+      if (!next.length) setNavigatorVisible(false)
+      if ((rootLeafIndex.get(id) ?? []).some((entry) => entry.id === navigationTarget?.id)) setNavigationTarget(null)
+    }
+  }
+
+  function deselectRoots() {
+    explicitLeafByRoot.current.clear()
+    update({ roots: [] })
+    setNavigatorVisible(false)
+    setActiveNavigatorRootId(null)
+    setNavigationTarget(null)
+  }
+
+  // Reconcile tree refreshes and completion visibility without retaining stale task objects.
+  useEffect(() => {
+    if (!selectedRoots.length) setNavigatorVisible(false)
+    if (!selectedRoots.includes(activeNavigatorRootId)) setActiveNavigatorRootId(selectedRoots[0] ?? null)
+    if (navigationTarget && !selectedRoots.some((id) =>
+      (rootLeafIndex.get(id) ?? []).some((entry) => entry.id === navigationTarget.id && entry.date != null))) {
+      setNavigationTarget(null)
+    }
+  }, [selectedRoots, activeNavigatorRootId, rootLeafIndex, navigationTarget])
 
   const anchoredItems =
     useMemo(
@@ -528,6 +597,10 @@ function TimelineContent({
         return
       }
 
+      if (target instanceof Element && target.closest('.timeline-task-navigator')) {
+        return
+      }
+
       if (
         event.key ===
           'ArrowRight' ||
@@ -589,7 +662,8 @@ function TimelineContent({
         allItems
           .filter(
             (item) =>
-              find.query.trim()
+              (navigationTarget?.id === item.id && (options.completed || !item.is_completed)) ||
+              (find.query.trim()
                 ? find.matchIds.has(
                     item.id,
                   )
@@ -631,7 +705,7 @@ function TimelineContent({
                       )
                     )
                   )
-                ),
+                )),
           )
           .sort(
             (a, b) =>
@@ -655,6 +729,7 @@ function TimelineContent({
           ),
       [
         allItems,
+        navigationTarget,
         options,
         selectedRoots,
         find.query,
@@ -815,6 +890,34 @@ function TimelineContent({
       ],
     )
 
+  // Board reports its concentrated, date-visible cards in a ref, never canonical state.
+  // Keep explicit arrow/list targets stable while the async date query refreshes.
+  useEffect(() => {
+    setCurrentLeafByRoot((current) => {
+      let next = current
+      for (const rootId of selectedRoots) {
+        const entries = rootLeafIndex.get(rootId) ?? []
+        const explicitId = explicitLeafByRoot.current.get(rootId)
+        if (entries.some((entry) => entry.id === explicitId && entry.date != null)) continue
+        const initial = findInitialVisibleRootLeaf(entries, renderedTaskItems.current, visibleDateKeys)
+        if (initial && current[rootId] !== initial.id) {
+          if (next === current) next = { ...current }
+          next[rootId] = initial.id
+        }
+      }
+      return next
+    })
+  }, [selectedRoots, rootLeafIndex, visibleDateKeys, items])
+
+  const displayCurrentLeafByRoot = { ...currentLeafByRoot }
+  for (const rootId of selectedRoots) {
+    const entries = rootLeafIndex.get(rootId) ?? []
+    if (!entries.some((entry) => entry.date != null && entry.id === displayCurrentLeafByRoot[rootId])) {
+      const initial = findInitialVisibleRootLeaf(entries, items, visibleDateKeys)
+      if (initial) displayCurrentLeafByRoot[rootId] = initial.id
+    }
+  }
+
   const boardFind =
     useMemo(
       () => {
@@ -836,17 +939,39 @@ function TimelineContent({
           }
         }
 
+        if (navigationTarget) matchIds.add(navigationTarget.id)
         return {
           ...find,
+          currentId: navigationTarget?.id ?? find.currentId,
           matchIds,
         }
       },
       [
         find,
+        navigationTarget,
         anchoredActive,
         anchoredItems,
       ],
     )
+
+  useEffect(() => {
+    if (!navigationTarget || query.isPending) return
+    // Wait for Board's concentration reset and the new query's cards to commit.
+    const frame = requestAnimationFrame(() => {
+      const container = scrollRef.current
+      const card = container?.querySelector(`[data-timeline-task-id="${navigationTarget.id}"]`)
+      if (!card) return
+      // Scroll only the board; never move document scroll or input/dialog focus.
+      const bounds = container.getBoundingClientRect()
+      const rect = card.getBoundingClientRect()
+      const axisHeight = container.querySelector('.timeline-axis')?.getBoundingClientRect().height ?? 0
+      const top = bounds.top + axisHeight
+      const dy = rect.top < top ? rect.top - top : rect.bottom > bounds.bottom ? rect.bottom - bounds.bottom : 0
+      const dx = rect.left < bounds.left ? rect.left - bounds.left : rect.right > bounds.right ? rect.right - bounds.right : 0
+      if (dx || dy) container.scrollTo({ top: container.scrollTop + dy, left: container.scrollLeft + dx })
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [navigationTarget, items, query.isPending])
 
   const dateHighlights =
     useMemo(
@@ -875,7 +1000,7 @@ function TimelineContent({
   return (
     <div className="timeline-page">
       <TimelineSidebar
-        roots={roots}
+        roots={activeRoots}
         selected={
           selectedRoots
         }
@@ -888,23 +1013,11 @@ function TimelineContent({
         retry={() =>
           tree.refetch()
         }
-        toggle={(id) =>
-          update({
-            roots:
-              selectedRoots.includes(
-                id,
-              )
-                ? selectedRoots.filter(
-                    (root) =>
-                      root !==
-                      id,
-                  )
-                : [
-                    ...selectedRoots,
-                    id,
-                  ],
-          })
-        }
+        toggle={toggleRoot}
+        rootLeafIndex={rootLeafIndex}
+        currentLeafByRoot={displayCurrentLeafByRoot}
+        navigateRoot={navigateRoot}
+        deselectRoots={deselectRoots}
         schedulerRuntime={
           query.data?.scheduler
         }
@@ -939,6 +1052,7 @@ function TimelineContent({
         settingsOpen={
           settingsOpen
         }
+        openSettings={() => setSettingsOpen(true)}
         toggleSettings={() =>
           setSettingsOpen(
             (value) =>
@@ -1150,6 +1264,9 @@ function TimelineContent({
             className="timeline-board-host"
           >
             <TimelineBoard
+              onEditTask={setEditingTaskId}
+              navigationTarget={navigationTarget}
+              onVisibleTaskItemsChange={recordRenderedTasks}
               scale={scale}
               items={items}
               data={
@@ -1208,6 +1325,29 @@ function TimelineContent({
         </>
       )}
 
+      {navigatorVisible && navigatorRoots.length > 0 && (
+        <TimelineTaskNavigator
+          selectedRoots={navigatorRoots} rootLeafIndex={rootLeafIndex}
+          activeRootId={activeNavigatorRootId} currentLeafByRoot={displayCurrentLeafByRoot}
+          minimized={navigatorMinimized} onSetMinimized={setNavigatorMinimized}
+          onSetActiveRoot={setActiveNavigatorRootId} onSelectTask={selectNavigationTask}
+          onClose={() => setNavigatorVisible(false)}
+          position={navigatorPosition} setPosition={setNavigatorPosition}
+        />
+      )}
+      {editingTaskId != null && (
+        <div className="timeline-task-editor fixed right-0 top-1/2 z-40 -translate-y-1/2">
+          {canonicalTreeItem ? (
+            <CreatePlanningItemPanel key={editingTaskId} editingItem={canonicalTreeItem}
+              onClose={() => setEditingTaskId(null)} onUpdated={() => setEditingTaskId(null)} />
+          ) : (
+            <div role="status">
+              {tree.isPending ? 'Loading task…' : 'Task is unavailable in the planning tree.'}
+              <button type="button" onClick={() => setEditingTaskId(null)}>Close task panel</button>
+            </div>
+          )}
+        </div>
+      )}
       {anchorRequest && (
         <AnchorDialog
           key={

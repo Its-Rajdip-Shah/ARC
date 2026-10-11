@@ -21,6 +21,7 @@ export default defineConfig({
       true,
 
     include: [
+      'src/features/timeline/TimelineWorkflows.test.jsx',
       'src/features/planner/components/CreatePlanningItemPanel.test.jsx',
       'src/hooks/usePriorityOrder.test.jsx',
       'src/hooks/useFocus.test.js',

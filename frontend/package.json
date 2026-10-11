@@ -8,7 +8,7 @@
     "build": "vite build",
     "lint": "oxlint .",
     "preview": "vite preview",
-    "test:node": "node --test \"src/dnd/focus/focusProjection.test.js\" \"src/dnd/planner/plannerDragScenario.test.js\" \"src/dnd/planner/plannerProjection.test.js\" \"src/dnd/planner/plannerSidebarProjection.test.js\" \"src/dnd/planner/plannerVisualPlacement.test.js\" \"src/dnd/priority/priorityProjection.test.js\" \"src/dnd/timeline/timelineProjection.test.js\" \"src/features/focus/focusQueueModel.test.js\" \"src/features/focus/focusRendering.test.js\" \"src/features/planner/studyPlanConflicts.test.js\" \"src/features/timeline/timelineActions.test.js\" \"src/features/timeline/timelineRendering.test.js\" \"src/lib/latestIntentQueue.test.js\" \"src/lib/planningOptimistic.test.js\"",
+    "test:node": "node --test \"src/dnd/focus/focusProjection.test.js\" \"src/dnd/planner/plannerDragScenario.test.js\" \"src/dnd/planner/plannerProjection.test.js\" \"src/dnd/planner/plannerSidebarProjection.test.js\" \"src/dnd/planner/plannerVisualPlacement.test.js\" \"src/dnd/priority/priorityProjection.test.js\" \"src/dnd/timeline/timelineProjection.test.js\" \"src/features/focus/focusQueueModel.test.js\" \"src/features/focus/focusRendering.test.js\" \"src/features/planner/studyPlanConflicts.test.js\" \"src/features/timeline/timelineActions.test.js\" \"src/features/timeline/timelineRendering.test.js\" \"src/features/timeline/timelineRootNavigation.test.js\" \"src/lib/latestIntentQueue.test.js\" \"src/lib/planningOptimistic.test.js\"",
     "test:unit": "vitest run",
     "test:e2e": "playwright test"
   },

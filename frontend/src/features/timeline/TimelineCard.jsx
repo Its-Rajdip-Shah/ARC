@@ -11,6 +11,7 @@ import {
   todayKey,
 } from './timelineDates'
 
+import TimelineDescription from './TimelineDescription'
 import DurationGlyph from './DurationGlyph'
 import useHoverIntent from './useHoverIntent'
 import {
@@ -25,6 +26,8 @@ export default function TimelineCard({
   readOnly = false,
   expanded = false,
   onAnchor,
+  onEdit = null,
+  expansionVariant = 'default',
 }) {
   const [
     hoverExpanded,
@@ -96,6 +99,12 @@ export default function TimelineCard({
   return (
     <article
       tabIndex={-1}
+      data-timeline-task-id={readOnly ? undefined : item.id}
+      onDoubleClick={(event) => {
+        if (readOnly || event.target.closest('button, input, select, textarea, a, [contenteditable]:not([contenteditable="false"])')) return
+        event.stopPropagation()
+        onEdit?.(item.id)
+      }}
       ref={
         readOnly
           ? undefined
@@ -122,6 +131,8 @@ export default function TimelineCard({
       }}
       className={
         'timeline-card ' +
+        (expansionVariant === 'selected-date' ? 'timeline-card-selected-date ' : '') +
+        (hoverExpanded ? 'timeline-card-hover-intent ' : '') +
         (
           item.scheduled_date ===
           todayKey()
@@ -276,6 +287,7 @@ export default function TimelineCard({
       </div>
 
       <div className="timeline-card-details">
+        <TimelineDescription description={item.description} />
         {sessionText && (
           <p>
             {sessionText}

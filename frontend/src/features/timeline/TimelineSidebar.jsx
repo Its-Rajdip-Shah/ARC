@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { ChevronLeft, ChevronRight } from 'lucide-react'
 
 import arcLogo from '../../assets/brand/arc-logo.svg'
 import { subjectLabel } from '../../lib/subjectLabel'
@@ -14,6 +15,10 @@ export default function TimelineSidebar({
   retry,
   schedulerRuntime,
   actions,
+  rootLeafIndex = new Map(),
+  currentLeafByRoot = {},
+  navigateRoot,
+  deselectRoots,
 }) {
   const [
     subjectsOpen,
@@ -85,6 +90,9 @@ export default function TimelineSidebar({
           </h2>
         </div>
 
+        {selected.length > 1 && selected.length < roots.length && (
+          <button type="button" className="timeline-deselect-roots" onClick={deselectRoots}>Deselect all</button>
+        )}
         <div
           id="timeline-subjects"
           className="timeline-subject-list space-y-1"
@@ -118,9 +126,13 @@ export default function TimelineSidebar({
                   root.id,
                 )
 
+              const entries = rootLeafIndex.get(root.id) ?? []
+              const navigable = entries.filter((entry) => entry.date != null)
+              const position = navigable.length ? Math.max(1, navigable.findIndex((entry) => entry.id === currentLeafByRoot[root.id]) + 1) : 0
+              const missing = entries.length - navigable.length
               return (
+                <div key={root.id}>
                 <button
-                  key={root.id}
                   type="button"
                   aria-pressed={
                     active
@@ -160,6 +172,15 @@ export default function TimelineSidebar({
                     )}
                   </span>
                 </button>
+                {active && (
+                  <div className="timeline-root-navigation" role="group" aria-label={`Tasks in ${root.title}`}>
+                    <button type="button" className="timeline-root-navigation-arrow" disabled={!navigable.length} aria-label={`Previous task in ${root.title}`} onClick={(event) => { event.stopPropagation(); navigateRoot(root.id, -1) }}><ChevronLeft size={14} /></button>
+                    <span className="timeline-root-navigation-count">{position}/{navigable.length}</span>
+                    <button type="button" className="timeline-root-navigation-arrow" disabled={!navigable.length} aria-label={`Next task in ${root.title}`} onClick={(event) => { event.stopPropagation(); navigateRoot(root.id, 1) }}><ChevronRight size={14} /></button>
+                  </div>
+                )}
+                {active && missing > 0 && <small className="timeline-root-navigation-missing">{missing} schedule unavailable</small>}
+                </div>
               )
             },
           )}

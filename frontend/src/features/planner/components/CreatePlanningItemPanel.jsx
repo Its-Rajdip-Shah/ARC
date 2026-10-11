@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { CalendarDays, Plus, X } from 'lucide-react'
-import TaskPrerequisites from './TaskPrerequisites'
 
 import {
   createItem,
@@ -30,8 +29,6 @@ export default function CreatePlanningItemPanel({
   onUpdated,
 }) {
   const queryClient = useQueryClient()
-  const [detailsDirty, setDetailsDirty] = useState(false)
-  const [managingPrerequisites, setManagingPrerequisites] = useState(false)
 
   const [itemType, setItemType] = useState(editingItem?.item_type ?? 'TASK')
   const [title, setTitle] = useState(editingItem?.title ?? '')
@@ -72,8 +69,6 @@ export default function CreatePlanningItemPanel({
   })
 
   useEffect(() => {
-    setDetailsDirty(false)
-    setManagingPrerequisites(false)
     /*
      * EDIT MODE
      * Populate the form exclusively from the item being edited.
@@ -144,7 +139,6 @@ export default function CreatePlanningItemPanel({
   })
 
   function toggleTag(tagId) {
-    setDetailsDirty(true)
     setSelectedTagIds((current) =>
       current.includes(tagId)
         ? current.filter((id) => id !== tagId)
@@ -153,7 +147,6 @@ export default function CreatePlanningItemPanel({
   }
 
   function handleCreateTag() {
-    setDetailsDirty(true)
     const name = tagInput.trim()
 
     if (!name || createTagMutation.isPending) {
@@ -264,12 +257,7 @@ export default function CreatePlanningItemPanel({
         <X size={16} strokeWidth={1.9} />
       </button>
 
-      {editingItem && !managingPrerequisites && <div className="mb-3 text-xs text-white">
-        <button type="button" disabled={detailsDirty || updateItemMutation.isPending} onClick={() => setManagingPrerequisites(true)}>Manage prerequisites</button>
-        <p>{detailsDirty ? 'Save task details and reopen the editor to manage prerequisites.' : 'Prerequisites are saved in a separate workflow.'}</p>
-      </div>}
-      {managingPrerequisites ? <TaskPrerequisites itemId={editingItem.id} onBack={() => setManagingPrerequisites(false)} /> :
-      <form onSubmit={handleSubmit} onChangeCapture={() => setDetailsDirty(true)}>
+      <form onSubmit={handleSubmit}>
         <div
           className="
             flex h-[26px] w-full overflow-hidden
@@ -279,7 +267,7 @@ export default function CreatePlanningItemPanel({
         >
           <button
             type="button"
-            onClick={() => { setDetailsDirty(true); setItemType('TASK') }}
+            onClick={() => setItemType('TASK')}
             className={`
               flex flex-1 items-center justify-center rounded-[28px]
               ${itemType === 'TASK' ? 'bg-[#4d569c]' : ''}
@@ -290,7 +278,7 @@ export default function CreatePlanningItemPanel({
 
           <button
             type="button"
-            onClick={() => { setDetailsDirty(true); setItemType('ASSIGNMENT') }}
+            onClick={() => setItemType('ASSIGNMENT')}
             className={`
               flex flex-1 items-center justify-center rounded-[28px]
               ${itemType === 'ASSIGNMENT' ? 'bg-[#4d569c]' : ''}
@@ -428,7 +416,7 @@ export default function CreatePlanningItemPanel({
             Original estimate:
           </p>
 
-          <div className="flex gap-[5px]">
+          <div role="group" aria-label="Original estimate" className="grid grid-cols-3 gap-[5px] min-w-0">
             {[
               ['UNDER_20_MINUTES', '<20m'],
               ['UNDER_1_HOUR', '<1h'],
@@ -440,14 +428,14 @@ export default function CreatePlanningItemPanel({
               <button
                 key={value}
                 type="button"
+                aria-pressed={durationCategory === value}
                 onClick={() => {
-                  setDetailsDirty(true)
                   setDurationCategory(
                     durationCategory === value ? '' : value,
                   )
                 }}
                 className={`
-                  flex-1 rounded-[8px]
+                  min-w-0 rounded-[8px]
                   border border-[#2e286b]
                   px-1 py-[5px]
                   text-[11px] text-white
@@ -464,11 +452,12 @@ export default function CreatePlanningItemPanel({
           </div>
         </div>
 
-        {editingItem && <p className="mt-3 text-xs text-white" role="status">
-          Completed: {Number(editingItem.percent_completed ?? 0)}%.
-          {editingItem.remaining_fraction != null && <> Remaining estimated work: {Math.round(Number(editingItem.remaining_fraction) * 100)}% of the original estimate.</>}
-          {' '}Progress is maintained by confirmed allocations.
-        </p>}
+        {editingItem && ['UNDER_8_HOURS', 'UNDER_16_HOURS', 'OVER_16_HOURS'].includes(durationCategory) && (
+          <p className="mt-2 text-[11px] text-white/50" role="status">
+            Progress {Number(editingItem.percent_completed ?? 0)}%
+            {editingItem.remaining_fraction != null && <> · Remaining {Math.round(Number(editingItem.remaining_fraction) * 100)}%</>}
+          </p>
+        )}
 
         {/* Assignment-only */}
         {itemType === 'ASSIGNMENT' && (
@@ -571,7 +560,7 @@ export default function CreatePlanningItemPanel({
               ? 'CREATING...'
               : 'CREATE'}
         </button>
-      </form>}
+      </form>
     </aside>
   )
 }

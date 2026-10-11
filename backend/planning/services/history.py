@@ -498,6 +498,19 @@ def _restore_siblings(user, states):
 def _apply_delta(user, state, action_type):
     """Apply one operation-scoped state payload."""
 
+    if 'dependency' in state:
+        from planning.services import dependencies
+        edge = state['dependency']
+        endpoints = PlanningItem.objects.filter(user=user, is_deleted=False)
+        prerequisite = endpoints.filter(pk=edge['prerequisite_id']).first()
+        dependent = endpoints.filter(pk=edge['dependent_id']).first()
+        if prerequisite is None or dependent is None:
+            from django.core.exceptions import ValidationError
+            raise ValidationError('Restore dependency endpoints before undoing this edit.')
+        operation = dependencies.add if edge['present'] else dependencies.remove
+        operation(prerequisite, dependent)
+        return
+
     if action_type == "PRIORITY":
         # Ignore legacy whole-hierarchy 'siblings' snapshots. New checkpoints
         # explicitly name leaf slots, and restoration cannot write containers.

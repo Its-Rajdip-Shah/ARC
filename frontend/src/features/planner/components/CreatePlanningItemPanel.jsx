@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { CalendarDays, Plus, X } from 'lucide-react'
+import TaskPrerequisites from './TaskPrerequisites'
 
 import {
   createItem,
@@ -29,14 +30,16 @@ export default function CreatePlanningItemPanel({
   onUpdated,
 }) {
   const queryClient = useQueryClient()
+  const [detailsDirty, setDetailsDirty] = useState(false)
+  const [managingPrerequisites, setManagingPrerequisites] = useState(false)
 
   const [itemType, setItemType] = useState(editingItem?.item_type ?? 'TASK')
   const [title, setTitle] = useState(editingItem?.title ?? '')
   const [description, setDescription] = useState(editingItem?.description ?? '')
   const [tagInput, setTagInput] = useState('')
   const [selectedTagIds, setSelectedTagIds] = useState(() => (editingItem?.tags ?? []).map((tag) => tag.id))
-  const [startDate, setStartDate] = useState(editingItem?.start_date ?? '')
-  const [dueDate, setDueDate] = useState(editingItem?.due_date ?? '')
+  const [startDate, setStartDate] = useState((editingItem ? editingItem.start_date : parentItem?.start_date) ?? '')
+  const [dueDate, setDueDate] = useState((editingItem ? editingItem.due_date : parentItem?.due_date) ?? '')
   const [durationCategory, setDurationCategory] = useState(editingItem?.duration_category ?? '')
   const [weightPercent, setWeightPercent] = useState(editingItem?.assignment_detail?.weight_percent ?? '')
   const [submissionUrl, setSubmissionUrl] = useState(editingItem?.assignment_detail?.submission_url ?? '')
@@ -69,6 +72,8 @@ export default function CreatePlanningItemPanel({
   })
 
   useEffect(() => {
+    setDetailsDirty(false)
+    setManagingPrerequisites(false)
     /*
      * EDIT MODE
      * Populate the form exclusively from the item being edited.
@@ -111,8 +116,8 @@ export default function CreatePlanningItemPanel({
         typeof tag === 'object' ? tag.id : tag
       )
     )
-    setStartDate('')
-    setDueDate('')
+    setStartDate(parentItem?.start_date ?? '')
+    setDueDate(parentItem?.due_date ?? '')
     setDurationCategory('')
     setWeightPercent('')
     setSubmissionUrl('')
@@ -122,17 +127,7 @@ export default function CreatePlanningItemPanel({
     mutationFn: ({ id, payload }) => updateItem(id, payload),
 
     onSuccess: async () => {
-      await queryClient.invalidateQueries({
-        queryKey: ['planning', 'tree'],
-      })
-
-      await queryClient.invalidateQueries({
-        queryKey: ['planning', 'priority'],
-      })
-
-      await queryClient.invalidateQueries({
-        queryKey: ['planning', 'history'],
-      })
+      await queryClient.invalidateQueries({ queryKey: ['planning'] })
 
       onUpdated?.()
     },
@@ -142,19 +137,14 @@ export default function CreatePlanningItemPanel({
     mutationFn: createItem,
 
     onSuccess: async () => {
-      await queryClient.invalidateQueries({
-        queryKey: ['planning', 'tree'],
-      })
-
-      await queryClient.invalidateQueries({
-        queryKey: ['planning', 'history'],
-      })
+      await queryClient.invalidateQueries({ queryKey: ['planning'] })
 
       onCreated?.()
     },
   })
 
   function toggleTag(tagId) {
+    setDetailsDirty(true)
     setSelectedTagIds((current) =>
       current.includes(tagId)
         ? current.filter((id) => id !== tagId)
@@ -163,6 +153,7 @@ export default function CreatePlanningItemPanel({
   }
 
   function handleCreateTag() {
+    setDetailsDirty(true)
     const name = tagInput.trim()
 
     if (!name || createTagMutation.isPending) {
@@ -200,6 +191,10 @@ export default function CreatePlanningItemPanel({
       return
     }
 
+    if (startDate && dueDate && startDate > dueDate) {
+      return
+    }
+
     const payload = {
       ...(editingItem ? {} : { parent: parentId }),
       item_type: itemType,
@@ -208,13 +203,8 @@ export default function CreatePlanningItemPanel({
       tag_ids: selectedTagIds,
     }
 
-    if (startDate) {
-      payload.start_date = startDate
-    }
-
-    if (dueDate) {
-      payload.due_date = dueDate
-    }
+    payload.start_date = startDate || null
+    payload.due_date = dueDate || null
 
     if (durationCategory) {
       payload.duration_category = durationCategory
@@ -274,7 +264,12 @@ export default function CreatePlanningItemPanel({
         <X size={16} strokeWidth={1.9} />
       </button>
 
-      <form onSubmit={handleSubmit}>
+      {editingItem && !managingPrerequisites && <div className="mb-3 text-xs text-white">
+        <button type="button" disabled={detailsDirty || updateItemMutation.isPending} onClick={() => setManagingPrerequisites(true)}>Manage prerequisites</button>
+        <p>{detailsDirty ? 'Save task details and reopen the editor to manage prerequisites.' : 'Prerequisites are saved in a separate workflow.'}</p>
+      </div>}
+      {managingPrerequisites ? <TaskPrerequisites itemId={editingItem.id} onBack={() => setManagingPrerequisites(false)} /> :
+      <form onSubmit={handleSubmit} onChangeCapture={() => setDetailsDirty(true)}>
         <div
           className="
             flex h-[26px] w-full overflow-hidden
@@ -284,7 +279,7 @@ export default function CreatePlanningItemPanel({
         >
           <button
             type="button"
-            onClick={() => setItemType('TASK')}
+            onClick={() => { setDetailsDirty(true); setItemType('TASK') }}
             className={`
               flex flex-1 items-center justify-center rounded-[28px]
               ${itemType === 'TASK' ? 'bg-[#4d569c]' : ''}
@@ -295,7 +290,7 @@ export default function CreatePlanningItemPanel({
 
           <button
             type="button"
-            onClick={() => setItemType('ASSIGNMENT')}
+            onClick={() => { setDetailsDirty(true); setItemType('ASSIGNMENT') }}
             className={`
               flex flex-1 items-center justify-center rounded-[28px]
               ${itemType === 'ASSIGNMENT' ? 'bg-[#4d569c]' : ''}
@@ -430,7 +425,7 @@ export default function CreatePlanningItemPanel({
         {/* Manual estimate */}
         <div className="mt-[15px]">
           <p className="mb-[6px] text-[12px] text-white">
-            Estimated:
+            Original estimate:
           </p>
 
           <div className="flex gap-[5px]">
@@ -445,11 +440,12 @@ export default function CreatePlanningItemPanel({
               <button
                 key={value}
                 type="button"
-                onClick={() =>
+                onClick={() => {
+                  setDetailsDirty(true)
                   setDurationCategory(
                     durationCategory === value ? '' : value,
                   )
-                }
+                }}
                 className={`
                   flex-1 rounded-[8px]
                   border border-[#2e286b]
@@ -467,6 +463,12 @@ export default function CreatePlanningItemPanel({
             ))}
           </div>
         </div>
+
+        {editingItem && <p className="mt-3 text-xs text-white" role="status">
+          Completed: {Number(editingItem.percent_completed ?? 0)}%.
+          {editingItem.remaining_fraction != null && <> Remaining estimated work: {Math.round(Number(editingItem.remaining_fraction) * 100)}% of the original estimate.</>}
+          {' '}Progress is maintained by confirmed allocations.
+        </p>}
 
         {/* Assignment-only */}
         {itemType === 'ASSIGNMENT' && (
@@ -512,8 +514,24 @@ export default function CreatePlanningItemPanel({
           </div>
         )}
 
+        {startDate && dueDate && startDate > dueDate && (
+          <p role="alert" className="mt-3 text-[11px] text-[#e87979]">
+            Due date cannot be earlier than start date.
+          </p>
+        )}
+
+        {updateItemMutation.isError && (
+          <p role="alert" className="mt-3 text-[11px] text-[#e87979]">
+            {JSON.stringify(
+              updateItemMutation.error?.response?.data ??
+                updateItemMutation.error?.message ??
+                'Could not update item.'
+            )}
+          </p>
+        )}
+
         {createItemMutation.isError && (
-          <div className="mt-3 text-[11px] text-[#e87979]">
+          <div role="alert" className="mt-3 text-[11px] text-[#e87979]">
             <p>Could not create item.</p>
             <pre className="mt-1 whitespace-pre-wrap break-words">
               {JSON.stringify(
@@ -530,6 +548,7 @@ export default function CreatePlanningItemPanel({
           type="submit"
           disabled={
             !title.trim() ||
+            Boolean(startDate && dueDate && startDate > dueDate) ||
             createItemMutation.isPending ||
             updateItemMutation.isPending
           }
@@ -552,7 +571,7 @@ export default function CreatePlanningItemPanel({
               ? 'CREATING...'
               : 'CREATE'}
         </button>
-      </form>
+      </form>}
     </aside>
   )
 }

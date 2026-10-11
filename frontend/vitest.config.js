@@ -21,6 +21,8 @@ export default defineConfig({
       true,
 
     include: [
+      'src/features/planner/components/CreatePlanningItemPanel.test.jsx',
+      'src/hooks/usePriorityOrder.test.jsx',
       'src/hooks/useFocus.test.js',
       'src/components/SessionHydrator.test.jsx',
       'src/lib/calendarDates.test.js',

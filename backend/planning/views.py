@@ -13,6 +13,7 @@ from decimal import Decimal
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
 from django.db.models import Exists, OuterRef
+from django.shortcuts import get_object_or_404
 from planning.services.calendar_dates import user_local_date
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import (
@@ -166,6 +167,40 @@ class PlanningItemViewSet(UserScopedMixin, viewsets.ModelViewSet):
     queryset = PlanningItem.objects.all()
     filter_backends = [SearchFilter]
     search_fields = ['title', 'description', 'tags__name']
+
+    @action(detail=True, methods=['get', 'post', 'delete'])
+    @transaction.atomic
+    def prerequisites(self, request, pk=None):
+        """Independent dependency edits; every mutation uses the canonical service."""
+        if request.method != 'GET':
+            priority._lock(request.user)
+        item = self.get_object()
+        if request.method != 'GET':
+            payload = serializers.Serializer(data=request.data)
+            payload.fields['prerequisite_id'] = serializers.IntegerField(min_value=1)
+            payload.is_valid(raise_exception=True)
+            prerequisite = get_object_or_404(
+                PlanningItem.objects.filter(user=request.user, is_deleted=False),
+                pk=payload.validated_data['prerequisite_id'],
+            )
+            present = dependencies.prerequisites_for(item).filter(pk=prerequisite.pk).exists()
+            requested_present = request.method == 'POST'
+            if present != requested_present:
+                try:
+                    operation = dependencies.add if requested_present else dependencies.remove
+                    operation(prerequisite, item)
+                except DjangoValidationError as exc:
+                    raise _as_400(exc)
+                state = {'prerequisite_id': prerequisite.pk, 'dependent_id': item.pk}
+                history.record_checkpoint(
+                    request.user, 'UPDATE',
+                    {'dependency': {**state, 'present': present}},
+                    {'dependency': {**state, 'present': requested_present}},
+                )
+        prerequisites = dependencies.prerequisites_for(item).filter(
+            user=request.user, is_deleted=False,
+        )
+        return Response(self.get_serializer(prerequisites, many=True).data)
 
     def get_queryset(self):
         queryset = (

@@ -101,7 +101,14 @@ class TimelineNavigationItemSerializer(serializers.ModelSerializer):
         ]
 
 
-class PlanningItemSerializer(serializers.ModelSerializer):
+class RemainingWorkMixin:
+    def get_remaining_fraction(self, item):
+        from planning.services.scheduler_v1 import _remaining_fraction
+        return '0' if item.is_completed else str(_remaining_fraction(item))
+
+
+class PlanningItemSerializer(RemainingWorkMixin, serializers.ModelSerializer):
+    remaining_fraction = serializers.SerializerMethodField()
     tags = TagSerializer(many=True, read_only=True)
     tag_ids = UserScopedPrimaryKeyRelatedField(
         many=True, queryset=Tag.objects.all(), source='tags', required=False,
@@ -119,7 +126,7 @@ class PlanningItemSerializer(serializers.ModelSerializer):
             'id', 'parent', 'item_type', 'title', 'description', 'sibling_order',
             'start_date', 'due_date', 'scheduled_date', 'execution_rank',
             'completed_display_date', 'manual_requested_date', 'manual_anchor_origin_date',
-            'duration_category', 'percent_completed',
+            'duration_category', 'percent_completed', 'remaining_fraction',
             'priority_position', 'is_completed', 'has_deadline',
             'canvas_object_type', 'canvas_object_id',
             'tags', 'tag_ids', 'assignment_detail',
@@ -202,12 +209,13 @@ class PlanningItemSerializer(serializers.ModelSerializer):
         """Rewrite the junction rows rather than using the m2m manager, so the
         explicit through model stays the single way rows are created."""
         PlanningItemTag.objects.filter(planning_item=item).delete()
+        unique_tags = {tag.pk: tag for tag in tags}.values()
         PlanningItemTag.objects.bulk_create(
-            [PlanningItemTag(planning_item=item, tag=tag) for tag in tags]
+            [PlanningItemTag(planning_item=item, tag=tag) for tag in unique_tags]
         )
 
 
-class PlanningItemTreeSerializer(serializers.ModelSerializer):
+class PlanningItemTreeSerializer(RemainingWorkMixin, serializers.ModelSerializer):
     """A Text View node (FR-06). ``children`` is filled in by the view, which
     already has the whole tree in memory."""
 
@@ -215,6 +223,7 @@ class PlanningItemTreeSerializer(serializers.ModelSerializer):
     assignment_detail = AssignmentDetailSerializer(read_only=True)
     depth = serializers.IntegerField(read_only=True)
     children = serializers.SerializerMethodField()
+    remaining_fraction = serializers.SerializerMethodField()
 
     #: Recursive, so the schema describes children as a list of nodes rather
     #: than trying to expand the nesting forever.
@@ -225,7 +234,7 @@ class PlanningItemTreeSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'parent', 'item_type', 'title', 'description', 'depth',
             'sibling_order', 'start_date', 'due_date', 'scheduled_date',
-            'duration_category', 'priority_position', 'is_completed',
+            'duration_category', 'percent_completed', 'remaining_fraction', 'priority_position', 'is_completed',
             'tags', 'assignment_detail', 'children',
         ]
 

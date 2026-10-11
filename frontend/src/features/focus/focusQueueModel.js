@@ -1,5 +1,4 @@
 import { addDays } from '../timeline/timelineDates.js'
-import { bucketForCandidate } from './focusModel.js'
 
 export const addDaysIso = addDays
 
@@ -611,26 +610,45 @@ export function moveQueueItemToSlot(
 }
 
 
-// Resolve only the directly moved task against canonical and pending slots.
-// Reuse the canonical Focus bucket projection, including residual work.
-export function directMovementIntent(groups, itemId, intents = new Map()) {
-  const entries = flattenQueue(groups)
-  const moving = entries.find(({ row }) => row.item_id === itemId)
-  if (!moving) return null
-  const bucket = bucketForCandidate(moving.row)?.id
-  const occupied = new Set()
-  for (const { row } of entries) {
-    if (row.item_id === itemId || bucketForCandidate(row)?.id !== bucket) continue
-    const pending = intents.get(row.item_id)
-    const date = pending?.date ?? row.manual_requested_date
-    const order = pending?.order ?? row.manual_requested_order
-    if (date === moving.date && order != null) occupied.add(order)
+// Preserve the requested slot. Occupancy is resolved by an atomic batch,
+// never by choosing a different destination.
+export function directMovementIntent(groups, itemId) {
+  const moving = flattenQueue(groups).find(({ row }) => row.item_id === itemId)
+  return moving ? { item_id: itemId, date: moving.date, order: moving.localPosition } : null
+}
+
+export function movementIntentsForMove(before, after, itemId, pending = new Map()) {
+  const source = findQueuePosition(before, itemId)
+  const destination = findQueuePosition(after, itemId)
+  if (!source || !destination) return new Map(pending)
+  const intents = new Map(pending)
+  const moving = after.find((group) => group.date === destination.date).rows[destination.index]
+  const previous = pending.get(itemId)
+  const direct = directMovementIntent(after, itemId)
+  // An order-only change must not renew an existing anchor's lifetime.
+  if ((previous?.order_only && previous.date === destination.date) || (!previous && moving.manual_requested_date === destination.date)) {
+    direct.order_only = true
   }
-  let order = moving.localPosition
-  if (occupied.has(order)) {
-    // Match sticky carry-forward's existing lowest-free-positive convention.
-    order = 1
-    while (occupied.has(order)) order += 1
+  intents.set(itemId, direct)
+
+  // Restore historical displacement handling on both affected dates, while
+  // carrying forward only existing Focus anchors or prior explicit intent.
+  for (const group of after) {
+    if (group.date !== source.date && group.date !== destination.date) continue
+    group.rows.forEach((row, index) => {
+      if (row.item_id === itemId) return
+      const old = findQueuePosition(before, row.item_id)
+      if (!old || (old.date === group.date && old.index === index)) return
+      const existing = pending.get(row.item_id)
+      const date = existing?.date ?? row.manual_requested_date
+      const order = existing?.order ?? row.manual_requested_order
+      // Neither automatic neighbours nor date-only Timeline anchors gain
+      // a new date/order commitment merely because another row moved.
+      if (date !== group.date || order == null || order === index + 1) return
+      intents.set(row.item_id, existing
+        ? { ...existing, order: index + 1 }
+        : { item_id: row.item_id, date, order: index + 1, order_only: true })
+    })
   }
-  return { item_id: itemId, date: moving.date, order }
+  return intents
 }

@@ -1852,7 +1852,6 @@ a.timeline-marker::after { content: ""; position: absolute; inset: -7px -2px; }
   pointer-events: none;
 }
 .timeline-card-selected-date.timeline-card-hover-intent .timeline-anchor-button:not(.timeline-anchor-visible),
-.timeline-card-selected-date:focus-within .timeline-anchor-button:not(.timeline-anchor-visible),
 .timeline-card-selected-date .timeline-anchor-button.timeline-anchor-visible {
   opacity: 1;
   pointer-events: auto;

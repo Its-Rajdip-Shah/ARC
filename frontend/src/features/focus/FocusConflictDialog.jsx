@@ -9,6 +9,16 @@ import {
 
 
 const COPY = {
+  queue_order_unrepresentable: {
+    title: 'Queue order cannot be saved',
+    detail: 'The canonical scheduler could not preserve this exact order without changing other task preferences. Cancel this move or explicitly move the affected tasks individually.',
+    icon: AlertTriangle,
+  },
+  anchor_changed: {
+    title: 'Anchor changed',
+    detail: 'An affected task’s date anchor has changed. Cancel this move and retry from the current queue.',
+    icon: AlertTriangle,
+  },
   blocked_dependency: {
     title:
       'Dependency',

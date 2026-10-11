@@ -1446,6 +1446,7 @@ def _apply_anchor_intent(
     change_deadline=False,
     change_release=False,
     allow_overload=False,
+    order_only=False,
 ):
     """Apply canonical manual placement intent without scheduling.
 
@@ -1494,8 +1495,15 @@ def _apply_anchor_intent(
                 "Manual execution order must be positive."
         })
 
+    if order_only and item.manual_requested_date != day:
+        raise SchedulingConflict([{
+            "item_id": item.pk,
+            "code": "anchor_changed",
+        }])
+
     item.manual_requested_date = day
-    item.manual_anchor_origin_date = day
+    if not order_only:
+        item.manual_anchor_origin_date = day
     item.manual_requested_order = order
 
     fields = [
@@ -1606,6 +1614,7 @@ def set_anchor_batch(
     changes,
     *,
     today=None,
+    expected_queue=None,
 ):
     """Apply multiple Focus anchors then run the scheduler exactly once.
 
@@ -1667,6 +1676,31 @@ def set_anchor_batch(
             "item_id":
                 "One or more planning items do not exist."
         })
+
+    expected_orders = {}
+    if expected_queue is not None:
+        expected_ids = [entry["item_id"] for entry in expected_queue]
+        owned_ids = set(PlanningItem.objects.for_user(user).filter(
+            pk__in=expected_ids,
+        ).values_list("pk", flat=True))
+        if (
+            len(set(expected_ids)) != len(expected_ids)
+            or not set(item_ids).issubset(expected_ids)
+            or set(expected_ids) != owned_ids
+        ):
+            raise ValidationError({"expected_queue": "Choose distinct owned tasks, including every changed task."})
+        # Only same-date changes promise a relative execution order. A
+        # cross-date gesture promises the moved task's date anchor, not a
+        # frozen arrangement/date for every automatic neighbour.
+        for change in changes:
+            if items[change["item_id"]].scheduled_date == change["date"]:
+                item = items[change["item_id"]]
+                key = (change["date"], focus_bucket_key(item.duration_category, is_residual=item.is_residual))
+                expected_orders.setdefault(key, set()).add(change["item_id"])
+        expected_orders = {
+            key: [item_id for item_id in expected_ids if item_id in ids]
+            for key, ids in expected_orders.items()
+        }
 
     explicit_slots = [
         (
@@ -1856,6 +1890,7 @@ def set_anchor_batch(
             change[
                 "date"
             ],
+            order_only=change.get("order_only", False),
             order=change.get(
                 "order"
             ),
@@ -1929,6 +1964,34 @@ def set_anchor_batch(
         raise SchedulingConflict(
             blocking_conflicts
         )
+
+    if expected_orders:
+        from . import focus
+
+        candidates = focus._ordered_candidates(user)
+        buckets = {
+            item.pk: focus_bucket_key(item.duration_category, is_residual=item.is_residual)
+            for item in _scheduler_eligible(user, include_blocked=True)
+        }
+        changes_by_id = {change["item_id"]: change for change in changes}
+        for (day, bucket), expected in expected_orders.items():
+            actual = [row.item_id for row in candidates
+                      if row.scheduled_date == day and buckets.get(row.item_id) == bucket]
+            affected_ids = set(expected)
+            relative_order_valid = [item_id for item_id in actual if item_id in affected_ids] == expected
+            # Validate only changed tasks' promised slots. Out-of-range manual
+            # slots retain the scheduler's established overflow semantics.
+            slots_valid = all(
+                changes_by_id[item_id].get("order") is None
+                or changes_by_id[item_id]["order"] > len(actual)
+                or (item_id in actual and actual.index(item_id) + 1 == changes_by_id[item_id]["order"])
+                for item_id in expected
+            )
+            if not relative_order_valid or not slots_valid:
+                raise SchedulingConflict([{
+                    "item_id": expected[0],
+                    "code": "queue_order_unrepresentable",
+                }])
 
     after = _snapshot(
         user,

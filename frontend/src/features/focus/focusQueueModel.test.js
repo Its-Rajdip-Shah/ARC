@@ -4,6 +4,7 @@ import test from 'node:test'
 import {
   changedQueueItemIds,
   directMovementIntent,
+  movementIntentsForMove,
   changesForTouchedRows,
   makeQueueGroups,
   moveQueueItem,
@@ -945,8 +946,7 @@ test(
       )
 
     cumulativeTouched.add(4)
-    const intents = new Map([[2, directMovementIntent(first, 2)]])
-    intents.set(4, directMovementIntent(second, 4, intents))
+    const intents = movementIntentsForMove(first, second, 4, movementIntentsForMove(initial, first, 2))
 
     const changes =
       changesForTouchedRows(
@@ -964,16 +964,16 @@ test(
         {
           item_id: 4,
           date: today,
-          order: 1,
+          order: 2,
         },
         {
           item_id: 2,
           date: today,
-          order: 2,
+          order: 3,
         },
       ],
       (
-        'The latest queued save must preserve earlier direct intent, '
+        'The latest queued save must include earlier explicitly moved tasks, '
         + 'without promoting incidental displacement.'
       ),
     )
@@ -1139,7 +1139,7 @@ test(
 )
 
 
-test('occupied slot preserves anchors and uses the lowest free positive slot', () => {
+test('occupied slot preserves the requested destination instead of silently substituting it', () => {
   const rows = [1, 2].map((id) => row(id, TODAY, {
     manual_requested_date: TODAY, manual_requested_order: id, manual_anchor_origin_date: TODAY,
     focus_bucket: 'boss',
@@ -1148,19 +1148,19 @@ test('occupied slot preserves anchors and uses the lowest free positive slot', (
   const groups = makeQueueGroups([...rows, row(3, TODAY, { focus_bucket: 'boss' })], TODAY)
   const next = moveQueueItem(groups, 3, TODAY, 1)
   const intent = directMovementIntent(next, 3)
-  assert.deepEqual(intent, { item_id: 3, date: TODAY, order: 3 })
+  assert.deepEqual(intent, { item_id: 3, date: TODAY, order: 1 })
   assert.deepEqual(changesForTouchedRows(next, new Set([3]), new Set([TODAY]), new Map([[3, intent]])), [intent])
   assert.deepEqual(rows, before)
 })
 
-test('canonical Focus buckets, including residual classification, have independent slots', () => {
+test('slot requests stay exact for occupied and independent Focus buckets', () => {
   const groups = makeQueueGroups([
     row(1, TODAY, { focus_bucket: 'quick', manual_requested_date: TODAY, manual_requested_order: 1 }),
     row(2, TODAY, { focus_bucket: 'boss', duration_category: 'UNDER_8_HOURS' }),
   ], TODAY)
   assert.equal(directMovementIntent(moveQueueItem(groups, 2, TODAY, 1), 2).order, 1)
   groups[0].rows[1].focus_bucket = 'quick'
-  assert.equal(directMovementIntent(moveQueueItem(groups, 2, TODAY, 1), 2).order, 2)
+  assert.equal(directMovementIntent(moveQueueItem(groups, 2, TODAY, 1), 2).order, 1)
 })
 
 test('cross-date drag anchors only the dragged task', () => {
@@ -1172,15 +1172,85 @@ test('cross-date drag anchors only the dragged task', () => {
   ])
 })
 
-test('repeated moves preserve earlier direct slots instead of accumulating displacement', () => {
+test('repeated moves update earlier explicit intents to preserve the latest requested order', () => {
   const groups = makeQueueGroups([row(1, TODAY), row(2, TODAY), row(3, TODAY), row(4, TODAY)], TODAY)
   const first = moveQueueItem(groups, 3, TODAY, 2)
-  const intents = new Map([[3, directMovementIntent(first, 3)]])
+  const firstIntents = movementIntentsForMove(groups, first, 3)
   const next = moveQueueItem(first, 4, TODAY, 2)
-  intents.set(4, directMovementIntent(next, 4, intents))
+  const intents = movementIntentsForMove(first, next, 4, firstIntents)
   assert.deepEqual(changesForTouchedRows(next, new Set([3, 4]), new Set([TODAY]), intents), [
-    { item_id: 4, date: TODAY, order: 1 },
-    { item_id: 3, date: TODAY, order: 2 },
+    { item_id: 4, date: TODAY, order: 2 },
+    { item_id: 3, date: TODAY, order: 3 },
   ])
   assert.equal(intents.size, 2)
+})
+
+function anchoredRows(count) {
+  return Array.from({ length: count }, (_, index) => row(index + 1, TODAY, {
+    focus_bucket: 'boss', manual_requested_date: TODAY,
+    manual_requested_order: index + 1, manual_anchor_origin_date: '2026-09-28',
+  }))
+}
+
+test('positions 5 and 6 exchange occupied slots in one anchor-preserving batch', () => {
+  const before = makeQueueGroups(anchoredRows(6), TODAY)
+  const after = moveQueueItem(before, 6, TODAY, 5)
+  const intents = movementIntentsForMove(before, after, 6)
+  assert.deepEqual([...intents.values()], [
+    { item_id: 6, date: TODAY, order: 5, order_only: true },
+    { item_id: 5, date: TODAY, order: 6, order_only: true },
+  ])
+  assert.deepEqual(after[0].rows.map(row => row.item_id), [1, 2, 3, 4, 6, 5])
+  assert.equal(before[0].rows[4].manual_anchor_origin_date, '2026-09-28')
+})
+
+test('drag 4 above 2 and repeated moves renumber only affected anchored rows', () => {
+  let groups = makeQueueGroups(anchoredRows(6), TODAY)
+  let intents = new Map()
+  for (const position of [2, 1, 2, 3, 6]) {
+    const next = moveQueueItem(groups, 4, TODAY, position)
+    intents = movementIntentsForMove(groups, next, 4, intents)
+    assert.equal(next[0].rows[position - 1].item_id, 4)
+    const effective = next[0].rows.map((row, index) => intents.get(row.item_id)?.order ?? row.manual_requested_order)
+    assert.deepEqual(effective, [1, 2, 3, 4, 5, 6])
+    groups = next
+  }
+})
+
+test('mixed movement renumbers existing anchors but never anchors displaced automatic rows', () => {
+  const rows = anchoredRows(4)
+  rows[1] = row(2, TODAY, { focus_bucket: 'boss' })
+  const before = makeQueueGroups(rows, TODAY)
+  const after = moveQueueItem(before, 4, TODAY, 2)
+  const intents = movementIntentsForMove(before, after, 4)
+  assert.equal(intents.has(2), false)
+  assert.deepEqual(intents.get(3), { item_id: 3, date: TODAY, order: 4, order_only: true })
+  const autoMove = movementIntentsForMove(before, moveQueueItem(before, 2, TODAY, 1), 2)
+  assert.deepEqual(autoMove.get(2), { item_id: 2, date: TODAY, order: 1 })
+  assert.equal(autoMove.get(1).order_only, true)
+})
+
+test('cross-date movement changes only the selected date and renumbers occupied anchors', () => {
+  const before = makeQueueGroups([...anchoredRows(2), row(3, TOMORROW)], TODAY)
+  const after = moveQueueItem(before, 3, TODAY, 1)
+  assert.deepEqual([...movementIntentsForMove(before, after, 3).values()], [
+    { item_id: 3, date: TODAY, order: 1 },
+    { item_id: 1, date: TODAY, order: 2, order_only: true },
+    { item_id: 2, date: TODAY, order: 3, order_only: true },
+  ])
+})
+
+test('cross-date occupied drop shifts anchored destination rows without anchoring automatic neighbours', () => {
+  const before = makeQueueGroups([
+    ...anchoredRows(2),
+    row(3, TOMORROW, { manual_requested_date: TOMORROW, manual_requested_order: 1 }),
+    row(4, TOMORROW),
+  ], TODAY)
+  const after = moveQueueItem(before, 2, TOMORROW, 1)
+  const intents = movementIntentsForMove(before, after, 2)
+  assert.deepEqual([...intents.values()], [
+    { item_id: 2, date: TOMORROW, order: 1 },
+    { item_id: 3, date: TOMORROW, order: 2, order_only: true },
+  ])
+  assert.equal(intents.has(4), false)
 })

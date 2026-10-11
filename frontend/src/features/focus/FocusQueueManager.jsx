@@ -44,7 +44,7 @@ import {
   hierarchyPaths,
 } from './focusModel'
 import {
-  directMovementIntent,
+  movementIntentsForMove,
   changesForTouchedRows,
   findQueuePosition,
   flattenQueue,
@@ -249,6 +249,10 @@ export default function FocusQueueManager({
       ],
     )
 
+  const rollbackStateRef = useRef(null)
+  const currentDataRef = useRef(data)
+  currentDataRef.current = data
+
   const [
     groups,
     setGroups,
@@ -308,10 +312,10 @@ export default function FocusQueueManager({
       return
     }
 
-    setGroups(
-      initialGroups,
-    )
+    const rollbackState = rollbackStateRef.current
+    setGroups(rollbackState?.data === data ? rollbackState.groups : initialGroups)
   }, [
+    data,
     conflict,
     // Ending a gesture must retry any canonical update deferred by the ref.
     draggedItemId,
@@ -423,11 +427,11 @@ export default function FocusQueueManager({
       null
   }
 
+  // Mutation callbacks may outlive the render that started a queued save.
+  // Retain its authoritative rollback response until a newer query arrives.
   function rollback() {
-    setGroups(
-      initialGroups,
-    )
-
+    const rollbackState = rollbackStateRef.current
+    setGroups(rollbackState?.data === data ? rollbackState.groups : initialGroups)
     clearIntent()
   }
 
@@ -457,6 +461,7 @@ export default function FocusQueueManager({
           nextDirtyDates,
         ),
 
+      expectedQueue: flattenQueue(nextGroups).map(({ row, date }) => ({ item_id: row.item_id, date })),
       optimisticOrderIds:
         flattenQueue(
           nextGroups,
@@ -508,6 +513,7 @@ export default function FocusQueueManager({
     batch.mutate(
       {
         changes,
+        expectedQueue: request.expectedQueue,
 
         optimisticOrderIds:
           request
@@ -515,6 +521,7 @@ export default function FocusQueueManager({
       },
       {
         onSuccess() {
+          rollbackStateRef.current = null
           saveInFlightRef.current =
             false
 
@@ -559,7 +566,7 @@ export default function FocusQueueManager({
           clearIntent()
         },
 
-        onError(error) {
+        onError(error, _variables, context) {
           saveInFlightRef.current =
             false
 
@@ -568,6 +575,16 @@ export default function FocusQueueManager({
           const data =
             error?.response
               ?.data
+
+          if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+          saveTimerRef.current = null
+          queuedSaveRef.current = null
+          const previous = context?.previous
+          const canonicalGroups = previous
+            ? makeQueueGroups(candidatesForBucket(previous.candidates, bucket), previous.today)
+            : initialGroups
+          rollbackStateRef.current = { data: currentDataRef.current, groups: canonicalGroups }
+          setGroups(canonicalGroups)
 
           if (
             error?.response
@@ -581,6 +598,7 @@ export default function FocusQueueManager({
             setConflict({
               data,
               changes,
+              expectedQueue: request.expectedQueue,
 
               optimisticOrderIds:
                 request
@@ -598,7 +616,7 @@ export default function FocusQueueManager({
             ?? 'ARC could not save this queue change.',
           )
 
-          rollback()
+          clearIntent()
         },
       },
     )
@@ -648,22 +666,10 @@ export default function FocusQueueManager({
     sourceDate,
     targetDate,
   ) {
-    // Drag, arrow and rank controls share this boundary. Each directly moves
-    // one task; projected displacement never creates another task's intent.
-    const intent = directMovementIntent(
-      nextGroups,
-      itemId,
-      movementIntentsRef.current,
+    movementIntentsRef.current = movementIntentsForMove(
+      groups, nextGroups, itemId, movementIntentsRef.current,
     )
-    if (!intent) return
-
-    movementIntentsRef.current.set(itemId, intent)
-    const destination = findQueuePosition(nextGroups, itemId)
-    if (intent.order !== destination.index + 1) {
-      nextGroups = moveQueueItem(nextGroups, itemId, intent.date, intent.order)
-    }
-    const nextTouched = new Set(touchedIds)
-    nextTouched.add(itemId)
+    const nextTouched = new Set(movementIntentsRef.current.keys())
 
     const nextDirty =
       new Set(
@@ -1167,15 +1173,13 @@ export default function FocusQueueManager({
 
     setConflict(null)
 
-    performSave({
-      changes:
-        resolved,
-
-      optimisticOrderIds:
-        conflict
-          .optimisticOrderIds
-        ?? [],
-    })
+    const request = {
+      changes: resolved,
+      expectedQueue: conflict.expectedQueue,
+      optimisticOrderIds: conflict.optimisticOrderIds ?? [],
+    }
+    latestSaveRef.current = request
+    performSave(request)
   }
 
   function searchKeyDown(

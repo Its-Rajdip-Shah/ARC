@@ -396,11 +396,20 @@ class FocusAnchorBatchChangeSerializer(
 ):
     """One staged Focus queue placement."""
 
+    order_only = serializers.BooleanField(default=False)
+
+
+class FocusExpectedQueueEntrySerializer(serializers.Serializer):
+    item_id = serializers.IntegerField(min_value=1)
+    date = serializers.DateField()
+
 
 class FocusAnchorBatchSerializer(
     serializers.Serializer
 ):
     """One atomic staged Focus queue Apply."""
+
+    expected_queue = FocusExpectedQueueEntrySerializer(many=True, required=False, allow_empty=False)
 
     changes = FocusAnchorBatchChangeSerializer(
         many=True,

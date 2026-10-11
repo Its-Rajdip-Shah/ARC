@@ -1779,6 +1779,10 @@ class FocusAnchorBatchView(APIView):
                 "date"
             ]
 
+            if change.get("order_only") and item.manual_requested_date != day:
+                conflicts.append({"item_id": item.pk, "code": "anchor_changed"})
+                continue
+
             if day < today:
                 conflicts.append({
                     "item_id":
@@ -1962,6 +1966,7 @@ class FocusAnchorBatchView(APIView):
                 scheduling.set_anchor_batch(
                     request.user,
                     changes,
+                    expected_queue=serializer.validated_data.get("expected_queue"),
                 )
             )
 

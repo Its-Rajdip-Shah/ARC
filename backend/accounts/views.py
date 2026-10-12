@@ -5,7 +5,7 @@ short-lived mfa_pending token. That token names a real user and is validly
 signed, so the project-wide authentication class refuses it everywhere except
 the one endpoint below that expects it in the request body.
 """
-
+from django.db import transaction
 from django.contrib.auth import get_user_model
 from django.contrib.auth.signals import user_logged_in
 from drf_spectacular.utils import extend_schema, inline_serializer
@@ -17,8 +17,14 @@ from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.tokens import RefreshToken
+from planning.models import SchedulingState
 
 from . import totp
+from .login_protection import (
+    check_login_cooldown,
+    record_failed_login,
+    clear_failed_logins,
+)
 from .serializers import (
     LoginSerializer,
     LogoutSerializer,
@@ -98,10 +104,17 @@ class RegisterView(PublicAuthView):
         serializer = RegisterSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        user = User.objects.create_user(
-            email=serializer.validated_data['email'],
-            password=serializer.validated_data['password'],
-        )
+        with transaction.atomic():
+            user = User.objects.create_user(
+                email=serializer.validated_data['email'],
+                password=serializer.validated_data['password'],
+            )
+            SchedulingState.objects.update_or_create(
+                user=user,
+                defaults={
+                    'scheduler_flavour': serializer.validated_data['scheduler_flavour'],
+                },
+            )
 
         # Held in the signed token, not the database, until the user proves
         # they scanned it. An abandoned registration therefore cannot log in.
@@ -179,16 +192,21 @@ class LoginView(PublicAuthView):
     def post(self, request):
         serializer = LoginSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-
         email = User.objects.normalize_email(serializer.validated_data['email'])
+
+        # Block further attempts during the temporary cool-down.
+        check_login_cooldown(email)
+
         user = User.objects.filter(email__iexact=email).first()
 
-        # Credentials are checked before anything else, so that a wrong
-        # password cannot be used to discover whether an account exists or
-        # whether it is locked.
+        # Count failed attempts for both existing and unknown email addresses.
+        # Return the same error to avoid revealing whether an account exists.
         if user is None or not user.check_password(serializer.validated_data['password']):
-            raise AuthenticationFailed('Incorrect email address or password.',
-                                       code='invalid_credentials')
+            record_failed_login(email)
+            raise AuthenticationFailed(
+                'Incorrect email address or password.',
+                code='invalid_credentials',
+            )
 
         if self.require_admin and not user.is_admin:
             raise PermissionDenied('This account is not an administrator.',
@@ -243,6 +261,7 @@ class MFAVerifyView(PublicAuthView):
         user = User.objects.filter(pk=token.get('user_id')).first()
         if user is None:
             raise AuthenticationFailed('User not found.', code='user_not_found')
+        check_login_cooldown(user.email)
 
         # An administrator token must not be redeemable on the ordinary
         # endpoint, or the other way round.
@@ -261,8 +280,13 @@ class MFAVerifyView(PublicAuthView):
                                    code='account_locked')
 
         if not totp.verify(user.totp_secret_encrypted, serializer.validated_data['code'], user.pk):
-            raise AuthenticationFailed('That code is not valid.', code='invalid_totp')
+            record_failed_login(user.email)
+            raise AuthenticationFailed(
+                'That code is not valid.',
+                code='invalid_totp',
+            )
 
+        clear_failed_logins(user.email)
         # Updates last_login, which FR-16's active-user count reads.
         user_logged_in.send(sender=user.__class__, request=request, user=user)
 

@@ -47,6 +47,7 @@ export default function StudentRegisterPage() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
+  const [schedulerFlavour, setSchedulerFlavour] = useState('')
   const [enrolment, setEnrolment] = useState(null)
   const [code, setCode] = useState(Array(6).fill(''))
   const [busy, setBusy] = useState(false)
@@ -66,7 +67,11 @@ export default function StudentRegisterPage() {
     setError(null)
 
     try {
-      const data = await register({ email: email.trim(), password })
+      const data = await register({
+        email: email.trim(),
+        password,
+        scheduler_flavour: schedulerFlavour,
+      })
       setEnrolment({
         token: data.enrolment_token,
         secret: data.mfa.secret,
@@ -197,6 +202,52 @@ export default function StudentRegisterPage() {
               onChange={(event) => setConfirmPassword(event.target.value)}
               className={`mt-[17px] ${inputClass}`}
             />
+            <fieldset className="mt-6">
+  <legend className="mb-2 text-lg font-semibold">
+    Choose your scheduling style
+  </legend>
+
+  <p className="mb-4 text-sm text-[#D8CDF8]">
+    This controls how aggressively ARC schedules your tasks.
+    You can change it later in Timeline.
+  </p>
+
+  <div className="flex gap-4">
+    <label className="flex flex-1 cursor-pointer flex-col gap-2 bg-[#1D4074] p-4">
+      <span className="flex items-center gap-2 font-semibold">
+        <input
+          type="radio"
+          name="schedulerFlavour"
+          value="lock-in"
+          checked={schedulerFlavour === 'lock-in'}
+          onChange={(event) => setSchedulerFlavour(event.target.value)}
+          required
+        />
+        Locked-In
+      </span>
+      <span className="text-sm text-[#D8CDF8]">
+        More aggressive task scheduling.
+      </span>
+    </label>
+
+    <label className="flex flex-1 cursor-pointer flex-col gap-2 bg-[#1D4074] p-4">
+      <span className="flex items-center gap-2 font-semibold">
+        <input
+          type="radio"
+          name="schedulerFlavour"
+          value="monk"
+          checked={schedulerFlavour === 'monk'}
+          onChange={(event) => setSchedulerFlavour(event.target.value)}
+          required
+        />
+        Monk
+      </span>
+      <span className="text-sm text-[#D8CDF8]">
+        Calmer, less aggressive scheduling.
+      </span>
+    </label>
+  </div>
+</fieldset>
             <button type="submit" disabled={busy} className={buttonClass}>
               {busy ? 'CREATING...' : 'SIGN UP'}
             </button>

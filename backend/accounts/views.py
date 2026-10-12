@@ -5,7 +5,7 @@ short-lived mfa_pending token. That token names a real user and is validly
 signed, so the project-wide authentication class refuses it everywhere except
 the one endpoint below that expects it in the request body.
 """
-
+from django.db import transaction
 from django.contrib.auth import get_user_model
 from django.contrib.auth.signals import user_logged_in
 from drf_spectacular.utils import extend_schema, inline_serializer
@@ -103,16 +103,17 @@ class RegisterView(PublicAuthView):
         serializer = RegisterSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        user = User.objects.create_user(
-            email=serializer.validated_data['email'],
-            password=serializer.validated_data['password'],
-        )
-        SchedulingState.objects.update_or_create(
-            user=user,
-            defaults={
-                'scheduler_flavour': serializer.validated_data['scheduler_flavour'],
-            },
-        )
+        with transaction.atomic():
+            user = User.objects.create_user(
+                email=serializer.validated_data['email'],
+                password=serializer.validated_data['password'],
+            )
+            SchedulingState.objects.update_or_create(
+                user=user,
+                defaults={
+                    'scheduler_flavour': serializer.validated_data['scheduler_flavour'],
+                },
+            )
 
         # Held in the signed token, not the database, until the user proves
         # they scanned it. An abandoned registration therefore cannot log in.

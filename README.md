@@ -306,6 +306,15 @@ user.save(update_fields=["is_admin"])
 
 They then use `/admin/login` with their existing authenticator, not `/`.
 
+### Django Admin Configuration
+
+The application uses a custom React staff administration console at
+`/admin/login`. Django's built-in `/admin/` interface is disabled by
+default (`ENABLE_DJANGO_ADMIN=False`).
+
+Staff should use the React console for authentication, user management,
+and statistics instead of Django's built-in admin.
+
 ### After you are in
 
 - **Overview** (`/admin`) — counts only: people, locks, overdue items, Canvas sync health. No planner titles or tokens. See [FR-16](FR_TRACEABILITY.md#fr-16--admin-stats-lock-and-unlock).

@@ -111,3 +111,14 @@ class User(AbstractBaseUser):
 
     def has_module_perms(self, app_label):
         return self.is_admin
+
+
+class LoginAttempt(models.Model):
+    """Track failed authentication attempts for known and unknown emails."""
+
+    email_digest = models.CharField(max_length=64, unique=True)
+    failed_attempts = models.PositiveIntegerField(default=0)
+    locked_until = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = 'login_attempts'

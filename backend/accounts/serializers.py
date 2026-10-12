@@ -3,6 +3,7 @@
 from django.contrib.auth import get_user_model
 from django.contrib.auth.password_validation import validate_password
 from rest_framework import serializers
+from planning.models import SchedulingState
 
 User = get_user_model()
 
@@ -24,6 +25,11 @@ class RegisterSerializer(serializers.Serializer):
 
     email = serializers.EmailField(max_length=255)
     password = serializers.CharField(write_only=True, style={'input_type': 'password'})
+
+    scheduler_flavour = serializers.ChoiceField(
+    choices=SchedulingState.SchedulerFlavour.choices,
+    required=True,
+    )
 
     def validate_email(self, value):
         value = User.objects.normalize_email(value)

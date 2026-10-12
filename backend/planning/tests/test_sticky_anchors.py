@@ -156,7 +156,8 @@ def test_focus_bucket_classification_includes_residual_work(user, make_item):
     boss_carry = anchor(make_item, user, 'Boss carry', duration_category=DurationCategory.UNDER_8_HOURS)
     scheduling._reconcile_manual_anchors(user, today)
     assert commitment(quick)[2] == commitment(side)[2] == commitment(boss_today)[2] == 1
-    assert commitment(residual)[2] == commitment(boss_carry)[2] == 2
+    assert commitment(residual)[2] == 2
+    assert commitment(boss_carry)[2] == 3
     adapter_slots(user, today)
 
 

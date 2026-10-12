@@ -6,6 +6,9 @@ export const AURA_PARTICLES = Array.from({ length: 56 }, (_, index) => ({
   excursion: 24 + index % 6,
   phase: ((index * 23) % 56) / 56 * TAU,
   period: 3.6 + (index % 11) * 0.23,
+  idlePeriod: 5 + (index % 17) * 0.25,
+  idleRadialDrift: 3 + (index % 9) * 0.25,
+  idleAngularDrift: (4 + (index % 7) * 0.5) * Math.PI / 180,
   direction: index % 2 ? -1 : 1,
   speed: 0.8 + (index % 9) * 0.055,
   size: 1.6 + (index % 7) * 0.3,
@@ -21,7 +24,11 @@ export function orbitalTravel(seconds) {
 export function particlePosition(particle, state, seconds) {
   let angle = particle.angle
   let radius = particle.radius
-  if (state === 'hover') {
+  if (state === 'idle') {
+    const phase = seconds * TAU / particle.idlePeriod + particle.phase
+    radius += particle.idleRadialDrift * Math.sin(phase)
+    angle += particle.idleAngularDrift * Math.sin(phase + Math.PI / 2)
+  } else if (state === 'hover') {
     radius += particle.excursion * (1 - Math.cos(seconds * TAU / particle.period + particle.phase)) / 2
   } else if (state === 'scheduling') {
     angle += particle.direction * particle.speed * orbitalTravel(seconds)

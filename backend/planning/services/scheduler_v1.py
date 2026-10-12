@@ -234,7 +234,11 @@ def build_scheduler_input(
             ),
             percent_completed=Decimal(str(item.percent_completed)),
             remaining_fraction=_remaining_fraction(item),
-            is_residual=bool(item.is_residual),
+            # ARC's confirmed duration_category determines scheduling
+            # semantics, even when this actionable task previously had
+            # children. Do not invoke the engine's legacy short-residual
+            # treatment.
+            is_residual=False,
             existing_scheduled_date=item.scheduled_date,
             anchor_order=(
                 item.manual_requested_order
@@ -474,13 +478,9 @@ def apply_scheduler_output(
         item.execution_rank = first.execution_rank
         changed_items.append(item)
 
-        # Residual parent work is treated by the frozen engine as an atomic
-        # UNDER_20_MINUTES unit.  Only genuine splittable ARC work receives
-        # confirmable SchedulerAllocation proposal rows.
-        if (
-            not task.is_residual
-            and task.duration_category in splittable
-        ):
+        # All actionable splittable work, including exposed parents,
+        # receives confirmable SchedulerAllocation proposal rows.
+        if task.duration_category in splittable:
             for row in rows:
                 proposal_rows.append(
                     SchedulerAllocation(

@@ -1132,7 +1132,19 @@ class TimelineView(APIView):
             .annotate(
                 has_children=Exists(
                     PlanningItem.objects.filter(parent_id=OuterRef('pk'))
-                )
+                ),
+                has_unfinished_children=Exists(
+                    PlanningItem.objects.for_user(request.user).filter(
+                        parent_id=OuterRef('pk'),
+                        is_completed=False,
+                    )
+                ),
+            )
+            # Factual date overlap must not turn structural work into an
+            # execution card. Keep completed history and residual parents.
+            .exclude(
+                is_completed=False,
+                has_unfinished_children=True,
             )
             .select_related('assignment_detail')
             .prefetch_related('tags')

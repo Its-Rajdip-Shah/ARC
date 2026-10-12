@@ -1,9 +1,9 @@
 """B2 task editor API regressions."""
-from datetime import date
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from unittest.mock import patch
 import pytest
-from planning.models import DurationCategory, PlanningDependency, PlanningHistoryEntry, Tag
+from planning.models import DurationCategory, PlanningDependency, PlanningHistoryEntry, PlanningItem, Tag
 from planning.services import dependencies, history, lifecycle
 pytestmark = pytest.mark.django_db
 
@@ -115,6 +115,115 @@ def test_date_inheritance_and_explicit_clearing(client, user, make_item):
     assert parent.due_date == date(2026, 11, 5)
     assert client.patch(url, {'start_date': '2026-11-06', 'due_date': '2026-11-05'}, format='json').status_code == 400
     assert client.patch(url, {'start_date': ''}, format='json').status_code == 400
+
+
+@pytest.fixture
+def fixed_today():
+    today = date(2026, 10, 12)
+    with patch('planning.serializers.user_local_date', return_value=today):
+        yield today
+
+
+@pytest.mark.parametrize('offset, expected_status', [(-1, 400), (0, 201), (1, 201)])
+def test_explicit_due_date_on_create(client, user, fixed_today, offset, expected_status):
+    due = fixed_today + timedelta(days=offset)
+    response = client.post('/api/planning/items/', {
+        'item_type': 'TASK', 'title': 'explicit due date', 'due_date': due.isoformat(),
+    }, format='json')
+    assert response.status_code == expected_status, response.data
+    if expected_status == 400:
+        assert response.data['error']['code'] == 'invalid'
+        assert response.data['error']['fields']['due_date'] == ['Due date cannot be earlier than today.']
+        assert not PlanningItem.objects.filter(user=user, title='explicit due date').exists()
+    else:
+        assert response.data['due_date'] == due.isoformat()
+
+
+@pytest.mark.parametrize('historical', [False, True])
+def test_changing_due_date_to_past_is_rejected(client, user, make_item, fixed_today, historical):
+    original_due = fixed_today + timedelta(days=-2 if historical else 1)
+    item = make_item(user, 'existing', due_date=original_due)
+    response = client.patch(f'/api/planning/items/{item.pk}/', {
+        'due_date': (fixed_today - timedelta(days=1)).isoformat(),
+    }, format='json')
+    assert response.status_code == 400, response.data
+    assert response.data['error']['code'] == 'invalid'
+    assert response.data['error']['fields']['due_date'] == ['Due date cannot be earlier than today.']
+    item.refresh_from_db()
+    assert item.due_date == original_due
+
+
+@pytest.mark.parametrize('due_action', ['omit', 'unchanged', 'clear'])
+def test_historical_due_date_edits_remain_allowed(client, user, make_item, fixed_today, due_action):
+    historical_due = fixed_today - timedelta(days=2)
+    item = make_item(user, 'historical', due_date=historical_due)
+    payload = {'title': 'updated title'}
+    if due_action != 'omit':
+        payload['due_date'] = historical_due.isoformat() if due_action == 'unchanged' else None
+    response = client.patch(f'/api/planning/items/{item.pk}/', payload, format='json')
+    assert response.status_code == 200, response.data
+    expected_due = None if due_action == 'clear' else historical_due
+    assert response.data['title'] == 'updated title'
+    assert response.data['due_date'] == (expected_due.isoformat() if expected_due else None)
+    item.refresh_from_db()
+    assert item.title == 'updated title'
+    assert item.due_date == expected_due
+
+
+@pytest.mark.parametrize('offset', [-2, 1])
+def test_omitted_child_due_date_inherits_even_historical_date(client, user, make_item, fixed_today, offset):
+    due = fixed_today + timedelta(days=offset)
+    start = due - timedelta(days=2)
+    parent = make_item(user, 'parent', start_date=start, due_date=due)
+    response = client.post('/api/planning/items/', {
+        'item_type': 'TASK', 'title': 'child', 'parent': parent.pk,
+    }, format='json')
+    assert response.status_code == 201, response.data
+    assert response.data['start_date'] == start.isoformat()
+    assert response.data['due_date'] == due.isoformat()
+    child = PlanningItem.objects.get(pk=response.data['id'])
+    assert child.due_date == due
+    parent.refresh_from_db()
+    assert parent.start_date == start
+    assert parent.due_date == due
+
+
+@pytest.mark.parametrize('method', ['post', 'patch'])
+@pytest.mark.parametrize('offset', [-1, 1])
+def test_start_after_due_still_rejected_first(client, user, make_item, fixed_today, method, offset):
+    due = fixed_today + timedelta(days=offset)
+    url = '/api/planning/items/'
+    if method == 'patch':
+        item = make_item(user, 'existing')
+        url = f'{url}{item.pk}/'
+    response = getattr(client, method)(url, {
+        'item_type': 'TASK', 'title': 'invalid dates',
+        'start_date': (due + timedelta(days=1)).isoformat(), 'due_date': due.isoformat(),
+    }, format='json')
+    assert response.status_code == 400, response.data
+    assert response.data['error']['code'] == 'invalid'
+    assert response.data['error']['fields']['due_date'] == ['A due date cannot fall before the start date.']
+
+
+@pytest.mark.parametrize('time_zone, instant, due, expected_status', [
+    ('Australia/Sydney', '2026-10-12T13:30:00+00:00', '2026-10-12', 400),
+    ('UTC', '2026-10-12T13:30:00+00:00', '2026-10-12', 201),
+    ('America/Los_Angeles', '2026-10-12T00:30:00+00:00', '2026-10-11', 201),
+    ('UTC', '2026-10-12T00:30:00+00:00', '2026-10-11', 400),
+])
+def test_account_timezone_due_date_boundary(client, user, time_zone, instant, due, expected_status):
+    user.time_zone = time_zone
+    user.save(update_fields=['time_zone'])
+    with patch('planning.services.calendar_dates.timezone.now', return_value=datetime.fromisoformat(instant)):
+        response = client.post('/api/planning/items/', {
+            'item_type': 'TASK', 'title': 'timezone boundary', 'due_date': due,
+        }, format='json')
+    assert response.status_code == expected_status, response.data
+    if expected_status == 400:
+        assert response.data['error']['code'] == 'invalid'
+        assert response.data['error']['fields']['due_date'] == ['Due date cannot be earlier than today.']
+    else:
+        assert response.data['due_date'] == due
 
 def test_tags_deduplicate_and_enforce_ownership(client, user, other_user):
     tag = Tag.objects.create(user=user, name='Study')

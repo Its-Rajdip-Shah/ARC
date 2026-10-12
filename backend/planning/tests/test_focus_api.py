@@ -1841,8 +1841,8 @@ def test_focus_projection_exposes_scheduler_canonical_bucket_for_residual(
     """
     A schedulable parent with only completed children is a residual task.
 
-    Its raw duration may still be UNDER_4_HOURS, but canonical Focus/scheduler
-    semantics place residual work in QUICK WINS.
+    Its actual duration determines its Focus bucket, just like other
+    actionable work.
     """
 
     today = timezone.localdate()
@@ -1912,7 +1912,7 @@ def test_focus_projection_exposes_scheduler_canonical_bucket_for_residual(
         rows[
             residual.pk
         ]["focus_bucket"]
-        == "quick"
+        == "boss"
     )
 
     assert (
@@ -1973,6 +1973,135 @@ def test_single_drag_batch_preserves_other_anchor_facts_and_history(user, make_i
         history.redo(user)
         assert anchor_facts(dragged) == (today, order, today)
         assert [anchor_facts(item) for item in others] == before
+
+
+
+def test_focus_monk_boss_reorder_with_residual_parent(
+    user, make_item, api_for,
+):
+    """Same-day Boss reorder must support an actionable residual parent."""
+    from planning.models import SchedulingState
+
+    today = timezone.localdate()
+
+    SchedulingState.objects.create(
+        user=user,
+        scheduler_flavour='monk',
+    )
+
+    w1 = make_item(
+        user,
+        'W1',
+        duration_category=DurationCategory.UNDER_4_HOURS,
+        manual_requested_date=today,
+        manual_requested_order=1,
+        manual_anchor_origin_date=today - timedelta(days=1),
+        priority_position=1,
+    )
+
+    revamp = make_item(
+        user,
+        'Revamp Everything',
+        duration_category=DurationCategory.UNDER_8_HOURS,
+        manual_requested_date=today,
+        manual_requested_order=2,
+        manual_anchor_origin_date=today - timedelta(days=1),
+        priority_position=2,
+    )
+
+    make_item(
+        user,
+        'Completed Revamp child',
+        parent=revamp,
+        is_completed=True,
+        duration_category=DurationCategory.UNDER_20_MINUTES,
+    )
+
+    dependency = make_item(
+        user,
+        'Dependency',
+        duration_category=DurationCategory.UNDER_8_HOURS,
+        manual_requested_date=today,
+        manual_requested_order=3,
+        manual_anchor_origin_date=today - timedelta(days=1),
+        priority_position=3,
+    )
+
+    SchedulingOverload.objects.create(
+        user=user,
+        date=today,
+        allowed=True,
+    )
+
+    scheduling.daily_schedule(user, today=today)
+
+    client = api_for(user)
+    initial = client.get('/api/planning/focus/')
+    assert initial.status_code == 200
+
+    ids = [w1.pk, revamp.pk, dependency.pk]
+
+    initial_order = [
+        row['item_id']
+        for row in initial.data['candidates']
+        if row['item_id'] in ids
+    ]
+
+    assert initial_order == ids, (
+        'Fixture must begin in W1, Revamp, Dependency order: '
+        f'{initial_order}'
+    )
+
+    response = client.post(
+        '/api/planning/focus/anchor/batch/',
+        {
+            'changes': [
+                {
+                    'item_id': dependency.pk,
+                    'date': today.isoformat(),
+                    'order': 2,
+                    'order_only': True,
+                },
+                {
+                    'item_id': revamp.pk,
+                    'date': today.isoformat(),
+                    'order': 3,
+                    'order_only': True,
+                },
+            ],
+            'expected_queue': [
+                {
+                    'item_id': item.pk,
+                    'date': today.isoformat(),
+                }
+                for item in [w1, dependency, revamp]
+            ],
+        },
+        format='json',
+    )
+
+    assert response.status_code == 200, response.data
+
+    after = client.get('/api/planning/focus/')
+    assert after.status_code == 200
+
+    actual_order = [
+        row['item_id']
+        for row in after.data['candidates']
+        if row['item_id'] in ids
+    ]
+
+    assert actual_order == [
+        w1.pk,
+        dependency.pk,
+        revamp.pk,
+    ]
+
+    dependency.refresh_from_db()
+    revamp.refresh_from_db()
+
+    assert dependency.manual_requested_order == 2
+    assert revamp.manual_requested_order == 3
 
 
 def _focus_reorder_fixture(user, make_item):

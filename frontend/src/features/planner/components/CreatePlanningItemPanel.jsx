@@ -1,12 +1,11 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { CalendarDays, Plus, X } from 'lucide-react'
+import { userDateKey } from '../../../lib/calendarDates.js'
 
 import {
-  createItem,
   createTag,
   listTags,
-  updateItem,
 } from '../../../api/planning'
 
 const inputClass = `
@@ -25,10 +24,17 @@ export default function CreatePlanningItemPanel({
   parentId,
   parentItem = null,
   editingItem = null,
-  onCreated,
-  onUpdated,
+  onCreate,
+  draft = null,
+  createError = null,
+  onSave,
+  editDraft = null,
+  editError = null,
 }) {
   const queryClient = useQueryClient()
+  const submitted = useRef(false)
+  const createOwner = useRef(null)
+  const [createSubmitted, setCreateSubmitted] = useState(false)
 
   const [itemType, setItemType] = useState(editingItem?.item_type ?? 'TASK')
   const [title, setTitle] = useState(editingItem?.title ?? '')
@@ -40,6 +46,11 @@ export default function CreatePlanningItemPanel({
   const [durationCategory, setDurationCategory] = useState(editingItem?.duration_category ?? '')
   const [weightPercent, setWeightPercent] = useState(editingItem?.assignment_detail?.weight_percent ?? '')
   const [submissionUrl, setSubmissionUrl] = useState(editingItem?.assignment_detail?.submission_url ?? '')
+  const estimateFeedbackId = useId()
+  const missingOriginalEstimate = !editingItem && !durationCategory
+  const dueDateErrorId = useId()
+  const today = userDateKey()
+  const invalidPastDueDate = Boolean(dueDate && dueDate < today && dueDate !== editingItem?.due_date)
 
   const tagsQuery = useQuery({
     queryKey: ['planning-tags'],
@@ -71,72 +82,53 @@ export default function CreatePlanningItemPanel({
   useEffect(() => {
     /*
      * EDIT MODE
-     * Populate the form exclusively from the item being edited.
+     * Restore the submitted draft, or populate from the item being edited.
      */
     if (editingItem) {
-      setItemType(editingItem.item_type ?? 'TASK')
-      setTitle(editingItem.title ?? '')
-      setDescription(editingItem.description ?? '')
-      setSelectedTagIds(
-        (editingItem.tags ?? []).map((tag) =>
-          typeof tag === 'object' ? tag.id : tag
-        )
-      )
-      setStartDate(editingItem.start_date ?? '')
-      setDueDate(editingItem.due_date ?? '')
-      setDurationCategory(editingItem.duration_category ?? '')
-      setWeightPercent(
-        editingItem.assignment_detail?.weight_percent ?? ''
-      )
-      setSubmissionUrl(
-        editingItem.assignment_detail?.submission_url ?? ''
-      )
-      setTagInput('')
+      createOwner.current = null
+      const source = editDraft ?? editingItem
+      setItemType(editDraft ? source.itemType : source.item_type ?? 'TASK')
+      setTitle(source.title ?? '')
+      setDescription(source.description ?? '')
+      setSelectedTagIds(editDraft ? source.selectedTagIds : (source.tags ?? []).map((tag) =>
+        typeof tag === 'object' ? tag.id : tag
+      ))
+      setStartDate(editDraft ? source.startDate : source.start_date ?? '')
+      setDueDate(editDraft ? source.dueDate : source.due_date ?? '')
+      setDurationCategory(editDraft ? source.durationCategory : source.duration_category ?? '')
+      setWeightPercent(editDraft ? source.weightPercent : source.assignment_detail?.weight_percent ?? '')
+      setSubmissionUrl(editDraft ? source.submissionUrl : source.assignment_detail?.submission_url ?? '')
+      setTagInput(editDraft ? source.tagInput : '')
       return
     }
 
     /*
      * CREATE MODE
-     * Always start from a fresh scaffold.
+     * Restore a failed submission, or start from a fresh scaffold.
      *
      * A nested child initially inherits its parent's tags.
      * These are only initial values; the user can freely edit them.
      */
-    setItemType('TASK')
-    setTitle('')
-    setDescription('')
-    setTagInput('')
+    // Refetching the parent must not reset a draft the user is typing.
+    if (createOwner.current?.parentId === parentId && createOwner.current?.draft === draft) return
+    createOwner.current = { parentId, draft }
+    submitted.current = false
+    setCreateSubmitted(false)
+    setItemType(draft?.itemType ?? 'TASK')
+    setTitle(draft?.title ?? '')
+    setDescription(draft?.description ?? '')
+    setTagInput(draft?.tagInput ?? '')
     setSelectedTagIds(
-      (parentItem?.tags ?? []).map((tag) =>
+      draft?.selectedTagIds ?? (parentItem?.tags ?? []).map((tag) =>
         typeof tag === 'object' ? tag.id : tag
       )
     )
-    setStartDate(parentItem?.start_date ?? '')
-    setDueDate(parentItem?.due_date ?? '')
-    setDurationCategory('')
-    setWeightPercent('')
-    setSubmissionUrl('')
-  }, [editingItem, parentId, parentItem])
-
-  const updateItemMutation = useMutation({
-    mutationFn: ({ id, payload }) => updateItem(id, payload),
-
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ['planning'] })
-
-      onUpdated?.()
-    },
-  })
-
-  const createItemMutation = useMutation({
-    mutationFn: createItem,
-
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ['planning'] })
-
-      onCreated?.()
-    },
-  })
+    setStartDate(draft?.startDate ?? parentItem?.start_date ?? '')
+    setDueDate(draft?.dueDate ?? parentItem?.due_date ?? '')
+    setDurationCategory(draft?.durationCategory ?? '')
+    setWeightPercent(draft?.weightPercent ?? '')
+    setSubmissionUrl(draft?.submissionUrl ?? '')
+  }, [editingItem, editDraft, parentId, parentItem, draft])
 
   function toggleTag(tagId) {
     setSelectedTagIds((current) =>
@@ -178,8 +170,9 @@ export default function CreatePlanningItemPanel({
 
     if (
       !trimmedTitle ||
-      createItemMutation.isPending ||
-      updateItemMutation.isPending
+      missingOriginalEstimate ||
+      invalidPastDueDate ||
+      (!editingItem && submitted.current)
     ) {
       return
     }
@@ -220,12 +213,56 @@ export default function CreatePlanningItemPanel({
     }
 
     if (editingItem) {
-      updateItemMutation.mutate({
+      if (submitted.current) return
+
+      submitted.current = true
+
+      const form = Object.freeze({
+        itemType,
+        title,
+        description,
+        tagInput,
+        selectedTagIds: Object.freeze([...selectedTagIds]),
+        startDate,
+        dueDate,
+        durationCategory,
+        weightPercent,
+        submissionUrl,
+      })
+
+      onSave?.({
         id: editingItem.id,
-        payload,
+        payload: Object.freeze({
+          ...payload,
+          tag_ids: Object.freeze([...selectedTagIds]),
+          ...(payload.assignment_detail
+            ? {
+                assignment_detail: Object.freeze({
+                  ...payload.assignment_detail,
+                }),
+              }
+            : {}),
+        }),
+        form,
+        tags: tags
+          .filter((tag) => selectedTagIds.includes(tag.id))
+          .map((tag) => ({ ...tag })),
       })
     } else {
-      createItemMutation.mutate(payload)
+      submitted.current = true
+      setCreateSubmitted(true)
+      const form = Object.freeze({
+        itemType, title, description, tagInput,
+        selectedTagIds: Object.freeze([...selectedTagIds]),
+        startDate, dueDate, durationCategory, weightPercent, submissionUrl,
+      })
+      onCreate?.({
+        payload: Object.freeze({ ...payload, tag_ids: Object.freeze([...selectedTagIds]),
+          ...(payload.assignment_detail ? { assignment_detail: Object.freeze({ ...payload.assignment_detail }) } : {}),
+        }),
+        form,
+        tags: tags.filter((tag) => selectedTagIds.includes(tag.id)).map((tag) => ({ ...tag })),
+      })
     }
   }
 
@@ -394,6 +431,8 @@ export default function CreatePlanningItemPanel({
                 <input
                   type="date"
                   value={value}
+                  aria-invalid={label === 'Due:' && invalidPastDueDate ? true : undefined}
+                  aria-describedby={label === 'Due:' && invalidPastDueDate ? dueDateErrorId : undefined}
                   onChange={(event) => setter(event.target.value)}
                   className={`${inputClass} pr-8`}
                 />
@@ -408,6 +447,11 @@ export default function CreatePlanningItemPanel({
               </div>
             </label>
           ))}
+          {invalidPastDueDate && (
+            <p id={dueDateErrorId} role="alert" className="text-[11px] text-[#e87979]">
+              Due date cannot be earlier than today.
+            </p>
+          )}
         </div>
 
         {/* Manual estimate */}
@@ -416,7 +460,7 @@ export default function CreatePlanningItemPanel({
             Original estimate:
           </p>
 
-          <div role="group" aria-label="Original estimate" className="grid grid-cols-3 gap-[5px] min-w-0">
+          <div role="group" aria-label="Original estimate" aria-describedby={missingOriginalEstimate ? estimateFeedbackId : undefined} className="grid grid-cols-3 gap-[5px] min-w-0">
             {[
               ['UNDER_20_MINUTES', '<20m'],
               ['UNDER_1_HOUR', '<1h'],
@@ -450,6 +494,11 @@ export default function CreatePlanningItemPanel({
               </button>
             ))}
           </div>
+          {missingOriginalEstimate && (
+            <p id={estimateFeedbackId} role="status" className="mt-2 text-[11px] text-[#e87979]">
+              Choose an original estimate.
+            </p>
+          )}
         </div>
 
         {editingItem && ['UNDER_8_HOURS', 'UNDER_16_HOURS', 'OVER_16_HOURS'].includes(durationCategory) && (
@@ -509,23 +558,32 @@ export default function CreatePlanningItemPanel({
           </p>
         )}
 
-        {updateItemMutation.isError && (
-          <p role="alert" className="mt-3 text-[11px] text-[#e87979]">
-            {JSON.stringify(
-              updateItemMutation.error?.response?.data ??
-                updateItemMutation.error?.message ??
-                'Could not update item.'
-            )}
-          </p>
+        {editError && (
+          <div
+            role="alert"
+            className="mt-3 text-[11px] text-[#e87979]"
+          >
+            <p>Could not save changes.</p>
+
+            <pre className="mt-1 whitespace-pre-wrap break-words">
+              {JSON.stringify(
+                editError?.response?.data ??
+                  editError?.message ??
+                  'Could not update item.',
+                null,
+                2,
+              )}
+            </pre>
+          </div>
         )}
 
-        {createItemMutation.isError && (
+        {createError && (
           <div role="alert" className="mt-3 text-[11px] text-[#e87979]">
             <p>Could not create item.</p>
             <pre className="mt-1 whitespace-pre-wrap break-words">
               {JSON.stringify(
-                createItemMutation.error?.response?.data ??
-                  createItemMutation.error?.message,
+                createError?.response?.data ??
+                  createError?.message,
                 null,
                 2,
               )}
@@ -537,9 +595,10 @@ export default function CreatePlanningItemPanel({
           type="submit"
           disabled={
             !title.trim() ||
+            missingOriginalEstimate ||
+            invalidPastDueDate ||
             Boolean(startDate && dueDate && startDate > dueDate) ||
-            createItemMutation.isPending ||
-            updateItemMutation.isPending
+            (!editingItem && createSubmitted)
           }
           className="
             mx-auto mt-[20px] block
@@ -552,13 +611,7 @@ export default function CreatePlanningItemPanel({
             disabled:cursor-not-allowed disabled:opacity-50
           "
         >
-          {editingItem
-            ? updateItemMutation.isPending
-              ? 'SAVING...'
-              : 'SAVE'
-            : createItemMutation.isPending
-              ? 'CREATING...'
-              : 'CREATE'}
+          {editingItem ? 'SAVE' : 'CREATE'}
         </button>
       </form>
     </aside>

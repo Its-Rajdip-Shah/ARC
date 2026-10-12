@@ -1026,7 +1026,7 @@ function TimelineContent({
         }
       />
 
-      <h1 className="timeline-heading arc-display">
+      <h1 className="sr-only">
         Timeline
       </h1>
 

@@ -20,6 +20,7 @@ from planning.models import (
     Tag,
     Timezone,
 )
+from planning.services.calendar_dates import user_local_date
 
 
 class TagSerializer(serializers.ModelSerializer):
@@ -151,6 +152,15 @@ class PlanningItemSerializer(RemainingWorkMixin, serializers.ModelSerializer):
         if start and due and due < start:
             raise serializers.ValidationError(
                 {'due_date': 'A due date cannot fall before the start date.'}
+            )
+        if (
+            'due_date' in attrs
+            and due is not None
+            and (self.instance is None or due != self.instance.due_date)
+            and due < user_local_date(self.context['request'].user)
+        ):
+            raise serializers.ValidationError(
+                {'due_date': 'Due date cannot be earlier than today.'}
             )
         return attrs
 

@@ -147,28 +147,30 @@ export default function SchedulerRunButton({
           )
       }
     >
-      <SchedulerAura
-        state={
-          auraState
-        }
-      />
+      <span className="scheduler-visual" aria-hidden="true">
+        <SchedulerAura
+          state={
+            auraState
+          }
+        />
 
-      <span className="timeline-scheduler-art">
-        {
-          configured &&
-          icon
-            ? (
-                <img
-                  src={icon}
-                  alt=""
-                />
-              )
-            : (
-                <RefreshCw
-                  size={36}
-                />
-              )
-        }
+        <span className="timeline-scheduler-art">
+          {
+            configured &&
+            icon
+              ? (
+                  <img
+                    src={icon}
+                    alt=""
+                  />
+                )
+              : (
+                  <RefreshCw
+                    size={36}
+                  />
+                )
+          }
+        </span>
       </span>
     </button>
   )

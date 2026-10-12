@@ -123,12 +123,6 @@ def focus_capacity_conflicts(
     )
 
     def capacity_bucket(item):
-        if item.is_residual:
-            return (
-                DurationCategory
-                .UNDER_20_MINUTES
-            )
-
         return item.duration_category
 
     before = Counter()
@@ -442,7 +436,7 @@ def _legacy_schedule(user, today=None, *, mode='minimal'):
             changed.append(item)
 
     for item in items:
-        bucket = DurationCategory.UNDER_20_MINUTES if item.is_residual else item.duration_category
+        bucket = item.duration_category
         if bucket not in limits:
             conflicts.append(_conflict(item, 'duration_required'))
             continue
@@ -469,7 +463,7 @@ def _legacy_schedule(user, today=None, *, mode='minimal'):
             pending.append(item)
 
     for item in pending:
-        bucket = DurationCategory.UNDER_20_MINUTES if item.is_residual else item.duration_category
+        bucket = item.duration_category
         due = effective_due_date(item, today)
         lower = max(today, item.start_date or today)
         day = lower
@@ -2142,7 +2136,7 @@ def _reconcile_progress_allocations(user, today=None):
     allocations = []
 
     for item in candidates:
-        if item.is_residual or item.scheduled_date is None or item.duration_category not in _SPLITTABLE_VALUES:
+        if item.scheduled_date is None or item.duration_category not in _SPLITTABLE_VALUES:
             continue
 
         remaining = Decimal("100") - Decimal(str(item.percent_completed))

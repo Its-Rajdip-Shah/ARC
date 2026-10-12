@@ -1,14 +1,16 @@
+.priority-page-content {
+  padding-top: var(--student-header-height, 56px);
+}
+
 .priority-panel {
   position: relative;
   width: 100%;
-  height: calc(100dvh - 56px);
+  height: calc(100dvh - var(--student-header-height, 56px));
   min-width: 0;
   display: flex;
   flex-direction: column;
   background: var(--color-arc-bg);
 }
-.priority-view-nav { width: calc(100% - 8rem); max-width: 361px; }
-.priority-view-nav nav { width: 100%; max-width: none; }
 .priority-toolbar-area { position: relative; flex-shrink: 0; width: calc(100% - 64px); max-width: 900px; margin: 8px auto 12px; }
 .priority-toolbar { box-sizing: border-box; width: 100%; max-width: 900px; display: flex; align-items: center; gap: 3px; flex-shrink: 0; margin: 0; padding: 5px 10px; border: 1px solid #8fa8e840; border-radius: 10px; background: #202754d9; box-shadow: 0 8px 24px #050a3538; }
 .priority-toolbar input { flex: 1; min-width: 40px; width: 100%; padding: 3px 6px; background: transparent; font-size: 12px; color: white; outline: none; }
@@ -55,9 +57,6 @@
 .priority-panel button:focus-visible, .priority-scroll:focus-visible, .priority-card:focus-visible { outline: 2px solid var(--color-arc-accent); outline-offset: 2px; }
 @media (hover: none) { .priority-card-arrows { opacity: 1; pointer-events: auto; } }
 @media (max-width: 767px) {
-  .priority-panel { height: calc(100dvh - 96px); }
-  .priority-view-nav { top: 60px; left: 50%; width: calc(100% - 2rem); }
-  .priority-view-nav nav a { padding-inline: 2px; font-size: 13px; }
   .priority-toolbar-area { width: calc(100% - 24px); margin: 8px auto; }
   .priority-toolbar { padding: 5px; }
   .priority-scroll { padding: 0 12px; }

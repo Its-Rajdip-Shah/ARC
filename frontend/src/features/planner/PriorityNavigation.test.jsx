@@ -7,6 +7,7 @@ import { readFileSync } from 'node:fs'
 import { useAuthStore } from '../../stores/authStore'
 
 const priorityStyles = readFileSync('src/features/planner/components/PriorityPanel.css', 'utf8')
+const layoutStyles = readFileSync('src/components/student/StudentLayout.css', 'utf8')
 
 const data = vi.hoisted(() => {
   const roots = [{ id: 1, title: 'Root one', is_completed: false, children: [{ id: 101, title: 'Nested parent', is_completed: false, start_date: '2026-10-12', children: [{ id: 102, title: 'Completed child', is_completed: true, due_date: '2026-10-15', children: [] }] }] }, { id: 2, title: 'Root two', children: [] }]
@@ -68,6 +69,42 @@ it('shows four accessible navigation links in order with Priority active', () =>
   expect(links.map((link) => link.getAttribute('href'))).toEqual(['/planner', '/priority', '/timeline', '/focus'])
   expect(links[1].getAttribute('aria-current')).toBe('page')
 })
+
+it('retains one viewport-positioned navbar across all four views without remounting it', () => {
+  const { container } = open('/planner')
+  const style = document.createElement('style')
+  style.textContent = layoutStyles
+  container.append(style)
+  const navbar = screen.getByRole('navigation', { name: 'Planning view' })
+  const sharedContainer = navbar.closest('.student-view-nav')
+  for (const view of ['Planner', 'Priority', 'Timeline', 'Focus', 'Planner']) {
+    switchTo(view)
+    expect(screen.getAllByRole('navigation', { name: 'Planning view' })).toEqual([navbar])
+    expect(within(navbar).getAllByRole('link')).toHaveLength(4)
+    expect(within(navbar).getByRole('link', { name: view }).getAttribute('aria-current')).toBe('page')
+    expect(navbar.closest('.student-view-nav')).toBe(sharedContainer)
+    const position = getComputedStyle(sharedContainer)
+    expect(position.position).toBe('fixed')
+    expect(position.left).toBe('50%')
+    expect(position.transform).toBe('translateX(-50%)')
+    expect(position.top).toBe('var(--student-nav-top)')
+    expect(position.width).toBe('calc(100% - 32px)')
+    expect(position.maxWidth).toBe('361px')
+    expect(container.querySelectorAll('.student-view-nav')).toHaveLength(1)
+    expect(screen.getByRole('button', { name: 'Open navigation menu' }).disabled).toBe(false)
+    if (view === 'Planner' || view === 'Priority') {
+      expect(screen.getByRole('searchbox').disabled).toBe(false)
+    } else {
+      expect(screen.getByRole('heading', { name: `Existing ${view.toLowerCase()}` })).toBeTruthy()
+    }
+  }
+  // The responsive second row is shared, with enough clearance for its 26px nav.
+  const responsive = Array.from(style.sheet.cssRules).find((rule) => rule.conditionText === '(max-width: 1200px)')
+  const variables = responsive.cssRules[0].style
+  expect(variables.getPropertyValue('--student-nav-top').trim()).toBe('52px')
+  expect(variables.getPropertyValue('--student-header-height').trim()).toBe('80px')
+  expect(priorityStyles).not.toContain('.priority-view-nav')
+})
 it('protects direct Priority entry using the existing student authentication', () => {
   open('/priority', false)
   expect(screen.getByRole('heading', { name: 'Student login' })).toBeTruthy()
@@ -81,7 +118,7 @@ it('removes Priority sidebar contents, retains ARC, and fills the viewport heade
   expect(screen.queryByRole('button', { name: 'Overdue' })).toBeNull()
   expect(screen.getByRole('img', { name: 'ARC' }).getAttribute('src')).toContain('arc-logo.svg')
   expect(container.querySelector('header.fixed').className).toContain('left-0')
-  expect(container.querySelector('header.fixed').className).toContain('md:h-14')
+  expect(container.querySelector('header.fixed').className).toContain('student-header')
   expect(screen.queryByLabelText('Planner tree')).toBeNull()
 })
 it('retains drag handles, arrow ordering and numeric priority editing', () => {
@@ -145,13 +182,13 @@ it('switches Planner and Priority repeatedly while retaining Planner preferences
     expect(screen.getByLabelText('Planner tree')).toBeTruthy()
   }
 })
-it.each([['Timeline', '/timeline', 'h-14', 'left-arc-sidebar'], ['Focus', '/focus', 'h-20', 'left-0']])('keeps the existing %s route and layout behavior', (name, path, height, left) => {
+it.each([['Timeline', '/timeline'], ['Focus', '/focus']])('keeps the existing %s route with the shared viewport header', (name, path) => {
   const { container } = open()
   switchTo(name)
   expect(window.location.pathname).toBe(path)
   expect(screen.getByRole('heading', { name: `Existing ${name.toLowerCase()}` })).toBeTruthy()
-  expect(container.querySelector('header.fixed').className).toContain(height)
-  expect(container.querySelector('header.fixed').className).toContain(left)
+  expect(container.querySelector('header.fixed').className).toContain('student-header')
+  expect(container.querySelector('header.fixed').className).toContain('left-0')
   expect(screen.queryByRole('navigation', { name: 'Planner navigation' })).toBeNull()
 })
 

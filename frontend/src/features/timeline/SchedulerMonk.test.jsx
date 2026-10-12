@@ -1,20 +1,26 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { readFileSync } from 'node:fs'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import SchedulerRunButton from './SchedulerRunButton'
 import SchedulerAura from './SchedulerAura'
 import TimelineSidebar from './TimelineSidebar'
 import FocusSchedulerMascot from '../focus/FocusSchedulerMascot'
+import FocusPage from '../focus/FocusPage'
 import PlannerPage from '../planner/PlannerPage'
 import { AURA_PARTICLES, orbitalTravel, particlePosition } from './schedulerAuraMotion'
 
-const api = vi.hoisted(() => ({ reschedule: vi.fn(), settings: vi.fn() }))
+const api = vi.hoisted(() => ({ reschedule: vi.fn(), settings: vi.fn(), focus: {} }))
 vi.mock('../../api/planning', async (original) => ({
   ...await original(),
   rescheduleTimeline: (...args) => api.reschedule(...args),
   getSchedulerSettings: (...args) => api.settings(...args),
   getHistoryStatus: async () => ({ can_undo: false, can_redo: false }),
+}))
+vi.mock('../../hooks/useFocus', async (original) => ({
+  ...await original(),
+  useFocus: () => api.focus,
 }))
 vi.mock('../../hooks/usePlanningTree', () => ({ usePlanningTree: () => ({ data: [] }) }))
 vi.mock('../planner/components/PlannerTree', () => ({ default: () => <div>Tree</div> }))
@@ -22,6 +28,7 @@ vi.mock('../planner/components/PriorityPanel', () => ({ default: () => <div>Prio
 
 let client, reduced, mediaListener, frames, nextFrame
 beforeEach(() => {
+  api.focus = { data: { candidates: [], today: '2026-10-12' }, isLoading: false, isError: false }
   reduced = false
   frames = new Map()
   nextFrame = 0
@@ -98,7 +105,7 @@ it('breathes 24–29px radially, retains each angle and staggers the field', () 
     expect(Math.hypot(peak.x, peak.y)).toBeCloseTo(p.radius + p.excursion)
     expect(Math.hypot(peak.x, peak.y)).toBeGreaterThanOrEqual(60 - 1e-10)
     expect(Math.hypot(peak.x, peak.y)).toBeLessThanOrEqual(70 + 1e-10)
-    const idle = particlePosition(p, 'idle', 0)
+    const idle = particlePosition(p, 'rest', 0)
     expect(peak.x * idle.y - peak.y * idle.x).toBeCloseTo(0)
     expect(peak.x * idle.x + peak.y * idle.y).toBeGreaterThan(0)
     phases.add(p.phase)
@@ -121,7 +128,7 @@ it('orbits in both directions with radial variation and smooth bounded accelerat
   }
 })
 
-it('blends transitions without jumps, settles idle and cleans up frames', () => {
+it('blends transitions without jumps, continues idle and cleans up frames', () => {
   const { container, rerender, unmount } = render(<SchedulerAura state="hover" />)
   advance(0); advance(16); advance(32)
   const particle = container.querySelector('i'), before = particle.style.transform
@@ -135,15 +142,78 @@ it('blends transitions without jumps, settles idle and cleans up frames', () => 
   rerender(<SchedulerAura state="idle" />)
   expect(particle.style.transform).toBe(orbit)
   for (let time = 80; time <= 2000; time += 16) advance(time)
-  expect(frames.size).toBe(0)
+  expect(frames.size).toBe(1)
   unmount()
   expect(frames.size).toBe(0)
+})
+
+it('keeps idle drift subtle, periodic and bidirectional without full revolutions', () => {
+  expect(new Set(AURA_PARTICLES.map((p) => p.idlePeriod)).size).toBeGreaterThan(1)
+  for (const p of AURA_PARTICLES) {
+    expect(p.idlePeriod).toBeGreaterThanOrEqual(5)
+    expect(p.idlePeriod).toBeLessThanOrEqual(9)
+    const radialOffsets = [], angularOffsets = []
+    for (let step = 0; step <= 200; step++) {
+      const seconds = p.idlePeriod * step / 100
+      const position = particlePosition(p, 'idle', seconds)
+      const angle = Math.atan2(position.y, position.x) - p.angle
+      const drift = Math.atan2(Math.sin(angle), Math.cos(angle)) * 180 / Math.PI
+      radialOffsets.push(Math.hypot(position.x, position.y) - p.radius)
+      angularOffsets.push(drift)
+      expect(Math.abs(radialOffsets.at(-1))).toBeLessThanOrEqual(5 + 1e-10)
+      expect(Math.abs(drift)).toBeLessThanOrEqual(7 + 1e-10)
+    }
+    expect(Math.max(...radialOffsets)).toBeGreaterThan(2.99)
+    expect(Math.min(...radialOffsets)).toBeLessThan(-2.99)
+    expect(Math.max(...angularOffsets)).toBeGreaterThan(3.99)
+    expect(Math.min(...angularOffsets)).toBeLessThan(-3.99)
+    const first = particlePosition(p, 'idle', 0)
+    for (const cycles of [1, 1000]) {
+      const repeated = particlePosition(p, 'idle', p.idlePeriod * cycles)
+      expect(repeated.x).toBeCloseTo(first.x, 8)
+      expect(repeated.y).toBeCloseTo(first.y, 8)
+    }
+  }
+})
+
+it('animates idle continuously without restarting on unchanged props', () => {
+  const { container, rerender, unmount } = render(<SchedulerAura state="idle" />)
+  advance(0)
+  for (let time = 16; time <= 2000; time += 16) advance(time)
+  const before = container.querySelector('i').style.transform
+  const queued = [...frames.keys()]
+  rerender(<SchedulerAura state="idle" />)
+  expect([...frames.keys()]).toEqual(queued)
+  for (let time = 2016; time <= 4000; time += 16) advance(time)
+  expect(container.querySelector('i').style.transform).not.toBe(before)
+  expect(frames.size).toBe(1)
+  unmount()
+  expect(frames.size).toBe(0)
+})
+
+it('preserves the exact hover and scheduling paths independently of idle motion', () => {
+  for (const p of AURA_PARTICLES) {
+    for (const seconds of [0, 0.5, 2, 8, 30]) {
+      const hoverRadius = p.radius + p.excursion * (1 - Math.cos(seconds * Math.PI * 2 / p.period + p.phase)) / 2
+      expect(particlePosition(p, 'hover', seconds)).toEqual({
+        x: Math.cos(p.angle) * hoverRadius, y: Math.sin(p.angle) * hoverRadius,
+      })
+      const angle = p.angle + p.direction * p.speed * orbitalTravel(seconds)
+      const radius = p.radius + 7 * Math.sin(seconds * 1.4 + p.phase)
+      expect(particlePosition(p, 'scheduling', seconds)).toEqual({
+        x: Math.cos(angle) * radius, y: Math.sin(angle) * radius,
+      })
+    }
+  }
 })
 
 it('renders static reduced-motion states and responds to preference changes', () => {
   reduced = true
   const { container, rerender } = render(<SchedulerAura state="hover" />)
   const first = container.querySelector('i').style.transform
+  expect(frames.size).toBe(0)
+  rerender(<SchedulerAura state="idle" />)
+  expect(container.querySelector('i').style.transform).toBe(first)
   expect(frames.size).toBe(0)
   rerender(<SchedulerAura state="scheduling" />)
   expect(container.querySelector('i').style.transform).toBe(first)
@@ -191,4 +261,88 @@ it('integrates exactly one Monk in Planner and keeps it out of Priority', async 
   unmount()
   const priority = render(wrap(<MemoryRouter initialEntries={['/priority']}><PlannerPage /></MemoryRouter>))
   expect(priority.container.querySelectorAll('.timeline-scheduler-run')).toHaveLength(0)
+})
+
+
+it('increases the shared Monk and aura scale by 20% across all views', () => {
+  const stylesheet = document.createElement('style')
+  stylesheet.textContent = readFileSync('src/features/timeline/SchedulerAura.css', 'utf8')
+  document.head.append(stylesheet)
+  try {
+    const { container } = render(wrap(<SchedulerRunButton runtime={runtime} actions={{ run: vi.fn() }} />))
+    const button = container.querySelector('.timeline-scheduler-run')
+    const visual = button.querySelector('.scheduler-visual')
+    const scale = Number(getComputedStyle(document.documentElement).getPropertyValue('--scheduler-scale'))
+    expect(scale).toBeCloseTo(1.15 * 1.2)
+    expect(getComputedStyle(visual).transform).toContain('scale(var(--scheduler-scale))')
+    expect(getComputedStyle(visual).width).toBe('160px')
+    expect(getComputedStyle(visual).height).toBe('160px')
+    expect(visual.querySelector('.scheduler-aura')).toBeTruthy()
+    expect(visual.querySelector('.timeline-scheduler-art img')).toBeTruthy()
+    expect(getComputedStyle(button).width).toBe('var(--scheduler-footprint)')
+    expect(getComputedStyle(button).height).toBe('var(--scheduler-footprint)')
+    expect(getComputedStyle(button).maxWidth).toBe('100%')
+    const maxRadius = Math.max(...AURA_PARTICLES.map((p) => p.radius + p.excursion + p.size / 2 + 4))
+    expect(maxRadius * scale).toBeLessThan(160 * scale / 2)
+  } finally {
+    stylesheet.remove()
+  }
+})
+
+it.each(['loading', 'error', 'empty', 'populated'])('keeps exactly one scheduler in the Focus %s page', async (state) => {
+  api.focus.isLoading = state === 'loading'
+  api.focus.isError = state === 'error'
+  if (state === 'populated') {
+    api.focus.data.candidates = [{ item_id: 101, title: 'Focus task', focus_bucket: 'quick' }]
+  }
+  const { container } = render(wrap(<FocusPage />))
+  const button = await screen.findByRole('button', { name: 'Reschedule Timeline using Monk' })
+  expect(container.querySelectorAll('.focus-scheduler-mascot .timeline-scheduler-run')).toHaveLength(1)
+  expect(container.querySelector('.focus-content').contains(button)).toBe(false)
+  if (state === 'loading') expect(screen.getByRole('status').textContent).toContain('Loading Focus')
+  if (state === 'error') expect(screen.getByRole('alert').textContent).toContain('could not be loaded')
+  if (state === 'empty') expect(screen.getByText('Nothing is scheduled yet.')).toBeTruthy()
+  if (state === 'populated') expect(screen.getByText('Focus task')).toBeTruthy()
+  fireEvent.click(button)
+  await waitFor(() => expect(api.reschedule).toHaveBeenCalledTimes(1))
+})
+
+
+it('anchors the sole Focus scheduler bottom-left outside the scrolling task area', async () => {
+  const stylesheet = document.createElement('style')
+  stylesheet.textContent = readFileSync('src/features/timeline/SchedulerAura.css', 'utf8')
+    + readFileSync('src/features/focus/Focus.css', 'utf8')
+  document.head.append(stylesheet)
+  try {
+    api.focus.data.candidates = [{ item_id: 101, title: 'Focus task', focus_bucket: 'quick' }]
+    const { container } = render(wrap(<FocusPage />))
+    await screen.findByRole('button', { name: 'Reschedule Timeline using Monk' })
+    const dock = container.querySelector('.focus-scheduler-mascot')
+    const content = container.querySelector('.focus-content')
+    const page = container.querySelector('.focus-page')
+    expect(getComputedStyle(page).paddingLeft).toBe('0px')
+    expect(getComputedStyle(page).paddingTop).toBe('80px')
+    expect(getComputedStyle(page).height).toBe('100dvh')
+    // jsdom drops min() sizing declarations, so retain this width contract
+    // alongside the rendered page's auto margins and zero left reservation.
+    expect(stylesheet.textContent).toContain('.focus-content {\n  width: min(720px, calc(100% - 32px));')
+    expect(getComputedStyle(content).marginLeft).toBe('auto')
+    expect(getComputedStyle(content).marginRight).toBe('auto')
+    expect(content.contains(screen.getByRole('heading', { name: 'FOCUS' }))).toBe(true)
+    expect(content.contains(screen.getByRole('searchbox'))).toBe(true)
+    expect(content.contains(screen.getByText('Focus task'))).toBe(true)
+    expect(getComputedStyle(dock).position).toBe('fixed')
+    expect(getComputedStyle(dock).left).toBe('0px')
+    expect(getComputedStyle(dock).bottom).toBe('var(--scheduler-dock-bottom)')
+    expect(getComputedStyle(dock).width).toBe('var(--scheduler-dock-width)')
+    expect(getComputedStyle(content).overflowY).toBe('auto')
+    content.scrollTop = 300
+    fireEvent.scroll(content)
+    expect(container.querySelectorAll('.timeline-scheduler-run')).toHaveLength(1)
+    expect(container.querySelector('.focus-content').contains(dock)).toBe(false)
+    expect(getComputedStyle(dock).position).toBe('fixed')
+    expect(getComputedStyle(dock).getPropertyValue('--scheduler-art-size')).toBe('')
+  } finally {
+    stylesheet.remove()
+  }
 })

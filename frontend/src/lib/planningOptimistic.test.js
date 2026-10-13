@@ -1,8 +1,5 @@
 import assert from 'node:assert/strict'
-const nodeTestModule = 'node:test'
-const { test } = process.env.VITEST
-  ? await import('vitest')
-  : await import(/* @vite-ignore */ nodeTestModule)
+import { test } from 'node:test'
 
 import {
   patchPlanningTreeCompletion,

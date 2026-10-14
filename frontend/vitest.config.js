@@ -35,6 +35,9 @@ export default defineConfig({
       'src/features/focus/FocusQueueManager.race.test.jsx',
       'src/lib/plainText.test.js',
       'src/lib/subjectLabel.test.js',
+      'src/components/student/NavigationDrawer.test.jsx',
+      'src/components/student/MarksPanel.test.jsx',
+      'src/components/student/StudentDialog.test.jsx',
     ],
 
     exclude: [

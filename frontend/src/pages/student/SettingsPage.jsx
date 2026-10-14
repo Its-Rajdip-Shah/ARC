@@ -11,6 +11,7 @@ import {
   useTestCanvasConnection,
 } from '../../hooks/useCanvas'
 import { useSchedulerSettings } from '../../hooks/useSchedulerSettings'
+import { useMe } from '../../hooks/useMe'
 import { errorMessage, formatInstant } from '../../lib/errors'
 
 const FLAVOURS = [
@@ -47,7 +48,7 @@ function canvasMessage(error, fallback = 'Request failed') {
   )
 }
 
-function IntegrationPanel() {
+export function IntegrationPanel() {
   const connection = useCanvasConnection()
   const saveConnection = useSaveCanvasConnection()
   const testConnection = useTestCanvasConnection()
@@ -140,12 +141,12 @@ function IntegrationPanel() {
       await persistSelection()
       const log = await sync.mutateAsync()
       const created =
-        (log.counts?.courses_created || 0) + (log.counts?.assignments_created || 0)
+        (log?.counts?.courses_created || 0) + (log?.counts?.assignments_created || 0)
       const updated =
-        (log.counts?.courses_updated || 0) + (log.counts?.assignments_updated || 0)
-      const extra = log.error_message ? ` ${log.error_message}` : ''
+        (log?.counts?.courses_updated || 0) + (log?.counts?.assignments_updated || 0)
+      const extra = log?.error_message ? ` ${log.error_message}` : ''
       setBanner({
-        tone: log.error_message ? 'error' : 'ok',
+        tone: log?.error_message ? 'error' : 'ok',
         text: `Sync finished. ${created} new, ${updated} updated.${extra}`,
       })
     } catch (error) {
@@ -186,7 +187,24 @@ function IntegrationPanel() {
       </p>
 
       {connection.isPending && (
-        <p className="text-sm text-arc-text-muted">Checking connection…</p>
+        <p role="status" className="text-sm text-arc-text-muted">Checking connection…</p>
+      )}
+      {connection.isError && (
+        <div role="alert" className="rounded-[10px] border border-arc-danger p-3 text-sm text-arc-danger-light">
+          Could not check your Canvas connection: {canvasMessage(connection.error)}
+          <button
+            type="button"
+            onClick={() => connection.refetch()}
+            className="ml-3 rounded-lg border border-arc-danger px-3 py-1 font-medium hover:bg-white/10"
+          >
+            Retry
+          </button>
+        </div>
+      )}
+      {!connection.isPending && !connection.isError && !connected && (
+        <p role="status" className="text-sm text-arc-text-secondary">
+          Canvas is not connected yet. Add your token below to begin syncing courses.
+        </p>
       )}
 
       {connected && (
@@ -212,6 +230,7 @@ function IntegrationPanel() {
 
       {banner && (
         <p
+          role={banner.tone === 'error' ? 'alert' : 'status'}
           className={`rounded-[10px] px-3 py-2 text-sm ${
             banner.tone === 'error'
               ? 'bg-arc-danger/20 text-arc-danger-light'
@@ -237,7 +256,7 @@ function IntegrationPanel() {
         <div className="flex flex-wrap gap-2">
           <button
             type="submit"
-            disabled={busy || token.trim().length < 20}
+            disabled={busy || connection.isPending || token.trim().length < 20}
             className="h-[40px] rounded-[10px] bg-arc-accent px-4 text-sm font-semibold text-black disabled:opacity-60"
           >
             {saveConnection.isPending ? 'Saving…' : connected ? 'Replace token' : 'Save token'}
@@ -284,7 +303,8 @@ function IntegrationPanel() {
           )}
           {courses.isError && (
             <p className="text-sm text-arc-danger-light" role="alert">
-              {canvasMessage(courses.error, 'Could not load Canvas courses.')}
+              {canvasMessage(courses.error, 'Could not load Canvas courses.')}{' '}
+              <button type="button" onClick={() => courses.refetch()} className="underline">Retry</button>
             </p>
           )}
           {courses.data && courses.data.length === 0 && (
@@ -327,6 +347,7 @@ function IntegrationPanel() {
 }
 
 function AccountPanel() {
+  const profile = useMe()
   const settings = useSchedulerSettings()
   const selected = settings.data?.flavour ?? null
   const [banner, setBanner] = useState(null)
@@ -336,6 +357,7 @@ function AccountPanel() {
     setBanner(null)
     try {
       await settings.setFlavour(flavour)
+      setBanner({ tone: 'ok', text: 'Scheduler preference saved.' })
     } catch {
       setBanner({
         tone: 'error',
@@ -345,7 +367,37 @@ function AccountPanel() {
   }
 
   return (
-    <section className="space-y-4 rounded-[15px] border border-[#4a496b] bg-arc-panel p-5">
+    <div className="space-y-4">
+      <section className="space-y-3 rounded-[15px] border border-[#4a496b] bg-arc-panel p-5">
+        <h2 className="text-lg font-semibold">Your account</h2>
+        {profile.isPending && <p role="status" className="text-sm text-arc-text-muted">Loading account…</p>}
+        {profile.isError && (
+          <p role="alert" className="text-sm text-arc-danger-light">
+            Could not load account details.{' '}
+            <button type="button" onClick={() => profile.refetch()} className="underline">Retry</button>
+          </p>
+        )}
+        {profile.data && (
+          <dl className="space-y-2 text-sm">
+            <div className="flex flex-wrap justify-between gap-2">
+              <dt className="text-arc-text-secondary">Email</dt>
+              <dd className="break-all">{profile.data.email}</dd>
+            </div>
+            <div className="flex flex-wrap justify-between gap-2">
+              <dt className="text-arc-text-secondary">Two-factor authentication</dt>
+              <dd>{profile.data.mfa_enabled ? 'Already enrolled' : 'Not enrolled'}</dd>
+            </div>
+            <div className="flex flex-wrap justify-between gap-2">
+              <dt className="text-arc-text-secondary">Account status</dt>
+              <dd>{profile.data.is_locked ? 'Locked' : 'Active'}</dd>
+            </div>
+          </dl>
+        )}
+        <p className="text-xs text-arc-text-muted">
+          Password changes are not available in the current API. This page does not pretend a change was saved.
+        </p>
+      </section>
+      <section className="space-y-4 rounded-[15px] border border-[#4a496b] bg-arc-panel p-5">
       <h2 className="text-lg font-semibold">Scheduler intensity</h2>
       <p className="text-sm text-arc-text-secondary">
         Locked-In and Monk use the same setting as Timeline. Changing it here
@@ -358,12 +410,13 @@ function AccountPanel() {
 
       {settings.isError && (
         <p className="text-sm text-arc-danger-light" role="alert">
-          Scheduler settings could not load.
+          Scheduler settings could not load.{' '}
+          <button type="button" onClick={() => settings.refetch()} className="underline">Retry</button>
         </p>
       )}
 
       {banner && (
-        <p className="rounded-[10px] bg-arc-danger/20 px-3 py-2 text-sm text-arc-danger-light">
+        <p role={banner.tone === 'error' ? 'alert' : 'status'} className={`rounded-[10px] px-3 py-2 text-sm ${banner.tone === 'error' ? 'bg-arc-danger/20 text-arc-danger-light' : 'bg-arc-accent/20 text-arc-accent'}`}>
           {banner.text}
         </p>
       )}
@@ -374,7 +427,7 @@ function AccountPanel() {
             key={mode.value}
             type="button"
             aria-pressed={selected === mode.value}
-            disabled={settings.saving || settings.isPending}
+            disabled={settings.saving || settings.isPending || settings.isError}
             onClick={() => choose(mode.value)}
             className={`rounded-[10px] border px-4 py-3 text-left disabled:opacity-60 ${
               selected === mode.value
@@ -390,21 +443,30 @@ function AccountPanel() {
         ))}
       </div>
     </section>
+    </div>
   )
 }
 
-export default function SettingsPage() {
+export default function SettingsPage({ embedded = false, initialTab = 'integration' }) {
   const [searchParams, setSearchParams] = useSearchParams()
-  const tab = selectedTab(searchParams)
+  const [dialogTab, setDialogTab] = useState(initialTab)
+  const tab = embedded ? dialogTab : selectedTab(searchParams)
+
+  function changeTab(nextTab) {
+    if (embedded) setDialogTab(nextTab)
+    else setSearchParams({ tab: nextTab })
+  }
 
   return (
-    <div className="mx-auto max-w-2xl px-6 pb-16 pt-24">
-      <header className="mb-8">
-        <h1 className="font-display text-3xl text-arc-text">Settings</h1>
-        <p className="mt-2 text-sm text-arc-text-secondary">
-          Canvas connection and scheduler intensity.
-        </p>
-      </header>
+    <div className={embedded ? 'w-full' : 'mx-auto max-w-2xl px-6 pb-16 pt-24'}>
+      {!embedded && (
+        <header className="mb-8">
+          <h1 className="font-display text-3xl text-arc-text">Settings</h1>
+          <p className="mt-2 text-sm text-arc-text-secondary">
+            Canvas connection and account preferences.
+          </p>
+        </header>
+      )}
 
       <div
         role="tablist"
@@ -417,7 +479,7 @@ export default function SettingsPage() {
             type="button"
             role="tab"
             aria-selected={tab === item.id}
-            onClick={() => setSearchParams({ tab: item.id })}
+            onClick={() => changeTab(item.id)}
             className={`h-[26px] flex-1 rounded-[28px] text-[15px] transition-colors ${
               tab === item.id
                 ? 'bg-arc-blue text-arc-text'

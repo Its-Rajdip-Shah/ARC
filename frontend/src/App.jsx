@@ -14,6 +14,8 @@ import PlannerPage from './features/planner/PlannerPage'
 import TimelinePage from './features/timeline/TimelinePage'
 import FocusPage from './features/focus/FocusPage'
 import SettingsPage from './pages/student/SettingsPage'
+import MarksPanel from './components/student/MarksPanel'
+import NotFoundPage from './pages/NotFoundPage'
 
 export default function App() {
   return (
@@ -32,6 +34,7 @@ export default function App() {
               <Route path="/timeline" element={<TimelinePage />} />
               <Route path="/focus" element={<FocusPage />} />
               <Route path="/settings" element={<SettingsPage />} />
+              <Route path="/marks" element={<div className="mx-auto max-w-3xl px-6 pb-16 pt-24"><h1 className="mb-6 font-display text-3xl">Marks</h1><MarksPanel /></div>} />
             </Route>
           </Route>
 
@@ -44,6 +47,7 @@ export default function App() {
               <Route path="users" element={<AdminUsersPage />} />
             </Route>
           </Route>
+          <Route path="*" element={<NotFoundPage />} />
         </Routes>
       </SessionHydrator>
     </BrowserRouter>

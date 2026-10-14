@@ -65,7 +65,7 @@ export default function TimelineSidebar({
           )
         }
       >
-        Subjects
+        Roots
         <span
           aria-hidden="true"
           className="text-sm tracking-normal"
@@ -86,7 +86,7 @@ export default function TimelineSidebar({
               text-arc-text-secondary
             "
           >
-            Subjects
+            Roots
           </h2>
         </div>
 

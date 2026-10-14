@@ -1,6 +1,7 @@
 import {
   useCallback,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from 'react'
@@ -336,6 +337,9 @@ export default function TimelineBoard({
   scrollRef,
   onRequestAnchor,
   onEditTimezones,
+  onEditTask,
+  navigationTarget,
+  onVisibleTaskItemsChange,
   onRenameTimezone,
   onViewportWidth,
   dateHighlights,
@@ -416,6 +420,14 @@ export default function TimelineBoard({
   }
 
   useLayoutEffect(() => {
+    if (navigationTarget) {
+      dateHover.cancel()
+      setPreviewColumn(null)
+      setSelectedColumn(null)
+    }
+  }, [navigationTarget])
+
+  useLayoutEffect(() => {
     const node =
       scrollRef.current
 
@@ -474,12 +486,15 @@ export default function TimelineBoard({
       [],
     )
 
-  const visibleItems =
-    concentratedItems(
-      items,
-      previewColumn,
-      selectedColumn,
-    )
+  const visibleItems = useMemo(
+    () => concentratedItems(items, previewColumn, selectedColumn),
+    [items, previewColumn, selectedColumn],
+  )
+
+  useLayoutEffect(() => {
+    onVisibleTaskItemsChange?.(visibleItems.filter((item) =>
+      item.scheduled_date >= scale.from && item.scheduled_date <= scale.to))
+  }, [visibleItems, scale.from, scale.to, onVisibleTaskItemsChange])
 
   const persistentConcentration =
     isPersistentConcentration(
@@ -679,6 +694,7 @@ export default function TimelineBoard({
                   : null
 
               const overloaded =
+                column.from >= today &&
                 column.from ===
                   column.to &&
                 (
@@ -690,6 +706,7 @@ export default function TimelineBoard({
                 )
 
               const infeasible =
+                column.from >= today &&
                 column.from ===
                   column.to &&
                 load?.status ===
@@ -1082,8 +1099,8 @@ export default function TimelineBoard({
                                     popped,
                                 ),
                           )
-                            ? 'timeline-row timeline-row-constrained'
-                            : 'timeline-row'
+                            ? 'timeline-row timeline-row-constrained' + (persistentConcentration ? ' timeline-row-selected-date' : '')
+                            : 'timeline-row' + (persistentConcentration ? ' timeline-row-selected-date' : '')
                         }
                         key={
                           index
@@ -1187,6 +1204,8 @@ export default function TimelineBoard({
                                     flat={
                                       !grouped
                                     }
+                                    onEdit={onEditTask}
+                                    expansionVariant={persistentConcentration ? 'selected-date' : 'default'}
                                     expanded={
                                       persistentConcentration
                                     }

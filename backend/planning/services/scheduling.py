@@ -8,6 +8,8 @@ from django.db import transaction
 from django.db.models import Exists, OuterRef
 from django.utils import timezone
 
+from planning.services.calendar_dates import user_local_date
+from planning.services.overdue import effective_due_date
 from planning.models import (
     DurationCategory,
     PlanningDependency,
@@ -121,12 +123,6 @@ def focus_capacity_conflicts(
     )
 
     def capacity_bucket(item):
-        if item.is_residual:
-            return (
-                DurationCategory
-                .UNDER_20_MINUTES
-            )
-
         return item.duration_category
 
     before = Counter()
@@ -392,7 +388,7 @@ def _legacy_schedule(user, today=None, *, mode='minimal'):
     """
     if mode not in {'minimal', 'global'}:
         raise ValueError('Unknown scheduling mode')
-    today = today or timezone.localdate()
+    today = user_local_date(user, explicit_date=today)
     # Scheduling may read/lock canonical priority, but it has no authority
     # to repair or manufacture canonical priority as a side effect.
     priority._lock(user)
@@ -440,7 +436,7 @@ def _legacy_schedule(user, today=None, *, mode='minimal'):
             changed.append(item)
 
     for item in items:
-        bucket = DurationCategory.UNDER_20_MINUTES if item.is_residual else item.duration_category
+        bucket = item.duration_category
         if bucket not in limits:
             conflicts.append(_conflict(item, 'duration_required'))
             continue
@@ -467,21 +463,23 @@ def _legacy_schedule(user, today=None, *, mode='minimal'):
             pending.append(item)
 
     for item in pending:
-        bucket = DurationCategory.UNDER_20_MINUTES if item.is_residual else item.duration_category
+        bucket = item.duration_category
+        due = effective_due_date(item, today)
         lower = max(today, item.start_date or today)
         day = lower
-        if mode == 'minimal' and item.scheduled_date and not _validate_date(item, item.scheduled_date, today):
+        if (mode == 'minimal' and item.scheduled_date and item.scheduled_date >= lower
+                and (due is None or item.scheduled_date <= due)):
             day = item.scheduled_date
         if limits[bucket] == 0:
             conflicts.append(_conflict(item, 'capacity_disabled'))
         else:
-            while usage[(day, bucket)] >= limits[bucket] and (not item.due_date or day <= item.due_date):
+            while usage[(day, bucket)] >= limits[bucket] and (due is None or day <= due):
                 day += timedelta(days=1)
-        if item.due_date and day > item.due_date:
+        if due and day > due:
             # An old suggestion is not a hard bound: try earlier legal space
             # before accepting overload. Choose least-used, then earliest day.
-            if lower <= item.due_date:
-                candidates = (lower + timedelta(days=i) for i in range((item.due_date - lower).days + 1))
+            if lower <= due:
+                candidates = (lower + timedelta(days=i) for i in range((due - lower).days + 1))
                 day = min(candidates, key=lambda candidate: (usage[(candidate, bucket)], candidate))
                 if usage[(day, bucket)] >= limits[bucket]:
                     conflicts.append(_conflict(item, 'no_capacity_before_deadline'))
@@ -512,7 +510,8 @@ def _legacy_schedule(user, today=None, *, mode='minimal'):
     for allocation in sorted(allocations, key=lambda row: (row.scheduled_date, _scheduling_order(row.item))):
         ranks[allocation.scheduled_date] += 1
         allocation.execution_rank = ranks[allocation.scheduled_date]
-        if allocation.item.due_date and allocation.scheduled_date > allocation.item.due_date:
+        due = effective_due_date(allocation.item, today)
+        if due and allocation.scheduled_date > due:
             conflict = _conflict(allocation.item, 'allocation_after_deadline')
             if conflict not in conflicts:
                 conflicts.append(conflict)
@@ -891,7 +890,8 @@ def schedule(
     Canonical planning state remains outside scheduler authority.
     """
 
-    today = today or timezone.localdate()
+    today = user_local_date(user, explicit_date=today)
+    anchor_changed_ids = _reconcile_manual_anchors(user, today)
     flavour = _configured_scheduler_flavour(user)
 
     if flavour is None:
@@ -927,7 +927,7 @@ def schedule(
             'flavour': None,
         }
 
-        return result
+        return _with_anchor_changes(result, user, anchor_changed_ids)
 
     before = _disposable_schedule_state(user)
 
@@ -993,56 +993,113 @@ def schedule(
         applied_revision=expected_revision,
     )
 
-    return {
+    return _with_anchor_changes({
         'changed_ids': changed_ids,
         'conflicts': compatibility_conflicts,
         'scheduler': runtime,
-    }
+    }, user, anchor_changed_ids)
 
 
-def _expire_past_manual_anchors(user, today):
-    """Expire past canonical anchors without manufacturing deadline overdue.
+@transaction.atomic
+def _reconcile_manual_anchors(user, today):
+    """Carry a commitment through days 1-3, then retain its origin as history.
 
-    The hard date commitment disappears once missed. The factual due date is
-    untouched. The history layer remains available as the durable record of
-    explicit planning actions.
+    Date-invalid carries terminate the commitment using the same validation
+    as explicit moves. Completed/deleted work cannot retain an active window.
+    Return every changed ID, including carries and legacy origin initialization.
     """
-    expired = list(
-        PlanningItem.objects.for_user(user)
-        .filter(
-            is_completed=False,
-            is_deleted=False,
-            manual_requested_date__lt=today,
-        )
+    priority._lock(user)
+    anchors = list(
+        PlanningItem.objects.select_for_update().filter(
+            user=user, manual_requested_date__isnull=False,
+        ).order_by('pk')
     )
-
-    if not expired:
+    if not anchors:
         return []
+    # Match Focus anchor-order validation, including blocked frontier work.
+    eligible = {
+        item.pk: item
+        for item in _scheduler_eligible(user, include_blocked=True).filter(
+            manual_requested_date__isnull=False,
+        )
+    }
+    changed, carried = [], []
+    occupied = {}
+    for item in anchors:
+        origin = item.manual_anchor_origin_date or item.manual_requested_date
+        age = (today - origin).days
+        if (
+            item.is_completed or item.is_deleted or age >= 4
+            or (1 <= age <= 3 and _validate_date(item, today, today))
+        ):
+            item.expired_manual_requested_date = origin
+            item.manual_requested_date = None
+            item.manual_requested_order = None
+            item.manual_anchor_origin_date = None
+            changed.append(item)
+            continue
+        if item.manual_anchor_origin_date is None:
+            item.manual_anchor_origin_date = origin
+            changed.append(item)
+        if 1 <= age <= 3 and item.manual_requested_date != today:
+            carried.append(item)
+        elif item.manual_requested_date == today and item.manual_requested_order is not None and item.pk in eligible:
+            candidate = eligible[item.pk]
+            bucket = focus_bucket_key(candidate.duration_category, is_residual=candidate.is_residual)
+            occupied.setdefault(bucket, set()).add(item.manual_requested_order)
 
-    for item in expired:
-        item.expired_manual_requested_date = item.manual_requested_date
-        item.manual_requested_date = None
-        item.manual_requested_order = None
+    carried.sort(key=lambda item: (
+        item.manual_anchor_origin_date,
+        item.manual_requested_order if item.manual_requested_order is not None else float('inf'),
+        item.pk,
+    ))
+    changed_ids = {item.pk for item in changed}
+    for item in carried:
+        item.manual_requested_date = today
+        # Structural/non-actionable work has no Focus execution slot.
+        if item.pk in eligible:
+            candidate = eligible[item.pk]
+            bucket = focus_bucket_key(candidate.duration_category, is_residual=candidate.is_residual)
+            used = occupied.setdefault(bucket, set())
+            order = 1
+            while order in used:
+                order += 1
+            item.manual_requested_order = order
+            used.add(order)
+        if item.pk not in changed_ids:
+            changed.append(item)
+            changed_ids.add(item.pk)
 
-    PlanningItem.objects.bulk_update(
-        expired,
-        [
-            'manual_requested_date',
-            'manual_requested_order',
-            'expired_manual_requested_date',
-        ],
+    if changed:
+        PlanningItem.objects.bulk_update(changed, [
+            'manual_requested_date', 'manual_requested_order',
+            'manual_anchor_origin_date', 'expired_manual_requested_date',
+        ])
+    return sorted(changed_ids)
+
+
+def _with_anchor_changes(result, user, changed_ids):
+    """Expose lifecycle changes even when disposable placement stayed the same."""
+    ids = sorted(set(changed_ids) | set(result.get('anchor_changed_ids', [])))
+    result['anchor_changed_ids'] = ids
+    result['changed_ids'] = sorted(set(result.get('changed_ids', [])) | set(ids))
+    result['expired_anchor_ids'] = list(
+        PlanningItem.objects.filter(
+            user=user, pk__in=ids, manual_requested_date__isnull=True,
+            expired_manual_requested_date__isnull=False,
+        ).order_by('pk').values_list('pk', flat=True)
     )
-    return [item.pk for item in expired]
+    return result
 
 
 @transaction.atomic
 def daily_schedule(user, today=None):
     """Run global maintenance once per local day, without user undo history."""
-    today = today or timezone.localdate()
+    today = user_local_date(user, explicit_date=today)
     priority._lock(user)
     state, _ = SchedulingState.objects.get_or_create(user=user)
     mode = 'global' if state.last_global_date != today else 'minimal'
-    expired_anchor_ids = _expire_past_manual_anchors(user, today)
+    anchor_changed_ids = _reconcile_manual_anchors(user, today)
 
     # A configured V1 schedule is already refreshed by every canonical
     # planning mutation.  Do not rerun the full optimiser on a read-only
@@ -1051,7 +1108,7 @@ def daily_schedule(user, today=None):
         state.scheduler_flavour is not None
         and mode == 'minimal'
         and state.scheduler_runtime
-        and not expired_anchor_ids
+        and not anchor_changed_ids
     ):
         result = {
             'changed_ids': [],
@@ -1068,7 +1125,7 @@ def daily_schedule(user, today=None):
             mode=mode,
         )
 
-    result['expired_anchor_ids'] = expired_anchor_ids
+    _with_anchor_changes(result, user, anchor_changed_ids)
 
     if mode == 'global':
         state.last_global_date = today
@@ -1081,7 +1138,7 @@ def daily_schedule(user, today=None):
 def reschedule(user, today=None):
     """Explicit global optimisation is undoable, including legacy repairs."""
 
-    today = today or timezone.localdate()
+    today = user_local_date(user, explicit_date=today)
 
     priority._lock(user)
 
@@ -1164,6 +1221,16 @@ def _snapshot(
                     item.manual_requested_date.isoformat()
                     if item.manual_requested_date
                     else None
+                ),
+
+                'manual_anchor_origin_date': (
+                    item.manual_anchor_origin_date.isoformat()
+                    if item.manual_anchor_origin_date else None
+                ),
+
+                'expired_manual_requested_date': (
+                    item.expired_manual_requested_date.isoformat()
+                    if item.expired_manual_requested_date else None
                 ),
 
                 'manual_requested_order':
@@ -1293,7 +1360,7 @@ def _begin(user, today):
 
 @transaction.atomic
 def move_to_date(user, item_id, day, *, allow_overload=False, today=None):
-    today = today or timezone.localdate()
+    today = user_local_date(user, explicit_date=today)
     before, baseline = _begin(user, today)
     item = _item(user, item_id)
     code = _validate_date(item, day, today)
@@ -1307,10 +1374,12 @@ def move_to_date(user, item_id, day, *, allow_overload=False, today=None):
     # disposable scheduler suggestion. The scheduler may reproduce
     # scheduled_date from this anchor, but cannot silently erase the intent.
     item.manual_requested_date = day
+    item.manual_anchor_origin_date = day
     item.scheduled_date = day
     item.save(
         update_fields=[
             'manual_requested_date',
+            'manual_anchor_origin_date',
             'scheduled_date',
         ]
     )
@@ -1321,7 +1390,7 @@ def move_to_date(user, item_id, day, *, allow_overload=False, today=None):
 
 @transaction.atomic
 def replace(user, replacement_id, displaced_id, *, allow_overload=False, today=None):
-    today = today or timezone.localdate()
+    today = user_local_date(user, explicit_date=today)
     before, baseline = _begin(user, today)
     replacement, displaced = _item(user, replacement_id), _item(user, displaced_id)
     day = displaced.scheduled_date
@@ -1337,18 +1406,22 @@ def replace(user, replacement_id, displaced_id, *, allow_overload=False, today=N
     # Replacement is date intent, not a global importance reorder. A
     # scheduler candidate can legitimately have no current priority position.
     replacement.manual_requested_date = day
+    replacement.manual_anchor_origin_date = day
     replacement.scheduled_date = day
-    replacement.save(update_fields=['manual_requested_date', 'scheduled_date'])
+    replacement.save(update_fields=['manual_requested_date', 'manual_anchor_origin_date', 'scheduled_date'])
     displaced.manual_requested_date = day if allow_overload else None
+    displaced.manual_anchor_origin_date = day if allow_overload else None
+    if not allow_overload:
+        displaced.manual_requested_order = None
     displaced.scheduled_date = day if allow_overload else day + timedelta(days=1)
-    displaced.save(update_fields=['manual_requested_date', 'scheduled_date'])
+    displaced.save(update_fields=['manual_requested_date', 'manual_anchor_origin_date', 'manual_requested_order', 'scheduled_date'])
     baseline = {pair for pair in baseline if pair[0] not in {replacement.pk, displaced.pk}}
     return _finish(user, before, today, baseline)
 
 
 @transaction.atomic
 def configure(user, *, day=None, overloaded=None, today=None):
-    today = today or timezone.localdate()
+    today = user_local_date(user, explicit_date=today)
     before, baseline = _begin(user, today)
     if day is not None:
         SchedulingOverload.objects.update_or_create(user=user, date=day, defaults={'allowed': overloaded})
@@ -1367,6 +1440,7 @@ def _apply_anchor_intent(
     change_deadline=False,
     change_release=False,
     allow_overload=False,
+    order_only=False,
 ):
     """Apply canonical manual placement intent without scheduling.
 
@@ -1415,10 +1489,19 @@ def _apply_anchor_intent(
                 "Manual execution order must be positive."
         })
 
+    if order_only and item.manual_requested_date != day:
+        raise SchedulingConflict([{
+            "item_id": item.pk,
+            "code": "anchor_changed",
+        }])
+
     item.manual_requested_date = day
+    if not order_only:
+        item.manual_anchor_origin_date = day
     item.manual_requested_order = order
 
     fields = [
+        "manual_anchor_origin_date",
         "manual_requested_date",
         "manual_requested_order",
     ]
@@ -1525,6 +1608,7 @@ def set_anchor_batch(
     changes,
     *,
     today=None,
+    expected_queue=None,
 ):
     """Apply multiple Focus anchors then run the scheduler exactly once.
 
@@ -1533,10 +1617,7 @@ def set_anchor_batch(
     failure.
     """
 
-    today = (
-        today
-        or timezone.localdate()
-    )
+    today = user_local_date(user, explicit_date=today)
 
     if not changes:
         return {
@@ -1589,6 +1670,31 @@ def set_anchor_batch(
             "item_id":
                 "One or more planning items do not exist."
         })
+
+    expected_orders = {}
+    if expected_queue is not None:
+        expected_ids = [entry["item_id"] for entry in expected_queue]
+        owned_ids = set(PlanningItem.objects.for_user(user).filter(
+            pk__in=expected_ids,
+        ).values_list("pk", flat=True))
+        if (
+            len(set(expected_ids)) != len(expected_ids)
+            or not set(item_ids).issubset(expected_ids)
+            or set(expected_ids) != owned_ids
+        ):
+            raise ValidationError({"expected_queue": "Choose distinct owned tasks, including every changed task."})
+        # Only same-date changes promise a relative execution order. A
+        # cross-date gesture promises the moved task's date anchor, not a
+        # frozen arrangement/date for every automatic neighbour.
+        for change in changes:
+            if items[change["item_id"]].scheduled_date == change["date"]:
+                item = items[change["item_id"]]
+                key = (change["date"], focus_bucket_key(item.duration_category, is_residual=item.is_residual))
+                expected_orders.setdefault(key, set()).add(change["item_id"])
+        expected_orders = {
+            key: [item_id for item_id in expected_ids if item_id in ids]
+            for key, ids in expected_orders.items()
+        }
 
     explicit_slots = [
         (
@@ -1778,6 +1884,7 @@ def set_anchor_batch(
             change[
                 "date"
             ],
+            order_only=change.get("order_only", False),
             order=change.get(
                 "order"
             ),
@@ -1852,6 +1959,34 @@ def set_anchor_batch(
             blocking_conflicts
         )
 
+    if expected_orders:
+        from . import focus
+
+        candidates = focus._ordered_candidates(user)
+        buckets = {
+            item.pk: focus_bucket_key(item.duration_category, is_residual=item.is_residual)
+            for item in _scheduler_eligible(user, include_blocked=True)
+        }
+        changes_by_id = {change["item_id"]: change for change in changes}
+        for (day, bucket), expected in expected_orders.items():
+            actual = [row.item_id for row in candidates
+                      if row.scheduled_date == day and buckets.get(row.item_id) == bucket]
+            affected_ids = set(expected)
+            relative_order_valid = [item_id for item_id in actual if item_id in affected_ids] == expected
+            # Validate only changed tasks' promised slots. Out-of-range manual
+            # slots retain the scheduler's established overflow semantics.
+            slots_valid = all(
+                changes_by_id[item_id].get("order") is None
+                or changes_by_id[item_id]["order"] > len(actual)
+                or (item_id in actual and actual.index(item_id) + 1 == changes_by_id[item_id]["order"])
+                for item_id in expected
+            )
+            if not relative_order_valid or not slots_valid:
+                raise SchedulingConflict([{
+                    "item_id": expected[0],
+                    "code": "queue_order_unrepresentable",
+                }])
+
     after = _snapshot(
         user,
         include_dependencies=
@@ -1912,11 +2047,13 @@ def remove_anchor(item: PlanningItem):
         item.user,
     )
     item.manual_requested_date = None
+    item.manual_anchor_origin_date = None
     item.manual_requested_order = None
     item.expired_manual_requested_date = None
     item.save(
         update_fields=[
             "manual_requested_date",
+            "manual_anchor_origin_date",
             "manual_requested_order",
             "expired_manual_requested_date",
         ]
@@ -1959,11 +2096,10 @@ def validate_anchor(item: PlanningItem, day):
 @transaction.atomic
 def reconcile_anchors(user, today=None):
     """Time reconciliation for expired explicit date intent."""
-    today = today or timezone.localdate()
-    expired = _expire_past_manual_anchors(user, today)
+    today = user_local_date(user, explicit_date=today)
+    changed = _reconcile_manual_anchors(user, today)
     result = schedule(user, today)
-    result["expired_anchor_ids"] = expired
-    return result
+    return _with_anchor_changes(result, user, changed)
 
 
 # ---------------------------------------------------------------------------
@@ -1990,7 +2126,7 @@ def _allocation_count(category):
 def _reconcile_progress_allocations(user, today=None):
     """Rebuild disposable allocations from current canonical remaining work."""
 
-    today = today or timezone.localdate()
+    today = user_local_date(user, explicit_date=today)
     candidates = list(_scheduler_eligible(user))
 
     # Scheduler proposals are disposable by definition. A rerun may replace
@@ -2000,7 +2136,7 @@ def _reconcile_progress_allocations(user, today=None):
     allocations = []
 
     for item in candidates:
-        if item.is_residual or item.scheduled_date is None or item.duration_category not in _SPLITTABLE_VALUES:
+        if item.scheduled_date is None or item.duration_category not in _SPLITTABLE_VALUES:
             continue
 
         remaining = Decimal("100") - Decimal(str(item.percent_completed))

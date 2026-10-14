@@ -8,6 +8,10 @@ const views = [
     to: '/planner',
   },
   {
+    label: 'Priority',
+    to: '/priority',
+  },
+  {
     label: 'Timeline',
     to: '/timeline',
   },
@@ -21,7 +25,7 @@ function getViewClassName({
   isActive,
 }) {
   return [
-    'flex h-[26px] w-[90px] items-center justify-center',
+    'flex h-full leading-none min-w-0 flex-1 px-1 sm:px-3 items-center justify-center',
     'text-[15px] transition-colors',
     isActive
       ? 'bg-arc-blue text-arc-text'
@@ -34,7 +38,7 @@ export default function ViewToggle() {
     <nav
       aria-label="Planning view"
       className="
-        flex h-[26px] w-[271px]
+        flex h-[26px] w-[361px] max-w-[calc(100vw-2rem)]
         overflow-hidden rounded-[28px]
         border border-[#4a496b]
         bg-arc-panel

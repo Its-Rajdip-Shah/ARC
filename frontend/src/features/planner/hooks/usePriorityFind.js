@@ -18,8 +18,9 @@ export default function usePriorityFind(
     {
       onNavigate,
       includePath,
+      // Keep typing and Enter navigation in the search field.
       focusResult:
-        true,
+        false,
       rowId:
         planningRowId,
       searchableText:

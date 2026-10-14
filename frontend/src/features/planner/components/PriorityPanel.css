@@ -1,19 +1,22 @@
+.priority-page-content {
+  padding-top: var(--student-header-height, 56px);
+}
+
 .priority-panel {
-  position: fixed;
-  inset: 80px 0 0 100%;
-  z-index: 25;
+  position: relative;
+  width: 100%;
+  height: calc(100dvh - var(--student-header-height, 56px));
+  min-width: 0;
   display: flex;
   flex-direction: column;
   background: var(--color-arc-bg);
-  visibility: hidden;
 }
-.priority-panel-open { left: var(--spacing-arc-sidebar); visibility: visible; }
-.priority-heading { padding: 18px 32px 12px; }
-.priority-toolbar { display: flex; align-items: center; gap: 3px; margin: 0 32px 12px; padding: 5px 10px; border: 1px solid #8fa8e840; border-radius: 10px; background: #202754d9; box-shadow: 0 8px 24px #050a3538; }
+.priority-toolbar-area { position: relative; flex-shrink: 0; width: calc(100% - 64px); max-width: 900px; margin: 8px auto 12px; }
+.priority-toolbar { box-sizing: border-box; width: 100%; max-width: 900px; display: flex; align-items: center; gap: 3px; flex-shrink: 0; margin: 0; padding: 5px 10px; border: 1px solid #8fa8e840; border-radius: 10px; background: #202754d9; box-shadow: 0 8px 24px #050a3538; }
 .priority-toolbar input { flex: 1; min-width: 40px; width: 100%; padding: 3px 6px; background: transparent; font-size: 12px; color: white; outline: none; }
-.priority-toolbar input:focus-visible { box-shadow: inset 0 -1px var(--color-arc-accent); }
+.priority-toolbar input:focus-visible { outline: 1px solid #ffffff80; outline-offset: 2px; border-radius: 3px; }
 .priority-find-count { min-width: 38px; font-size: 11px; text-align: center; color: var(--color-arc-text-muted); font-variant-numeric: tabular-nums; }
-.priority-feedback { position: absolute; right: 32px; top: 28px; pointer-events: none; font-size: 12px; color: var(--color-arc-accent); }
+.priority-feedback { position: absolute; top: 100%; right: 10px; z-index: 6; pointer-events: none; font-size: 12px; color: var(--color-arc-accent); background: var(--color-arc-bg); border-radius: 3px; }
 .priority-scroll { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 0 24px; scroll-padding-top: 64px; }
 .priority-board {
   --column-width: 112px;
@@ -54,11 +57,19 @@
 .priority-panel button:focus-visible, .priority-scroll:focus-visible, .priority-card:focus-visible { outline: 2px solid var(--color-arc-accent); outline-offset: 2px; }
 @media (hover: none) { .priority-card-arrows { opacity: 1; pointer-events: auto; } }
 @media (max-width: 767px) {
-  .priority-panel-open { left: 0; }
-  .priority-heading { padding: 16px 16px 10px; }
-  .priority-toolbar { margin: 0 12px 8px; padding: 5px; }
+  .priority-toolbar-area { width: calc(100% - 24px); margin: 8px auto; }
+  .priority-toolbar { padding: 5px; }
   .priority-scroll { padding: 0 12px; }
   .priority-board { --column-width: 88px; --card-max-width: 300px; --number-width: 44px; }
   .priority-column { font-size: 11px; }
-  .priority-feedback { right: 16px; top: 26px; }
+
+}
+
+
+/* B5.2: Keep Priority search visually unchanged when focused. */
+.priority-toolbar input:focus,
+.priority-toolbar input:focus-visible {
+  outline: none !important;
+  box-shadow: none !important;
+  border-color: transparent !important;
 }

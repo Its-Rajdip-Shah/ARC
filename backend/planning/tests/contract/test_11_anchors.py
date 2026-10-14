@@ -181,7 +181,7 @@ def test_A6_A7_A8_expired_anchor_reconciles_to_automatic_but_retains_recovery_tr
 ):
     item = make_item(user, "Missed promoted task")
     field = _anchor_field()
-    setattr(item, field, today - timedelta(days=1))
+    setattr(item, field, today - timedelta(days=4))
     item.save(update_fields=[field])
 
     service = _service()

@@ -16,6 +16,18 @@ export function updateItem(id, payload) {
   return apiClient.patch(`planning/items/${id}/`, payload).then((res) => res.data)
 }
 
+export function listPrerequisites(id) {
+  return apiClient.get(`planning/items/${id}/prerequisites/`).then((res) => res.data)
+}
+
+export function addPrerequisite(id, prerequisiteId) {
+  return apiClient.post(`planning/items/${id}/prerequisites/`, { prerequisite_id: prerequisiteId }).then((res) => res.data)
+}
+
+export function removePrerequisite(id, prerequisiteId) {
+  return apiClient.delete(`planning/items/${id}/prerequisites/`, { data: { prerequisite_id: prerequisiteId } }).then((res) => res.data)
+}
+
 export function deleteItem(id) {
   return apiClient.delete(`planning/items/${id}/`).then((res) => res.data)
 }

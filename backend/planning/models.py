@@ -205,6 +205,8 @@ class PlanningItem(OwnedModel, TimestampedModel):
     # This is deliberately distinct from
     # scheduled_date, which is a disposable scheduler proposal.
     manual_requested_date = models.DateField(null=True, blank=True)
+    # Original commitment date; automatic carry-forward never restarts it.
+    manual_anchor_origin_date = models.DateField(null=True, blank=True)
 
     # Optional canonical within-day ordering intent paired with
     # manual_requested_date. This is user intent, NOT scheduler output.

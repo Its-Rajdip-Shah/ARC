@@ -13,7 +13,8 @@ from decimal import Decimal
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
 from django.db.models import Exists, OuterRef
-from django.utils import timezone
+from django.shortcuts import get_object_or_404
+from planning.services.calendar_dates import user_local_date
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import (
     OpenApiParameter,
@@ -114,7 +115,7 @@ def _root_lookup(user):
 
 def ensure_scheduled(user):
     """Re-evaluate current capacity and eligibility; same-day changes matter."""
-    return scheduling.daily_schedule(user, timezone.localdate())
+    return scheduling.daily_schedule(user, user_local_date(user))
 
 
 class TagViewSet(UserScopedMixin, viewsets.ModelViewSet):
@@ -166,6 +167,40 @@ class PlanningItemViewSet(UserScopedMixin, viewsets.ModelViewSet):
     queryset = PlanningItem.objects.all()
     filter_backends = [SearchFilter]
     search_fields = ['title', 'description', 'tags__name']
+
+    @action(detail=True, methods=['get', 'post', 'delete'])
+    @transaction.atomic
+    def prerequisites(self, request, pk=None):
+        """Independent dependency edits; every mutation uses the canonical service."""
+        if request.method != 'GET':
+            priority._lock(request.user)
+        item = self.get_object()
+        if request.method != 'GET':
+            payload = serializers.Serializer(data=request.data)
+            payload.fields['prerequisite_id'] = serializers.IntegerField(min_value=1)
+            payload.is_valid(raise_exception=True)
+            prerequisite = get_object_or_404(
+                PlanningItem.objects.filter(user=request.user, is_deleted=False),
+                pk=payload.validated_data['prerequisite_id'],
+            )
+            present = dependencies.prerequisites_for(item).filter(pk=prerequisite.pk).exists()
+            requested_present = request.method == 'POST'
+            if present != requested_present:
+                try:
+                    operation = dependencies.add if requested_present else dependencies.remove
+                    operation(prerequisite, item)
+                except DjangoValidationError as exc:
+                    raise _as_400(exc)
+                state = {'prerequisite_id': prerequisite.pk, 'dependent_id': item.pk}
+                history.record_checkpoint(
+                    request.user, 'UPDATE',
+                    {'dependency': {**state, 'present': present}},
+                    {'dependency': {**state, 'present': requested_present}},
+                )
+        prerequisites = dependencies.prerequisites_for(item).filter(
+            user=request.user, is_deleted=False,
+        )
+        return Response(self.get_serializer(prerequisites, many=True).data)
 
     def get_queryset(self):
         queryset = (
@@ -729,7 +764,7 @@ class PriorityReorderView(APIView):
 def _focus_projection(user):
     projection = focus.build(
         user,
-        today=timezone.localdate(),
+        today=user_local_date(user),
     )
 
     parents = queries.parent_map(
@@ -821,6 +856,8 @@ def _focus_projection(user):
                 item.due_date,
             'manual_requested_date':
                 item.manual_requested_date,
+            'manual_anchor_origin_date':
+                item.manual_anchor_origin_date,
             'manual_requested_order':
                 item.manual_requested_order,
             'percent_completed':
@@ -1081,7 +1118,7 @@ class TimelineView(APIView):
         ),
     )
     def get(self, request):
-        today = timezone.localdate()
+        today = user_local_date(request.user)
         start = _date_param(request, 'from', today - timedelta(days=7))
         end = _date_param(request, 'to', today + timedelta(days=28))
         if end < start:
@@ -1095,7 +1132,19 @@ class TimelineView(APIView):
             .annotate(
                 has_children=Exists(
                     PlanningItem.objects.filter(parent_id=OuterRef('pk'))
-                )
+                ),
+                has_unfinished_children=Exists(
+                    PlanningItem.objects.for_user(request.user).filter(
+                        parent_id=OuterRef('pk'),
+                        is_completed=False,
+                    )
+                ),
+            )
+            # Factual date overlap must not turn structural work into an
+            # execution card. Keep completed history and residual parents.
+            .exclude(
+                is_completed=False,
+                has_unfinished_children=True,
             )
             .select_related('assignment_detail')
             .prefetch_related('tags')
@@ -1204,7 +1253,7 @@ class OverdueView(APIView):
         description='Missed fixed deadlines, split into Recent (within 7 days) and Backlog.',
     )
     def get(self, request):
-        buckets = overdue.classify(request.user, timezone.localdate())
+        buckets = overdue.classify(request.user, user_local_date(request.user))
         return Response({
             'recent': OverdueEntrySerializer(buckets['recent'], many=True).data,
             'backlog': OverdueEntrySerializer(buckets['backlog'], many=True).data,
@@ -1441,6 +1490,8 @@ def _schedule_anchor_response(user, data):
                 item.pk,
             'manual_requested_date':
                 None,
+            'manual_anchor_origin_date':
+                None,
             'manual_requested_order':
                 None,
             'scheduled_date':
@@ -1455,7 +1506,7 @@ def _schedule_anchor_response(user, data):
 
     day = data['date']
 
-    if day < timezone.localdate():
+    if day < user_local_date(user):
         return Response(
             {
                 'conflicts': [
@@ -1620,6 +1671,8 @@ def _schedule_anchor_response(user, data):
             item.pk,
         'manual_requested_date':
             item.manual_requested_date,
+        'manual_anchor_origin_date':
+            item.manual_anchor_origin_date,
         'manual_requested_order':
             item.manual_requested_order,
         'scheduled_date':
@@ -1696,7 +1749,7 @@ class FocusAnchorBatchView(APIView):
             "changes"
         ]
 
-        today = timezone.localdate()
+        today = user_local_date(request.user)
 
         item_ids = [
             change[
@@ -1737,6 +1790,10 @@ class FocusAnchorBatchView(APIView):
             day = change[
                 "date"
             ]
+
+            if change.get("order_only") and item.manual_requested_date != day:
+                conflicts.append({"item_id": item.pk, "code": "anchor_changed"})
+                continue
 
             if day < today:
                 conflicts.append({
@@ -1921,6 +1978,7 @@ class FocusAnchorBatchView(APIView):
                 scheduling.set_anchor_batch(
                     request.user,
                     changes,
+                    expected_queue=serializer.validated_data.get("expected_queue"),
                 )
             )
 
@@ -2017,7 +2075,7 @@ class FocusDoTodayView(APIView):
             {
                 **serializer.validated_data,
                 'date':
-                    timezone.localdate(),
+                    user_local_date(request.user),
                 'remove':
                     False,
             },

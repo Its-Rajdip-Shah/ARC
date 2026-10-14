@@ -7,6 +7,7 @@ a parent completes everything beneath it).
 from django.core.exceptions import ValidationError
 from django.db import transaction
 
+from planning.services.calendar_dates import user_local_date
 from planning.models import PlanningItem
 from planning.queries import MAX_DEPTH, ancestor_ids, descendant_ids
 
@@ -137,7 +138,7 @@ def complete_subtree(item, *, reconcile=True):
         .order_by("pk")
     )
 
-    completion_day = timezone.localdate()
+    completion_day = user_local_date(item.user)
 
     for row in incomplete_rows:
         # Presentation history only. Never consumed by scheduling.

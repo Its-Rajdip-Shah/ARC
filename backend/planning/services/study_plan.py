@@ -10,6 +10,7 @@ from datetime import date, datetime, timedelta
 
 from django.utils import timezone
 
+from planning.services.calendar_dates import user_local_date
 from planning.models import AssignmentDetail, PlanningItem, SchedulingState
 from planning.services.llm import LLMError
 
@@ -152,7 +153,7 @@ def _local_plan(state, items):
             'error': 'You have no open tasks to schedule.',
         }
     windows = (state.study_preferences or {}).get('availability') or []
-    sessions = _place_locally(items, windows, timezone.localdate())
+    sessions = _place_locally(items, windows, user_local_date(state.user))
     return {
         'plan': _store(state, sessions, items),
         'source': 'local',

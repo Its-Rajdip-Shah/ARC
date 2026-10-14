@@ -1,13 +1,16 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import PlannerSidebar from './components/PlannerSidebar'
+import FocusSchedulerMascot from '../focus/FocusSchedulerMascot'
 import PlannerTree from './components/PlannerTree'
 import PriorityPanel from './components/PriorityPanel'
-import PriorityToggle from './components/PriorityToggle'
 import CreatePlanningItemPanel from './components/CreatePlanningItemPanel'
 import StudyPlanModal from './components/StudyPlanModal'
 import { usePlanningTree } from '../../hooks/usePlanningTree'
 import { useIsMutating, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
+  createItem,
+  updateItem,
   getHistoryStatus,
   undoPlanningAction,
   redoPlanningAction,
@@ -35,6 +38,8 @@ function findItemById(items, id) {
 
   return null
 }
+
+import { provisionalPlanningItem, protectPlanningCreation, protectPlanningEdit, whenOtherPlanningMutationsIdle } from '../../lib/planningOptimistic'
 
 const TOOLBAR_STORAGE_KEY = 'arc.planner.toolbar'
 
@@ -79,7 +84,81 @@ function loadToolbarPreferences() {
 
 export default function PlannerPage() {
 
+  const pathname = useLocation().pathname
+  const isPriority = pathname === '/priority'
+  const navigate = useNavigate()
+  const [pendingRootId, setPendingRootId] = useState(null)
   const queryClient = useQueryClient()
+  const panelGeneration = useRef(0)
+  const pendingCreates = useIsMutating({ mutationKey: ['planning', 'create'] })
+  const pendingEdits = useIsMutating({ mutationKey: ['planning', 'edit'] })
+  const pendingEditIds = useRef(new Set())
+  const editLock = useRef(false)
+  const [estimatePrompt, setEstimatePrompt] = useState(null)
+  const [estimateChoice, setEstimateChoice] = useState('')
+  const [estimateSaving, setEstimateSaving] = useState(false)
+  const [estimateError, setEstimateError] = useState(null)
+  const [saveStatuses, setSaveStatuses] = useState({})
+  const saveStatusTimers = useRef(new Map())
+
+  function clearSaveStatusTimer(key) {
+    const timer = saveStatusTimers.current.get(key)
+    if (timer != null) {
+      window.clearTimeout(timer)
+      saveStatusTimers.current.delete(key)
+    }
+  }
+
+  function setSaveStatus(key, status) {
+    clearSaveStatusTimer(key)
+    setSaveStatuses((current) => ({ ...current, [key]: status }))
+    if (status !== 'confirmed') return
+
+    const timer = window.setTimeout(() => {
+      setSaveStatuses((current) => {
+        if (current[key] !== 'confirmed') return current
+        const next = { ...current }
+        delete next[key]
+        return next
+      })
+      saveStatusTimers.current.delete(key)
+    }, 1000)
+    saveStatusTimers.current.set(key, timer)
+  }
+
+  function removeSaveStatus(key) {
+    clearSaveStatusTimer(key)
+    setSaveStatuses((current) => {
+      if (!(key in current)) return current
+      const next = { ...current }
+      delete next[key]
+      return next
+    })
+  }
+
+  useEffect(() => {
+    return () => {
+      for (const timer of saveStatusTimers.current.values()) {
+        window.clearTimeout(timer)
+      }
+      saveStatusTimers.current.clear()
+    }
+  }, [])
+  const { data: recoveryDrafts } = useQuery({
+    queryKey: ['planning-create-drafts'], enabled: false, initialData: [], gcTime: Infinity,
+    queryFn: () => queryClient.getQueryData(['planning-create-drafts']) ?? [],
+  })
+  function setRecoveryDrafts(update) {
+    queryClient.setQueryData(['planning-create-drafts'], update)
+  }
+  const [activeDraft, setActiveDraft] = useState(null)
+  const [failedEdit, setFailedEdit] = useState(null)
+  const mounted = useRef(true)
+  useEffect(() => {
+    mounted.current = true
+    return () => { mounted.current = false }
+  }, [])
+  useEffect(() => { panelGeneration.current += 1 }, [pathname])
   const priorityReordering = useIsMutating({ mutationKey: ['planning', 'priority', 'reorder'] }) > 0
 
   const historyQuery = useQuery({
@@ -150,6 +229,8 @@ export default function PlannerPage() {
   const historyUnsafe =
     historyBusy
     || priorityReordering
+    || pendingCreates > 0
+    || pendingEdits > 0
 
   const canUndo =
     Boolean(
@@ -166,7 +247,6 @@ export default function PlannerPage() {
     && !historyUnsafe
 
 
-  const [isPriorityOpen, setIsPriorityOpen] = useState(false)
   const [studyPlanOpen, setStudyPlanOpen] = useState(false)
   const [selectedItemId, setSelectedItemId] = useState(null)
   const [toolbarPreferences] = useState(
@@ -189,27 +269,12 @@ export default function PlannerPage() {
   const [showOverdue, setShowOverdue] = useState(false)
 
   function handleNavigateToRoot(rootId) {
-    setIsPriorityOpen(false)
     // A filtered view may currently hide the requested root.
     setSearchQuery('')
     setShowOverdue(false)
-
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        const rootElement = document.querySelector(
-          `[data-planner-item-id="${rootId}"]`,
-        )
-
-        if (!rootElement) return
-
-        rootElement.scrollIntoView({
-          behavior: 'smooth',
-          block: 'start',
-        })
-      })
-    })
+    setPendingRootId(rootId)
+    if (isPriority) navigate('/planner')
   }
-
 
   useEffect(() => {
     try {
@@ -236,18 +301,19 @@ export default function PlannerPage() {
 
   const { data: planningTree, isLoading, isError } = usePlanningTree()
 
-  function togglePriority() {
-    closePanel()
-    setHoveredItemId(null)
-    setIsPriorityOpen((current) => !current)
-  }
-
   function handleSelectItem(itemId) {
     // Hover/current task is independent from panel ownership.
     setSelectedItemId(itemId)
   }
 
   function handleEditItem(item) {
+    if (
+      editLock.current ||
+      item.is_provisional ||
+      pendingEditIds.current.has(item.id)
+    ) return
+    panelGeneration.current += 1
+    setActiveDraft(null)
     // Double-click the current edit owner again → cancel editing.
     if (
       panelMode === 'edit' &&
@@ -264,6 +330,9 @@ export default function PlannerPage() {
   }
 
   function handleCreateNested(item) {
+    if (item.is_provisional) return
+    panelGeneration.current += 1
+    setActiveDraft(null)
     // Cmd/Ctrl-click or + on the current add owner again → cancel.
     if (
       panelMode === 'create' &&
@@ -280,9 +349,240 @@ export default function PlannerPage() {
   }
 
   function closePanel() {
+    panelGeneration.current += 1
+    setActiveDraft(null)
     setPanelMode(null)
     setEditingItem(null)
     setCreateParentId(null)
+  }
+
+  function recoverDraft(draft) {
+    panelGeneration.current += 1
+    setActiveDraft(draft)
+    setEditingItem(null)
+    setCreateParentId(draft.payload.parent)
+    setPanelMode('create')
+    setRecoveryDrafts((drafts) => drafts.filter((entry) => entry !== draft))
+  }
+
+  function recoverEdit(record) {
+    if (
+      editLock.current ||
+      pendingEditIds.current.has(record.id)
+    ) return
+    const item = findItemById(
+      queryClient.getQueryData(['planning', 'tree']) ?? [],
+      record.id,
+    )
+    if (!item) return
+    panelGeneration.current += 1
+    setEditingItem(item)
+    setCreateParentId(null)
+    setActiveDraft(null)
+    setFailedEdit(record)
+    setPanelMode('edit')
+  }
+
+  const editMutation = useMutation({
+    mutationKey: ['planning', 'edit'],
+    mutationFn: ({ submission }) => updateItem(submission.id, submission.payload),
+    onSuccess: async (serverFields, { submission, protection }) => {
+      await queryClient.cancelQueries({ queryKey: ['planning', 'tree'] })
+      protection.reconcile(serverFields)
+      setSaveStatus(String(submission.id), 'confirmed')
+      protection.release()
+      // A successful retry owns only its own recovery record.
+      if (mounted.current) setFailedEdit((record) => record?.id === submission.id ? null : record)
+      try {
+        await queryClient.invalidateQueries({ queryKey: ['planning'] })
+        await queryClient.invalidateQueries({ queryKey: ['planning', 'history'] })
+      } finally {
+        pendingEditIds.current.delete(submission.id)
+        editLock.current = false
+      }
+    },
+    onError: (error, { submission, protection, previous, generation }) => {
+      protection.rollback(previous)
+      removeSaveStatus(String(submission.id))
+      protection.release()
+      pendingEditIds.current.delete(submission.id)
+      editLock.current = false
+      const record = { id: submission.id, form: submission.form, error }
+      if (mounted.current) {
+        setFailedEdit(record)
+        if (panelGeneration.current === generation) recoverEdit(record)
+      }
+    },
+  })
+
+  const createMutation = useMutation({
+    mutationKey: ['planning', 'create'],
+    mutationFn: async ({ submission, generation, protection, provisionalId }) => {
+      try {
+        let serverItem
+        try {
+          serverItem = await createItem(submission.payload)
+        } catch (error) {
+          if (!protection.isActive()) {
+            removeSaveStatus(String(provisionalId))
+            return
+          }
+          removeSaveStatus(String(provisionalId))
+          protection.remove()
+          const failedDraft = { ...submission, error }
+          if (mounted.current) {
+            if (panelGeneration.current === generation) recoverDraft(failedDraft)
+            else setRecoveryDrafts((drafts) => [...drafts, failedDraft])
+          } else setRecoveryDrafts((drafts) => [...drafts, failedDraft])
+          return
+        }
+        // Discard reads started before the POST completed, then replace only
+        // this row. Confirmed rows immediately regain normal cache behavior.
+        if (!protection.isActive()) {
+          removeSaveStatus(String(provisionalId))
+          return
+        }
+        await queryClient.cancelQueries({ queryKey: ['planning', 'tree'] })
+        protection.reconcile(serverItem)
+        removeSaveStatus(String(provisionalId))
+        setSaveStatus(String(serverItem.id), 'confirmed')
+        await whenOtherPlanningMutationsIdle(queryClient)
+        if (!protection.isActive()) {
+          removeSaveStatus(String(provisionalId))
+          return
+        }
+        await queryClient.invalidateQueries({ queryKey: ['planning'] })
+      } finally {
+        protection.release()
+      }
+    },
+  })
+
+  function handleCreate(submission) {
+    setSearchQuery('')
+    setShowOverdue(false)
+    closePanel()
+    const generation = panelGeneration.current
+    void queryClient.cancelQueries({ queryKey: ['planning', 'tree'] })
+    const provisionalItem = provisionalPlanningItem(
+      submission.payload,
+      submission.tags,
+    )
+    const protection = protectPlanningCreation(
+      queryClient,
+      provisionalItem,
+    )
+    setSaveStatus(String(provisionalItem.id), 'pending')
+    createMutation.mutate({
+      submission,
+      generation,
+      protection,
+      provisionalId: provisionalItem.id,
+    })
+  }
+
+  function handleResidualEstimatePrompt(parent) {
+    if (!parent?.id || !parent.duration_category) return
+
+    setEstimatePrompt(parent)
+    setEstimateChoice(parent.duration_category)
+    setEstimateError(null)
+  }
+
+  async function confirmResidualEstimate() {
+    if (!estimatePrompt || estimateSaving || editLock.current) return
+
+    const parent = findItemById(
+      queryClient.getQueryData(['planning', 'tree']) ?? [],
+      estimatePrompt.id,
+    )
+
+    if (!parent) {
+      setEstimateError('This task is no longer available. Please refresh.')
+      return
+    }
+
+    if (estimateChoice === parent.duration_category) {
+      setEstimatePrompt(null)
+      setEstimateError(null)
+      return
+    }
+
+    editLock.current = true
+    pendingEditIds.current.add(parent.id)
+    setEstimateSaving(true)
+    setEstimateError(null)
+
+    const previous = { duration_category: parent.duration_category }
+
+    await queryClient.cancelQueries({ queryKey: ['planning', 'tree'] })
+
+    const protection = protectPlanningEdit(
+      queryClient,
+      parent.id,
+      { duration_category: estimateChoice },
+    )
+
+    setSaveStatus(String(parent.id), 'pending')
+
+    try {
+      const serverItem = await updateItem(parent.id, {
+        duration_category: estimateChoice,
+      })
+
+      await queryClient.cancelQueries({ queryKey: ['planning', 'tree'] })
+      protection.reconcile(serverItem)
+      setSaveStatus(String(parent.id), 'confirmed')
+      setEstimatePrompt(null)
+
+      await queryClient.invalidateQueries({ queryKey: ['planning'] })
+      await queryClient.invalidateQueries({ queryKey: ['planning', 'history'] })
+    } catch (error) {
+      protection.rollback(previous)
+      removeSaveStatus(String(parent.id))
+      setEstimateError(
+        error?.response?.data?.detail ??
+        error?.message ??
+        'Could not save the estimate. Please try again.',
+      )
+    } finally {
+      protection.release()
+      pendingEditIds.current.delete(parent.id)
+      editLock.current = false
+      setEstimateSaving(false)
+    }
+  }
+
+  function handleSave(submission) {
+    if (
+      editLock.current ||
+      pendingEditIds.current.has(submission.id)
+    ) return
+    const item = findItemById(
+      queryClient.getQueryData(['planning', 'tree']) ?? [], submission.id,
+    )
+    if (!item) {
+      closePanel()
+      setFailedEdit({ id: submission.id, form: submission.form,
+        error: new Error('This item no longer exists. Your edits are preserved.') })
+      return
+    }
+    const fields = {}
+    const previous = {}
+    for (const [key, value] of Object.entries(submission.payload)) {
+      if (['id', 'parent', 'children', 'is_completed', 'is_provisional'].includes(key)) continue
+      const field = key === 'tag_ids' ? 'tags' : key
+      fields[field] = key === 'tag_ids' ? submission.tags : value
+      previous[field] = item[field]
+    }
+    editLock.current = true
+    pendingEditIds.current.add(submission.id)
+    closePanel()
+    const generation = panelGeneration.current
+    void queryClient.cancelQueries({ queryKey: ['planning', 'tree'] })
+    const protection = protectPlanningEdit(queryClient, submission.id, fields)
+    setSaveStatus(String(submission.id), 'pending')
+    editMutation.mutate({ submission, generation, protection, previous })
   }
 
   const panelOwnerId =
@@ -346,25 +646,48 @@ export default function PlannerPage() {
     }
   }, [canUndo, canRedo, undoMutation, redoMutation])
 
+  // Wait for Planner and its tree to render before resolving sidebar navigation.
+  useEffect(() => {
+    if (isPriority || isLoading || isError || pendingRootId === null) return
+    const frame = requestAnimationFrame(() => {
+      const rootElement = document.querySelector(
+        `[data-planner-item-id="${pendingRootId}"]`,
+      )
+      rootElement?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      setPendingRootId(null)
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [isPriority, isLoading, isError, pendingRootId, planningTree])
+
   const items = planningTree ?? []
 
   return (
     <div className="relative flex min-h-screen flex-col md:flex-row">
-      <PlannerSidebar
-        roots={items}
+      {!isPriority && <PlannerSidebar
+        scheduler={<FocusSchedulerMascot className="planner-scheduler-mascot" />}
+        roots={items.filter((item) => !item.is_provisional)}
         showOverdue={showOverdue}
         onToggleOverdue={() => {
           setShowOverdue((current) => !current)
         }}
         onNavigateToRoot={handleNavigateToRoot}
-      />
+      />}
 
-      <main className="min-w-0 flex-1 px-16 pb-16 pt-0">
+      <main className={isPriority ? 'priority-page-content min-w-0 flex-1' : 'min-w-0 flex-1 px-16 pb-16 pt-0'}>
+        {isPriority ? (
+          <PriorityPanel
+            canUndo={canUndo}
+            canRedo={canRedo}
+            historyBusy={historyBusy}
+            onUndo={() => undoMutation.mutate()}
+            onRedo={() => redoMutation.mutate()}
+          />
+        ) : (
         <div className="mx-auto w-full max-w-[620px]">
           {isLoading && <p>Loading planner...</p>}
-          {isError && <p>Could not load planner.</p>}
+          {isError && !planningTree && <p>Could not load planner.</p>}
 
-          {!isLoading && !isError && !isPriorityOpen && (
+          {!isLoading && (!isError || planningTree) && (
             <>
             <div className="
               sticky top-[80px] z-20 mb-2 flex h-[38px]
@@ -509,7 +832,7 @@ export default function PlannerPage() {
 
               <button
                 type="button"
-                onClick={() => setStudyPlanOpen(true)}
+                onClick={() => { panelGeneration.current += 1; setStudyPlanOpen(true) }}
                 className="
                   h-[28px] shrink-0 rounded-[6px] px-2
                   text-[12px] text-[#9db6e8]
@@ -520,8 +843,34 @@ export default function PlannerPage() {
               </button>
             </div>
 
+            <button type="button" onClick={() => {
+              panelGeneration.current += 1
+              setActiveDraft(null)
+              setEditingItem(null)
+              setCreateParentId(null)
+              setPanelMode('create')
+            }} className="text-sm text-[#9db6e8]">Create task or assignment</button>
+            {recoveryDrafts.map((draft, index) => (
+              <div key={index} role="alert" className="mt-2 text-sm text-[#e87979]">
+                Could not create “{draft.form.title}”. Your draft is saved.
+                <button type="button" onClick={() => recoverDraft(draft)}>Recover draft: {draft.form.title}</button>
+              </div>
+            ))}
+            {failedEdit && !(panelMode === 'edit' && editingItem?.id === failedEdit.id) && (
+              <div role="alert" className="mt-2 text-sm text-[#e87979]">
+                Could not save “{failedEdit.form.title}”. Your edits are preserved.
+                <pre className="whitespace-pre-wrap break-words">{JSON.stringify(
+                  failedEdit.error?.response?.data ?? failedEdit.error?.message,
+                  null, 2,
+                )}</pre>
+                <button type="button" onClick={() => recoverEdit(failedEdit)}>Recover edits</button>
+                <button type="button" onClick={() => setFailedEdit(null)}>Dismiss edit error</button>
+              </div>
+            )}
             <div className="mt-[80px]">
               <PlannerTree
+                editLocked={pendingEdits > 0}
+                saveStatuses={saveStatuses}
                 items={items}
                 selectedItemId={selectedItemId}
                 panelOwnerId={panelOwnerId}
@@ -536,14 +885,16 @@ export default function PlannerPage() {
                 onSelectItem={handleSelectItem}
                 onEditItem={handleEditItem}
                 onCreateNested={handleCreateNested}
+                onResidualEstimatePrompt={handleResidualEstimatePrompt}
               />
             </div>
             </>
           )}
         </div>
+        )}
       </main>
 
-      {panelMode && (
+      {!isPriority && panelMode && (
         <div
           className="
             fixed right-0 top-1/2 z-40
@@ -551,6 +902,9 @@ export default function PlannerPage() {
           "
         >
           <CreatePlanningItemPanel
+            key={`${panelMode}:${createParentId}:${activeDraft ? 'recovery' : 'fresh'}${panelMode === 'edit' ? `:${editingItem?.id}` : ''}`}
+            draft={panelMode === 'create' ? activeDraft?.form : null}
+            createError={panelMode === 'create' ? activeDraft?.error : null}
             onClose={closePanel}
             parentId={panelMode === 'create' ? createParentId : null}
             parentItem={
@@ -559,27 +913,101 @@ export default function PlannerPage() {
                 : null
             }
             editingItem={panelMode === 'edit' ? editingItem : null}
-            onCreated={closePanel}
-            onUpdated={closePanel}
+            onCreate={handleCreate}
+            onSave={handleSave}
+            editDraft={panelMode === 'edit' && failedEdit?.id === editingItem?.id ? failedEdit.form : null}
+            editError={panelMode === 'edit' && failedEdit?.id === editingItem?.id ? failedEdit.error : null}
           />
         </div>
       )}
 
-      <PriorityPanel
-        isOpen={isPriorityOpen}
-        canUndo={canUndo}
-        canRedo={canRedo}
-        historyBusy={historyBusy}
-        onUndo={() => undoMutation.mutate()}
-        onRedo={() => redoMutation.mutate()}
-      />
+      {!isPriority && estimatePrompt && (
+        <div
+          className="fixed inset-0 z-[80] flex items-center justify-center bg-black/70 p-4"
+          role="presentation"
+        >
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="residual-estimate-title"
+            className="w-full max-w-md rounded-2xl border border-[#383969] bg-[#151326] p-6 text-white shadow-2xl"
+          >
+            <h2
+              id="residual-estimate-title"
+              className="text-lg font-semibold"
+            >
+              How much work is left?
+            </h2>
 
-      <PriorityToggle
-        isOpen={isPriorityOpen}
-        onToggle={togglePriority}
-      />
+            <p className="mt-3 text-sm text-slate-300">
+              All subtasks of <strong>{estimatePrompt.title}</strong> are complete.
+              Confirm or update this task's estimated time.
+            </p>
 
-      {studyPlanOpen && (
+            <div
+              role="group"
+              aria-label="Estimated time"
+              className="mt-5 grid grid-cols-3 gap-2"
+            >
+              {[
+                ['UNDER_20_MINUTES', '<20m'],
+                ['UNDER_1_HOUR', '<1h'],
+                ['UNDER_4_HOURS', '<4h'],
+                ['UNDER_8_HOURS', '<8h'],
+                ['UNDER_16_HOURS', '<16h'],
+                ['OVER_16_HOURS', '>16h'],
+              ].map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  disabled={estimateSaving}
+                  aria-pressed={estimateChoice === value}
+                  onClick={() => setEstimateChoice(value)}
+                  className={
+                    'rounded-lg border px-3 py-2 text-sm ' +
+                    (estimateChoice === value
+                      ? 'border-blue-400 bg-blue-600 text-white'
+                      : 'border-[#383969] bg-[#211d3c] text-slate-200')
+                  }
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            {estimateError && (
+              <p role="alert" className="mt-3 text-sm text-red-400">
+                {String(estimateError)}
+              </p>
+            )}
+
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                type="button"
+                disabled={estimateSaving}
+                onClick={() => {
+                  setEstimatePrompt(null)
+                  setEstimateError(null)
+                }}
+                className="rounded-lg px-4 py-2 text-sm text-slate-300"
+              >
+                Dismiss
+              </button>
+
+              <button
+                type="button"
+                disabled={estimateSaving || editLock.current}
+                onClick={confirmResidualEstimate}
+                className="rounded-lg bg-blue-600 px-5 py-2 text-sm font-medium text-white disabled:opacity-50"
+              >
+                {estimateSaving ? 'Saving…' : 'Confirm'}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {!isPriority && studyPlanOpen && (
         <StudyPlanModal onClose={() => setStudyPlanOpen(false)} />
       )}
     </div>

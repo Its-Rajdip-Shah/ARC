@@ -6,8 +6,11 @@ custom actions, and above all that no endpoint will serve or accept another
 user's rows (FR-03).
 """
 
+from datetime import timedelta
+
 import pyotp
 import pytest
+from django.utils import timezone
 from freezegun import freeze_time
 
 from accounts.tests.conftest import login_through_mfa, make_user
@@ -74,7 +77,7 @@ def test_creating_an_assignment_with_nested_detail(client):
         {
             'item_type': ItemType.ASSIGNMENT,
             'title': 'Assignment 1',
-            'due_date': '2026-10-01',
+            'due_date': (timezone.localdate() + timedelta(days=7)).isoformat(),
             'assignment_detail': {'weight_percent': '25.00', 'submission_url': 'https://x.test/a'},
         },
         format='json',

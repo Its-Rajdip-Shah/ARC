@@ -1,5 +1,4 @@
-.timeline-page { margin-left: var(--spacing-arc-sidebar); padding: 56px 24px 16px; height: 100dvh; display: flex; flex-direction: column; min-width: 0; }
-.timeline-heading { position: fixed; top: 13px; left: calc(var(--spacing-arc-sidebar) + 24px); z-index: 31; font-size: 28px; margin: 0; pointer-events: none; }
+.timeline-page { margin-left: var(--spacing-arc-sidebar); padding: var(--student-header-height, 56px) 24px 16px; height: 100dvh; display: flex; flex-direction: column; min-width: 0; }
 .timeline-tools { display: flex; flex-wrap: nowrap; align-items: center; gap: 3px; flex-shrink: 0; margin-bottom: 8px; padding: 5px 7px; border: 1px solid #8fa8e840; border-radius: 10px; background: #202754d9; position: relative; z-index: 12; }
 .timeline-tools button, .timeline-tools select, .timeline-settings button, .timeline-message button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; border-radius: 6px; padding: 6px; font-size: 12px; background: transparent; border: 1px solid transparent; cursor: pointer; flex-shrink: 0; }
 .timeline-tools button:hover { background: #ffffff0c; }
@@ -44,7 +43,7 @@
 .timeline-zone-label { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; overflow: hidden; white-space: normal; overflow-wrap: anywhere; text-overflow: ellipsis; }
 .timeline-root { position: sticky; left: 0; width: min(360px, 80vw); font-size: 12px; font-weight: 600; background: var(--color-arc-bg); padding: 12px; margin-top: 6px; }
 /* Shared task lanes reserve headroom only for popped endpoints. */
-.timeline-row { position: relative; isolation: isolate; display: grid; align-items: center; min-height: 48px; padding-block: 8px; }
+.timeline-row { position: relative; isolation: isolate; display: grid; align-items: start; min-height: 48px; padding-block: 8px; }
 .timeline-row-constrained { /* marker headroom comes from the row's normal 8px padding */ }
 .timeline-task { grid-area: 1 / 1; position: relative; min-height: 32px; pointer-events: none; }
 .timeline-task
@@ -103,7 +102,6 @@ a.timeline-marker::after { content: ""; position: absolute; inset: -7px -2px; }
   .timeline-sidebar nav button { font-size: 11px; }
   .timeline-page { margin-left: 145px; padding: 80px 8px 10px; }
   .timeline-popover { top: 124px; left: 153px; }
-  .timeline-heading { left: 153px; top: 48px; font-size: 20px; }
 }
 @media (hover: none) { .timeline-card-details { display: block; } }
 
@@ -840,12 +838,6 @@ a.timeline-marker::after { content: ""; position: absolute; inset: -7px -2px; }
   gap: 9px;
 }
 
-.timeline-heading-group .timeline-heading {
-  position: static;
-  margin: 0;
-  pointer-events: none;
-}
-
 .timeline-heading-scheduler {
   display: grid;
   place-items: center;
@@ -1089,44 +1081,6 @@ a.timeline-marker::after { content: ""; position: absolute; inset: -7px -2px; }
   display: contents;
 }
 
-.timeline-sidebar-scheduler {
-  margin-top: auto;
-  display: flex;
-  justify-content: center;
-  align-items: flex-end;
-  padding-top: 24px;
-  padding-bottom: 4px;
-}
-
-.timeline-scheduler-run {
-  display: grid;
-  place-items: center;
-  width: 62px;
-  height: 62px;
-  padding: 2px;
-  border: 0;
-  border-radius: 13px;
-  background: transparent;
-  cursor: pointer;
-}
-
-.timeline-scheduler-run:hover,
-.timeline-scheduler-run:focus-visible {
-  background: #ffffff0b;
-}
-
-.timeline-scheduler-run:disabled {
-  opacity: .62;
-  cursor: wait;
-}
-
-.timeline-scheduler-run img {
-  display: block;
-  width: 58px;
-  height: 58px;
-  object-fit: contain;
-}
-
 /* Old header placement is no longer used. */
 .timeline-heading-scheduler {
   display: none !important;
@@ -1147,17 +1101,6 @@ a.timeline-marker::after { content: ""; position: absolute; inset: -7px -2px; }
     90ms ease-out both;
 }
 
-@media (max-width: 800px) {
-  .timeline-scheduler-run {
-    width: 52px;
-    height: 52px;
-  }
-
-  .timeline-scheduler-run img {
-    width: 48px;
-    height: 48px;
-  }
-}
 /* Timeline race/navigation/aura pass */
 
 /*
@@ -1185,642 +1128,12 @@ a.timeline-marker::after { content: ""; position: absolute; inset: -7px -2px; }
   overflow-y: auto !important;
 }
 
-/*
- * Scheduler control: intentionally large enough that the face/eyes difference
- * between Monk and Lock-in is legible.
- */
-.timeline-sidebar-scheduler {
-  overflow: visible;
-  padding-bottom: 8px;
-}
-
-.timeline-scheduler-run {
-  position: relative;
-  isolation: isolate;
-  width: 122px !important;
-  height: 122px !important;
-  flex: 0 0 122px;
-  overflow: visible;
-  border: 0;
-  background: transparent !important;
-  opacity: 1 !important;
-}
-
-.timeline-scheduler-run:disabled {
-  opacity: 1 !important;
-  cursor: wait;
-}
-
-.timeline-scheduler-art {
-  position: absolute;
-  inset: 17px;
-  z-index: 3;
-  display: grid;
-  place-items: center;
-  pointer-events: none;
-}
-
-.timeline-scheduler-art img {
-  display: block;
-  width: 88px !important;
-  height: 88px !important;
-  object-fit: contain;
-}
-
-.scheduler-aura {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  z-index: 1;
-  width: 1px;
-  height: 1px;
-  pointer-events: none;
-  opacity: 0;
-  transform: translate(-50%, -50%);
-  transition: opacity 140ms ease;
-}
-
-.scheduler-aura-hover,
-.scheduler-aura-scheduling {
-  opacity: .88;
-}
-
-.scheduler-aura-blob {
-  position: absolute;
-  left: calc(var(--s) / -2);
-  top: calc(var(--s) / -2);
-  width: var(--s);
-  height: var(--s);
-  transform-origin: 0 0;
-  will-change: transform, opacity;
-  filter: blur(.08px);
-}
-
-.scheduler-aura-shard-a {
-  border-radius:
-    72% 28% 61% 39% /
-    34% 69% 31% 66%;
-}
-
-.scheduler-aura-shard-b {
-  border-radius:
-    26% 74% 38% 62% /
-    71% 32% 68% 29%;
-}
-
-.scheduler-aura-shard-c {
-  border-radius:
-    67% 33% 24% 76% /
-    41% 73% 27% 59%;
-}
-
-.scheduler-aura-shard-d {
-  border-radius:
-    19% 81% 63% 37% /
-    66% 22% 78% 34%;
-}
-
-.scheduler-aura-shard-e {
-  border-radius:
-    58% 42% 79% 21% /
-    23% 61% 39% 77%;
-}
-
-.scheduler-aura-shard-f {
-  border-radius:
-    35% 65% 18% 82% /
-    72% 44% 56% 28%;
-}
-
-.scheduler-aura-accent {
-  background: #C3D19B;
-  box-shadow:
-    0 0 7px #C3D19B88;
-}
-
-.scheduler-aura-blue {
-  background: #8FA8E8;
-  box-shadow:
-    0 0 7px #8FA8E888;
-}
-
-/*
- * Calm hover orbit.
- * Each blob has its own angle/radius/duration/phase, while alternating blobs
- * run backwards. It therefore reads as an organic field rather than one
- * dashed ring.
- */
-.scheduler-aura-hover .scheduler-aura-blob {
-  animation:
-    scheduler-orbit-calm
-      var(--calm)
-      linear
-      var(--delay)
-      infinite,
-    scheduler-blob-breathe
-      2.8s
-      ease-in-out
-      var(--delay)
-      infinite
-      alternate;
-}
-
-.scheduler-aura-hover .scheduler-aura-blob:nth-child(even) {
-  animation-direction:
-    reverse,
-    alternate;
-}
-
-/*
- * Active scheduler state deliberately has non-monotonic intermediate angles,
- * making individual particles lurch/recover rather than rotating as one ring.
- */
-.scheduler-aura-scheduling .scheduler-aura-blob {
-  animation:
-    scheduler-orbit-chaos
-      var(--chaos)
-      cubic-bezier(.42, 0, .58, 1)
-      var(--delay)
-      infinite,
-    scheduler-blob-active
-      .72s
-      ease-in-out
-      var(--delay)
-      infinite
-      alternate;
-}
-
-.scheduler-aura-scheduling .scheduler-aura-blob:nth-child(3n + 2),
-.scheduler-aura-scheduling .scheduler-aura-blob:nth-child(4n) {
-  animation-direction:
-    reverse,
-    alternate;
-}
-
-/* Short deceleration after the backend scheduler finishes. */
-
-
-@keyframes scheduler-orbit-calm {
-  0% {
-    transform:
-      rotate(calc(var(--a) * 1deg))
-      translateX(var(--r))
-      scaleX(calc(.82 * var(--sx)))
-      scaleY(calc(.82 * var(--sy)));
-  }
-
-  42% {
-    transform:
-      rotate(calc(var(--a) * 1deg + 151deg))
-      translateX(calc(var(--r) + 2px))
-      scaleX(calc(1.05 * var(--sx)))
-      scaleY(calc(1.05 * var(--sy)));
-  }
-
-  71% {
-    transform:
-      rotate(calc(var(--a) * 1deg + 257deg))
-      translateX(calc(var(--r) - 1px))
-      scaleX(calc(.92 * var(--sx)))
-      scaleY(calc(.92 * var(--sy)));
-  }
-
-  100% {
-    transform:
-      rotate(calc(var(--a) * 1deg + 360deg))
-      translateX(var(--r))
-      scaleX(calc(.82 * var(--sx)))
-      scaleY(calc(.82 * var(--sy)));
-  }
-}
-
-@keyframes scheduler-orbit-chaos {
-  0% {
-    transform:
-      rotate(calc(var(--a) * 1deg))
-      translateX(var(--r))
-      scaleX(calc(.9 * var(--sx)))
-      scaleY(calc(.9 * var(--sy)));
-  }
-
-  24% {
-    transform:
-      rotate(calc(var(--a) * 1deg + 137deg))
-      translateX(calc(var(--r) + 4px))
-      scaleX(calc(1.25 * var(--sx)))
-      scaleY(calc(1.25 * var(--sy)));
-  }
-
-  45% {
-    transform:
-      rotate(calc(var(--a) * 1deg + 92deg))
-      translateX(calc(var(--r) - 3px))
-      scaleX(calc(.78 * var(--sx)))
-      scaleY(calc(.78 * var(--sy)));
-  }
-
-  69% {
-    transform:
-      rotate(calc(var(--a) * 1deg + 294deg))
-      translateX(calc(var(--r) + 3px))
-      scaleX(calc(1.15 * var(--sx)))
-      scaleY(calc(1.15 * var(--sy)));
-  }
-
-  84% {
-    transform:
-      rotate(calc(var(--a) * 1deg + 266deg))
-      translateX(calc(var(--r) - 1px))
-      scaleX(calc(.88 * var(--sx)))
-      scaleY(calc(.88 * var(--sy)));
-  }
-
-  100% {
-    transform:
-      rotate(calc(var(--a) * 1deg + 360deg))
-      translateX(var(--r))
-      scaleX(calc(.9 * var(--sx)))
-      scaleY(calc(.9 * var(--sy)));
-  }
-}
-
-
-@keyframes scheduler-blob-breathe {
-  from {
-    opacity: .56;
-  }
-
-  to {
-    opacity: .96;
-  }
-}
-
-@keyframes scheduler-blob-active {
-  from {
-    opacity: .74;
-  }
-
-  to {
-    opacity: 1;
-  }
-}
-
-/*
- * Keep the aura inexpensive and accessible.
- */
-@media (prefers-reduced-motion: reduce) {
-  .scheduler-aura-blob {
-    animation: none !important;
-  }
-
-  .scheduler-aura-hover,
-  .scheduler-aura-scheduling {
-    opacity: .72;
-  }
-}
-/* Timeline MVP final interaction pass */
-
-/*
- * A reopening task stays visually present at its completed-history position
- * until authoritative scheduling moves it. Keep it fully readable.
- */
-.timeline-card-reopen-pending {
-  opacity: 1;
-}
-
-/*
- * Dense energy field:
- * more fragments, but subtler individual particles.
- */
-.scheduler-aura-blob {
-  box-shadow: none;
-  filter: blur(.04px);
-}
-
-.scheduler-aura-accent {
-  box-shadow:
-    0 0 3px #C3D19B66;
-}
-
-.scheduler-aura-blue {
-  box-shadow:
-    0 0 3px #8FA8E866;
-}
-
-/*
- * Break up the organic silhouettes further so the field does not read as a
- * ring of circles.
- */
-.scheduler-aura-shard-a {
-  border-radius:
-    73% 27% 58% 42% /
-    31% 68% 32% 69%;
-}
-
-.scheduler-aura-shard-b {
-  border-radius:
-    22% 78% 35% 65% /
-    74% 29% 71% 26%;
-  transform-box: fill-box;
-}
-
-.scheduler-aura-shard-c {
-  clip-path:
-    polygon(
-      12% 24%,
-      82% 5%,
-      100% 58%,
-      61% 94%,
-      7% 76%
-    );
-}
-
-.scheduler-aura-shard-d {
-  clip-path:
-    polygon(
-      18% 8%,
-      91% 31%,
-      74% 91%,
-      23% 76%,
-      0 37%
-    );
-}
-
-.scheduler-aura-shard-e {
-  border-radius:
-    61% 39% 81% 19% /
-    18% 67% 33% 82%;
-}
-
-.scheduler-aura-shard-f {
-  clip-path:
-    polygon(
-      7% 41%,
-      34% 4%,
-      93% 22%,
-      78% 86%,
-      29% 97%
-    );
-}
-/* Final warped scheduler aura pass */
-
-/*
- * Character must always render over the energy field.
- */
-.timeline-scheduler-art {
-  z-index: 10 !important;
-}
-
-.scheduler-aura {
-  z-index: 1 !important;
-}
-
-/*
- * Each fragment now follows its own Cartesian control-point path rather than
- * sharing rotate()+translateX() circular geometry.
- */
-.scheduler-aura-hover .scheduler-aura-blob {
-  animation:
-    scheduler-field-calm
-      var(--calm)
-      cubic-bezier(.45, .05, .55, .95)
-      var(--delay)
-      infinite,
-    scheduler-blob-breathe
-      2.8s
-      ease-in-out
-      var(--delay)
-      infinite
-      alternate;
-}
-
-.scheduler-aura-scheduling .scheduler-aura-blob {
-  animation:
-    scheduler-field-chaos
-      var(--chaos)
-      cubic-bezier(.36, .04, .61, .99)
-      var(--delay)
-      infinite,
-    scheduler-blob-active
-      .62s
-      ease-in-out
-      var(--delay)
-      infinite
-      alternate;
-}
-
-
-/*
- * No global animation-direction overrides here.
- * Direction is already baked independently into every fragment's path.
- */
-.scheduler-aura-hover .scheduler-aura-blob:nth-child(even),
-.scheduler-aura-scheduling .scheduler-aura-blob:nth-child(3n + 2),
-.scheduler-aura-scheduling .scheduler-aura-blob:nth-child(4n) {
-  animation-direction: normal, alternate;
-}
-
-@keyframes scheduler-field-calm {
-  0% {
-    transform:
-      translate(
-        var(--x0),
-        var(--y0)
-      )
-      scaleX(calc(.84 * var(--sx)))
-      scaleY(calc(.84 * var(--sy)));
-  }
-
-  23% {
-    transform:
-      translate(
-        var(--x1),
-        var(--y1)
-      )
-      scaleX(calc(1.02 * var(--sx)))
-      scaleY(calc(.91 * var(--sy)));
-  }
-
-  49% {
-    transform:
-      translate(
-        var(--x2),
-        var(--y2)
-      )
-      scaleX(calc(.89 * var(--sx)))
-      scaleY(calc(1.06 * var(--sy)));
-  }
-
-  74% {
-    transform:
-      translate(
-        var(--x3),
-        var(--y3)
-      )
-      scaleX(calc(1.07 * var(--sx)))
-      scaleY(calc(.86 * var(--sy)));
-  }
-
-  91% {
-    transform:
-      translate(
-        var(--x4),
-        var(--y4)
-      )
-      scaleX(calc(.92 * var(--sx)))
-      scaleY(calc(1.01 * var(--sy)));
-  }
-
-  100% {
-    transform:
-      translate(
-        var(--x0),
-        var(--y0)
-      )
-      scaleX(calc(.84 * var(--sx)))
-      scaleY(calc(.84 * var(--sy)));
-  }
-}
-
-@keyframes scheduler-field-chaos {
-  0% {
-    transform:
-      translate(
-        var(--x0),
-        var(--y0)
-      )
-      scaleX(calc(.9 * var(--sx)))
-      scaleY(calc(.9 * var(--sy)));
-  }
-
-  16% {
-    transform:
-      translate(
-        calc(var(--x1) * 1.08),
-        calc(var(--y1) * .92)
-      )
-      scaleX(calc(1.18 * var(--sx)))
-      scaleY(calc(.78 * var(--sy)));
-  }
-
-  33% {
-    transform:
-      translate(
-        calc(var(--x2) * .89),
-        calc(var(--y2) * 1.09)
-      )
-      scaleX(calc(.74 * var(--sx)))
-      scaleY(calc(1.21 * var(--sy)));
-  }
-
-  51% {
-    transform:
-      translate(
-        calc(var(--x3) * 1.11),
-        calc(var(--y3) * 1.04)
-      )
-      scaleX(calc(1.24 * var(--sx)))
-      scaleY(calc(.81 * var(--sy)));
-  }
-
-  67% {
-    transform:
-      translate(
-        calc(var(--x1) * .93),
-        calc(var(--y4) * 1.13)
-      )
-      scaleX(calc(.83 * var(--sx)))
-      scaleY(calc(1.16 * var(--sy)));
-  }
-
-  82% {
-    transform:
-      translate(
-        calc(var(--x4) * 1.07),
-        calc(var(--y2) * .88)
-      )
-      scaleX(calc(1.12 * var(--sx)))
-      scaleY(calc(.84 * var(--sy)));
-  }
-
-  100% {
-    transform:
-      translate(
-        var(--x0),
-        var(--y0)
-      )
-      scaleX(calc(.9 * var(--sx)))
-      scaleY(calc(.9 * var(--sy)));
-  }
-}
-
-
-@media (prefers-reduced-motion: reduce) {
-  .scheduler-aura-blob {
-    animation: none !important;
-  }
-}
-/* Scheduler aura foreground depth pass */
-
-/*
- * Do not make the whole aura one isolated stacking layer.
- * Its particles need to straddle the avatar during scheduling.
- *
- * The old translate(-50%, -50%) only centered a 1px wrapper, so the
- * equivalent half-pixel offset is preserved with margins instead.
- */
-.scheduler-aura {
-  z-index: auto !important;
-  transform: none !important;
-  margin-left: -0.5px;
-  margin-top: -0.5px;
-}
-
-/* Character remains the reference middle layer. */
-.timeline-scheduler-art {
-  z-index: 10 !important;
-}
-
-/* Normal particle depth: always behind the monk. */
-.scheduler-aura-blob,
-.scheduler-aura-back,
-.scheduler-aura-front {
-  z-index: 1;
-}
-
-/*
- * ONLY while actively scheduling:
- * approximately 40% of fragments pass in front of the avatar.
- *
- * Hover and idle intentionally keep every particle behind it.
- */
-.scheduler-aura-scheduling
-.scheduler-aura-front {
-  z-index: 12;
-}
-
-/*
- * Explicitly force hover/idle foreground-designated particles back
- * behind the character so foreground depth exists only in Avatar-state.
- */
-.scheduler-aura-hover
-.scheduler-aura-front,
-.scheduler-aura-idle
-.scheduler-aura-front {
-  z-index: 1;
-}
+/* Scheduler visuals are shared through SchedulerAura.css. */
+.timeline-card-reopen-pending { opacity: 1; }
 
 @media (width < 48rem) {
   .timeline-page {
     margin-left: 0;
-  }
-
-  .timeline-heading {
-    position: static;
-    top: auto;
-    left: auto;
-    z-index: auto;
-    margin: 0 0 8px;
   }
 
   .timeline-sidebar {
@@ -1837,8 +1150,57 @@ a.timeline-marker::after { content: ""; position: absolute; inset: -7px -2px; }
     display: none;
   }
 
-  .timeline-sidebar.is-subjects-closed .timeline-subject-list,
-  .timeline-sidebar.is-subjects-closed .timeline-sidebar-scheduler {
+  .timeline-sidebar.is-subjects-closed .timeline-subject-list {
     display: none;
   }
 }
+
+/* Selected-date emphasis and intentional-hover anchor visibility. */
+.timeline-row-selected-date:hover,
+.timeline-row-selected-date:focus-within { z-index: 7; }
+
+.timeline-card-selected-date.timeline-card-expanded .timeline-anchor-button:not(.timeline-anchor-visible) {
+  opacity: 0;
+  pointer-events: none;
+}
+.timeline-card-selected-date.timeline-card-hover-intent .timeline-anchor-button:not(.timeline-anchor-visible),
+.timeline-card-selected-date .timeline-anchor-button.timeline-anchor-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.timeline-root-navigation { display: flex; flex-wrap: nowrap; align-items: center; gap: 4px; width: max-content; max-width: 100%; padding: 0 12px 4px; font-size: 11px; }
+.timeline-root-navigation-count { min-width: 3ch; text-align: center; white-space: nowrap; }
+.timeline-root-navigation-arrow { flex: 0 0 22px; width: 22px; height: 22px; display: grid; place-items: center; padding: 0; }
+.timeline-root-navigation-missing { display: block; padding: 0 12px 8px; font-size: 10px; }
+.timeline-deselect-roots { margin: 0 12px 8px; font-size: 12px; text-decoration: underline; }
+.timeline-task-navigator {
+  position: fixed; right: 20px; top: var(--timeline-navigator-top, min(150px, 20dvh)); z-index: 35;
+  width: min(340px, calc(100vw - 32px)); max-height: max(var(--timeline-navigator-min-height, 96px), min(68dvh, calc(100dvh - var(--timeline-navigator-top, min(150px, 20dvh)) - 8px)));
+  display: flex; flex-direction: column; overflow: hidden;
+  color: var(--color-arc-text); background: #171d3be8;
+  backdrop-filter: blur(16px); border: 1px solid #ffffff30;
+  border-radius: 12px; box-shadow: 0 12px 36px #0006;
+}
+.timeline-task-navigator-header { flex-shrink: 0; display: flex; align-items: center; gap: 8px; padding: 10px 12px; cursor: move; touch-action: none; }
+.timeline-task-navigator-header strong { flex: 1; }
+.timeline-task-navigator button { border-radius: 6px; padding: 6px 8px; text-align: left; }
+.timeline-task-navigator button:hover { background: #ffffff0d; }
+.timeline-task-navigator button:focus-visible,
+.timeline-root-navigation button:focus-visible { outline: 2px solid #C3D19B; outline-offset: 2px; }
+.timeline-task-navigator button:disabled,
+.timeline-root-navigation button:disabled { opacity: .55; cursor: default; }
+.timeline-task-navigator-tabs { display: flex; flex-shrink: 0; gap: 4px; overflow-x: auto; padding: 0 8px 8px; }
+.timeline-task-navigator-tabs button { flex-shrink: 0; max-width: 220px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12px; }
+.timeline-task-navigator-tabs [aria-pressed="true"] { background: #C3D19B22; }
+.timeline-task-navigator-list { min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 8px; font-size: 12px; }
+.timeline-task-navigator-list > button { display: flex; flex-direction: column; width: 100%; gap: 4px; margin-bottom: 4px; overflow-wrap: anywhere; }
+.timeline-task-navigator-list small { color: var(--color-arc-text-muted); }
+.timeline-task-navigator-list [aria-current="true"] { outline: 1px solid #C3D19B; background: #C3D19B18; }
+.timeline-task-navigator-completed > span { text-decoration: line-through; }
+.timeline-task-navigator-list p { padding: 4px 8px 10px; }
+.timeline-task-editor { max-height: 90dvh; overflow-y: auto; }
+
+.timeline-description { max-width: 100%; min-width: 0; overflow-wrap: anywhere; }
+.timeline-description p { white-space: pre-wrap; }
+.timeline-description button { font-size: 10px; text-decoration: underline; color: var(--color-arc-accent); }

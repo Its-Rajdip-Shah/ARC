@@ -15,6 +15,7 @@ import monkIcon from '../../assets/icons/locked-in_monk-mode/monk-mode-hands-dow
 import activeIcon from '../../assets/icons/locked-in_monk-mode/locked-in-hands-up-dark.png'
 
 import SchedulerAura from './SchedulerAura'
+import './SchedulerAura.css'
 import useHoverIntent from './useHoverIntent'
 
 export default function SchedulerRunButton({
@@ -25,6 +26,8 @@ export default function SchedulerRunButton({
     hovered,
     setHovered,
   ] = useState(false)
+
+  const [focused, setFocused] = useState(false)
 
   const hover =
     useHoverIntent({
@@ -67,7 +70,7 @@ export default function SchedulerRunButton({
   const auraState =
     schedulerBusy
       ? 'scheduling'
-      : hovered
+      : (hovered || focused)
         ? 'hover'
         : 'idle'
 
@@ -118,6 +121,7 @@ export default function SchedulerRunButton({
             )
           : 'Reschedule'
       }
+      aria-busy={schedulerBusy}
       disabled={
         schedulerBusy
       }
@@ -128,10 +132,10 @@ export default function SchedulerRunButton({
         hover.leave()
       }
       onFocus={() =>
-        setHovered(true)
+        setFocused(true)
       }
       onBlur={() =>
-        setHovered(false)
+        setFocused(false)
       }
       onClick={() =>
         actions
@@ -143,28 +147,30 @@ export default function SchedulerRunButton({
           )
       }
     >
-      <SchedulerAura
-        state={
-          auraState
-        }
-      />
+      <span className="scheduler-visual" aria-hidden="true">
+        <SchedulerAura
+          state={
+            auraState
+          }
+        />
 
-      <span className="timeline-scheduler-art">
-        {
-          configured &&
-          icon
-            ? (
-                <img
-                  src={icon}
-                  alt=""
-                />
-              )
-            : (
-                <RefreshCw
-                  size={36}
-                />
-              )
-        }
+        <span className="timeline-scheduler-art">
+          {
+            configured &&
+            icon
+              ? (
+                  <img
+                    src={icon}
+                    alt=""
+                  />
+                )
+              : (
+                  <RefreshCw
+                    size={36}
+                  />
+                )
+          }
+        </span>
       </span>
     </button>
   )

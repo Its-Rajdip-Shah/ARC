@@ -1,6 +1,7 @@
 import { useEffect, useMemo } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 
+import { userDateKey } from '../../../lib/calendarDates'
 import { deleteItem, moveItem } from '../../../api/planning'
 import PlannerTreeItem from './PlannerTreeItem'
 import PlannerDnd from '../../../dnd/planner/PlannerDnd'
@@ -143,15 +144,6 @@ function searchPlanningTree(items, rawQuery) {
   }
 }
 
-function getLocalDateString() {
-  const now = new Date()
-  const year = now.getFullYear()
-  const month = String(now.getMonth() + 1).padStart(2, '0')
-  const day = String(now.getDate()).padStart(2, '0')
-
-  return `${year}-${month}-${day}`
-}
-
 function filterOverdueTree(items, today) {
   const matchedIds = new Set()
 
@@ -186,6 +178,8 @@ function filterOverdueTree(items, today) {
 }
 
 export default function PlannerTree({
+  editLocked = false,
+  saveStatuses = {},
   items,
   selectedItemId,
   panelOwnerId,
@@ -200,6 +194,7 @@ export default function PlannerTree({
   onSelectItem,
   onEditItem,
   onCreateNested,
+  onResidualEstimatePrompt,
 }) {
   const queryClient = useQueryClient()
 
@@ -222,7 +217,7 @@ export default function PlannerTree({
     if (showOverdue) {
       return filterOverdueTree(
         items,
-        getLocalDateString(),
+        userDateKey(),
       )
     }
 
@@ -321,7 +316,17 @@ export default function PlannerTree({
   }
 
 
+  function findNode(nodes, id) {
+    for (const node of nodes) {
+      if (node.id === id) return node
+      const child = findNode(node.children ?? [], id)
+      if (child) return child
+    }
+    return null
+  }
+
   function requestDelete(itemId) {
+    if (findNode(currentPlanningTree(), itemId)?.is_provisional) return
     /*
      * Deletion is visually immediate. The server remains canonical and the
      * authoritative tree is refreshed after all queued structural actions.
@@ -406,6 +411,10 @@ export default function PlannerTree({
   function persistPlannerMove(
     intent,
   ) {
+    const tree = currentPlanningTree()
+    if (findNode(tree, intent.itemId)?.is_provisional
+      || findNode(tree, intent.parentId)?.is_provisional
+      || (intent.adoptChildIds ?? []).some((id) => findNode(tree, id)?.is_provisional)) return
     /*
      * dnd-kit removes its transform immediately after DragEnd. Write the
      * projected hierarchy into React Query before that frame can render the
@@ -679,7 +688,7 @@ export default function PlannerTree({
 
   return (
     <PlannerDnd
-      items={flattenedItems}
+      items={flattenedItems.filter((item) => !item.is_provisional)}
       onMove={persistPlannerMove}
     >
       {({
@@ -691,6 +700,12 @@ export default function PlannerTree({
           new Set(
             dragDescendantIds,
           )
+
+        for (const row of flattenedItems) {
+          if (row.is_provisional && (row.parentId === activeId || dragDescendantSet.has(row.parentId))) {
+            dragDescendantSet.add(row.id)
+          }
+        }
 
         /*
          * Descendants disappear visually while their parent is dragged, as
@@ -740,6 +755,8 @@ export default function PlannerTree({
 
               <PlannerTreeItem
               item={item}
+              editLocked={editLocked}
+              saveStatus={saveStatuses[String(item.id)] ?? null}
               /*
                * Never mutate the active sortable row's layout depth during
                * pointer movement.
@@ -769,7 +786,8 @@ export default function PlannerTree({
               onSelectItem={onSelectItem}
               onEditItem={onEditItem}
               onCreateNested={onCreateNested}
-              dndEnabled
+              onResidualEstimatePrompt={onResidualEstimatePrompt}
+              dndEnabled={!item.is_provisional}
               flat
             />
 

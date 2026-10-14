@@ -42,7 +42,7 @@ export const FOCUS_BUCKETS = [
 function localDate(value) {
   return value
     ? new Date(
-        `${value}T00:00:00`,
+        `${value}T00:00:00Z`,
       )
     : null
 }
@@ -305,6 +305,7 @@ export function dateGroupLabel(
     new Intl.DateTimeFormat(
       'en-AU',
       {
+        timeZone: 'UTC',
         day: '2-digit',
         month: 'short',
       },
@@ -316,6 +317,7 @@ export function dateGroupLabel(
     new Intl.DateTimeFormat(
       'en-AU',
       {
+        timeZone: 'UTC',
         weekday: 'short',
       },
     )

@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from datetime import date
 
 from django.db import transaction
-from django.utils import timezone
+from planning.services.calendar_dates import user_local_date
 from planning.models import FocusState, PlanningDependency, PlanningItem
 from planning.services import dependencies, priority, scheduling
 
@@ -173,7 +173,7 @@ def do_today(item, today=None):
     the canonical anchor boundary.
     """
 
-    today = today or date.today()
+    today = user_local_date(item.user, explicit_date=today)
 
     # Reuse the canonical anchor command so Focus cannot develop independent
     # date semantics.
@@ -237,7 +237,7 @@ def reconcile_current(user):
         and not item.is_deleted
         and not item.is_completed
         and item.is_actionable
-        and (item.start_date is None or item.start_date <= timezone.localdate())
+        and (item.start_date is None or item.start_date <= user_local_date(user))
         and not item.children.filter(
             is_deleted=False,
             is_completed=False,

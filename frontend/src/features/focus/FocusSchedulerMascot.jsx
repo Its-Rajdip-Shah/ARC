@@ -13,7 +13,7 @@ import {
 import SchedulerRunButton from '../timeline/SchedulerRunButton'
 
 
-export default function FocusSchedulerMascot() {
+export default function FocusSchedulerMascot({ className = 'focus-scheduler-mascot' }) {
   const queryClient =
     useQueryClient()
 
@@ -85,7 +85,7 @@ export default function FocusSchedulerMascot() {
   }
 
   return (
-    <div className="focus-scheduler-mascot">
+    <div className={className}>
       <SchedulerRunButton
         runtime={runtime}
         actions={actions}

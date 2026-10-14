@@ -31,6 +31,7 @@ from .serializers import (
     MFAEnrolConfirmSerializer,
     MFAVerifySerializer,
     RegisterSerializer,
+    TimeZoneUpdateSerializer,
     UserSerializer,
 )
 from .tokens import FULL_ACCESS_SCOPE, MFAEnrolmentToken, MFAPendingToken
@@ -320,10 +321,18 @@ class LogoutView(PublicAuthView):
 
 
 class MeView(APIView):
-    """GET /api/auth/me/ - the signed-in account."""
+    """GET/PATCH /api/auth/me/ - the signed-in account."""
 
     permission_classes = [IsAuthenticated]
 
     @extend_schema(responses=UserSerializer)
     def get(self, request):
+        return Response(UserSerializer(request.user).data)
+
+    @extend_schema(request=TimeZoneUpdateSerializer, responses=UserSerializer)
+    def patch(self, request):
+        serializer = TimeZoneUpdateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        request.user.time_zone = serializer.validated_data['time_zone']
+        request.user.save(update_fields=['time_zone'])
         return Response(UserSerializer(request.user).data)

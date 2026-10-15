@@ -1,22 +1,32 @@
-import { useState } from 'react'
+import { useCallback, useState } from 'react'
 import arcLogo from '../../assets/brand/arc-logo.svg'
 import { Outlet, useLocation } from 'react-router-dom'
 import HamburgerButton from './HamburgerButton'
+import MarksPanel from './MarksPanel'
 import NavigationDrawer from './NavigationDrawer'
+import StudentDialog from './StudentDialog'
 import StudentViewNav from './StudentViewNav'
+import SettingsPage, { IntegrationPanel } from '../../pages/student/SettingsPage'
 import './StudentLayout.css'
+
+const dialogTitles = {
+  account: 'Account',
+  settings: 'Settings',
+  marks: 'Marks',
+  sync: 'Canvas Sync',
+}
 
 export default function StudentLayout() {
   const pathname = useLocation().pathname
   const isPriority = pathname === '/priority'
   const [isNavigationOpen, setIsNavigationOpen] = useState(false)
+  const [dialog, setDialog] = useState(null)
+
+  const closeNavigation = useCallback(() => setIsNavigationOpen(false), [])
+  const closeDialog = useCallback(() => setDialog(null), [])
 
   function toggleNavigation() {
     setIsNavigationOpen((isOpen) => !isOpen)
-  }
-
-  function closeNavigation() {
-    setIsNavigationOpen(false)
   }
 
   return (
@@ -44,11 +54,21 @@ export default function StudentLayout() {
       <NavigationDrawer
         isOpen={isNavigationOpen}
         onClose={closeNavigation}
+        onOpenDialog={setDialog}
       />
 
       <main className="min-h-screen">
         <Outlet />
       </main>
+
+      {dialog && (
+        <StudentDialog title={dialogTitles[dialog]} onClose={closeDialog}>
+          {dialog === 'account' && <SettingsPage embedded initialTab="account" />}
+          {dialog === 'settings' && <SettingsPage embedded initialTab="integration" />}
+          {dialog === 'marks' && <MarksPanel />}
+          {dialog === 'sync' && <IntegrationPanel />}
+        </StudentDialog>
+      )}
     </div>
   )
 }

@@ -15,6 +15,10 @@ const views = [
     label: 'Focus',
     to: '/focus',
   },
+  {
+    label: 'Marks',
+    to: '/marks',
+  },
 ]
 
 function getViewClassName({

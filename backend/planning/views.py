@@ -8,7 +8,7 @@ called from here.
 
 from collections import Counter
 from datetime import datetime, timedelta
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
@@ -21,7 +21,7 @@ from drf_spectacular.utils import (
     extend_schema_view,
     inline_serializer,
 )
-from rest_framework import serializers, viewsets
+from rest_framework import serializers, viewsets, status
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
 from rest_framework.filters import SearchFilter
@@ -1245,12 +1245,12 @@ class MarksView(APIView):
 
                 if weight is not None:
                     total_weight += weight
+
                 if mark is None:
-                    # FR-14: unmarked is not zero, so it must not pull the
-                    # running total down.
+                    # unmarked is not zero, so it must not pull the running total down.
                     unmarked += 1
-                else:
-                    total_marks += mark
+                elif weight is not None:
+                    total_marks += (mark * weight) / Decimal('100')
 
                 rows.append({
                     'id': item.pk,
@@ -1275,6 +1275,136 @@ class MarksView(APIView):
 
         groups.sort(key=lambda group: group['root']['title'])
         return Response(MarkGroupSerializer(groups, many=True).data)
+
+
+class MarksSimulationView(APIView):
+    """Calculate hypothetical marks without changing recorded assessment data."""
+
+    def post(self, request):
+        assessment_id = request.data.get('assessment_id')
+        simulated_mark = request.data.get('mark_achieved')
+
+        if assessment_id is None or simulated_mark is None:
+            return Response(
+                {'detail': 'assessment_id and mark_achieved are required.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            if isinstance(assessment_id, bool):
+                raise ValueError
+            assessment_id = int(assessment_id)
+            if assessment_id <= 0:
+                raise ValueError
+        except (TypeError, ValueError):
+            return Response(
+                {'detail': 'assessment_id must be a positive integer.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        simulated_mark = request.data.get('mark_achieved')
+
+        if assessment_id is None or simulated_mark is None:
+            return Response(
+                {'detail': 'assessment_id and mark_achieved are required.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            simulated_mark = Decimal(str(simulated_mark))
+        except (InvalidOperation, TypeError, ValueError):
+            return Response(
+                {'detail': 'Mark must be a valid number between 0 and 100.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not simulated_mark.is_finite() or not Decimal('0') <= simulated_mark <= Decimal('100'):
+            return Response(
+                {'detail': 'Mark must be between 0 and 100.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        item = (
+            PlanningItem.objects.for_user(request.user)
+            .filter(
+                pk=assessment_id,
+                item_type=ItemType.ASSIGNMENT,
+            )
+            .select_related('assignment_detail')
+            .first()
+        )
+
+        if item is None:
+            return Response(
+                {'detail': 'Assessment not found.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        detail = getattr(item, 'assignment_detail', None)
+        if detail is None or detail.weight_percent is None:
+            return Response(
+                {'detail': 'The assessment needs a weighting before it can be simulated.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        roots = _root_lookup(request.user)
+        target_root = roots[item.pk]
+        members = (
+            PlanningItem.objects.for_user(request.user)
+            .filter(item_type=ItemType.ASSIGNMENT)
+            .select_related('assignment_detail')
+            .order_by('id')
+        )
+
+        total_weight = Decimal('0')
+        total_marks = Decimal('0')
+        unmarked_count = 0
+
+        for member in members:
+            if roots[member.pk]['id'] != target_root['id']:
+                continue
+
+            member_detail = getattr(member, 'assignment_detail', None)
+            weight = member_detail.weight_percent if member_detail else None
+            mark = member_detail.mark_achieved if member_detail else None
+
+            if weight is not None:
+                total_weight += weight
+
+            if member.pk == item.pk:
+                mark = simulated_mark
+
+            if mark is None:
+                unmarked_count += 1
+            elif weight is not None:
+                total_marks += (mark * weight) / Decimal('100')
+
+        # Build the same response shape as MarksView, with simulation metadata.
+        recorded_response = MarksView().get(request)
+        groups = recorded_response.data
+
+        for group in groups:
+            if group['root']['id'] == target_root['id']:
+                group['total_weight'] = total_weight
+                group['total_marks'] = total_marks
+                group['unmarked_count'] = unmarked_count
+
+                for assessment in group['assessments']:
+                    if assessment['id'] == item.pk:
+                        assessment['mark_achieved'] = str(simulated_mark.quantize(Decimal('0.01')))
+                        break
+
+                group['simulated'] = True
+                group['simulated_assessment_id'] = item.pk
+                break
+
+        if not any(
+            group['root']['id'] == target_root['id']
+            for group in groups
+        ):
+            return Response(
+                {'detail': 'Course marks could not be calculated.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        return Response(groups)
 
 
 class MarksReorderView(APIView):

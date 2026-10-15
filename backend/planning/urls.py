@@ -13,9 +13,7 @@ router = DefaultRouter()
 router.register('items', views.PlanningItemViewSet, basename='planning-item')
 router.register('tags', views.TagViewSet, basename='tag')
 router.register('timezones', views.TimezoneViewSet, basename='timezone')
-router.register(
-    'assignment-details', views.AssignmentDetailViewSet, basename='assignment-detail'
-)
+router.register('assignment-details', views.AssignmentDetailViewSet, basename='assignment-detail')
 
 urlpatterns = [
     path('priority/', views.PriorityView.as_view(), name='priority'),
@@ -47,5 +45,6 @@ urlpatterns = [
     path('overdue/', views.OverdueView.as_view(), name='overdue'),
     path('marks/', views.MarksView.as_view(), name='marks'),
     path('marks/reorder/', views.MarksReorderView.as_view(), name='marks-reorder'),
+    path('marks/simulate/', views.MarksSimulationView.as_view(), name='marks-simulate'),
     path('', include(router.urls)),
 ]

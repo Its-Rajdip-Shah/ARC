@@ -570,7 +570,7 @@ def test_marks_group_by_subject_and_total_only_what_is_marked(client, user, make
     marked = make_item(user, 'Assignment 1', ItemType.ASSIGNMENT, parent=root)
     unmarked = make_item(user, 'Assignment 2', ItemType.ASSIGNMENT, parent=root)
     AssignmentDetail.objects.create(
-        planning_item=marked, weight_percent='25.00', mark_achieved='18.50'
+        planning_item=marked, weight_percent='25.00', mark_achieved='80.00'
     )
     AssignmentDetail.objects.create(planning_item=unmarked, weight_percent='30.00')
 
@@ -580,9 +580,72 @@ def test_marks_group_by_subject_and_total_only_what_is_marked(client, user, make
     group = response.data[0]
     assert group['root']['title'] == 'ELEC3609'
     assert group['total_weight'] == '55.00'
-    assert group['total_marks'] == '18.50'
+    assert group['total_marks'] == '20.00'
     assert group['unmarked_count'] == 1
     assert group['assessments'][1]['mark_achieved'] is None
+
+
+def test_marks_exclude_unmarked_assessments_from_contribution(client, user, make_item):
+    # unmarked assessments do not contribute to the recorded total
+    root = make_item(user, 'ELEC3609', ItemType.GOAL)
+    marked = make_item(user, 'Assignment 1', ItemType.ASSIGNMENT, parent=root)
+    unmarked = make_item(user, 'Assignment 2', ItemType.ASSIGNMENT, parent=root)
+
+    AssignmentDetail.objects.create(
+        planning_item=marked, weight_percent='25.00', mark_achieved='80.00'
+    )
+    AssignmentDetail.objects.create(
+        planning_item=unmarked, weight_percent='30.00'
+    )
+
+    group = client.get('/api/planning/marks/').data[0]
+
+    assert group['total_marks'] == '20.00'
+    assert group['total_weight'] == '55.00'
+    assert group['unmarked_count'] == 1
+
+
+# mark validation boundaries
+@pytest.mark.parametrize('mark', ['0', '100'])
+def test_assignment_mark_accepts_boundary_values(
+    client, user, make_item, mark
+):
+    root = make_item(user, 'ELEC3609', ItemType.GOAL)
+    item = make_item(user, 'Assignment 1', ItemType.ASSIGNMENT, parent=root)
+    detail = AssignmentDetail.objects.create(
+        planning_item=item, weight_percent='25.00'
+    )
+
+    response = client.patch(
+        f'/api/planning/assignment-details/{detail.planning_item_id}/',
+        {'mark_achieved': mark},
+        format='json',
+    )
+
+    assert response.status_code == 200
+    detail.refresh_from_db()
+    assert str(detail.mark_achieved) == f'{mark}.00'
+
+
+@pytest.mark.parametrize('mark', ['-0.01', '100.01'])
+def test_assignment_mark_rejects_out_of_range_values(
+    client, user, make_item, mark
+):
+    root = make_item(user, 'ELEC3609', ItemType.GOAL)
+    item = make_item(user, 'Assignment 1', ItemType.ASSIGNMENT, parent=root)
+    detail = AssignmentDetail.objects.create(
+        planning_item=item, weight_percent='25.00', mark_achieved='80.00'
+    )
+
+    response = client.patch(
+        f'/api/planning/assignment-details/{detail.planning_item_id}/',
+        {'mark_achieved': mark},
+        format='json',
+    )
+
+    assert response.status_code == 400
+    detail.refresh_from_db()
+    assert str(detail.mark_achieved) == '80.00'
 
 
 def test_marks_separate_one_subject_from_another(client, user, make_item):
@@ -665,6 +728,98 @@ def test_another_users_assignment_detail_is_a_404(other_client, user, make_item)
         {'mark_achieved': '100.00'},
         format='json',
     )
+    assert response.status_code == 404
+
+
+def test_marks_simulation_does_not_change_recorded_mark(
+    client, user, make_item
+):
+    root = make_item(user, 'ELEC3609', ItemType.GOAL)
+    item = make_item(user, 'Assignment 1', ItemType.ASSIGNMENT, parent=root)
+
+    detail = AssignmentDetail.objects.create(
+        planning_item=item,
+        weight_percent='25.00',
+        mark_achieved='80.00',
+    )
+
+    response = client.post(
+        '/api/planning/marks/simulate/',
+        {'assessment_id': item.pk, 'mark_achieved': '90'},
+        format='json',
+    )
+
+    assert response.status_code == 200
+
+    group = next(
+        group for group in response.data
+        if group['root']['id'] == root.pk
+    )
+    assert str(group['total_marks']) == '22.50'
+    assert str(group['assessments'][0]['mark_achieved']) == '90.00'
+    assert group['simulated'] is True
+    assert group['simulated_assessment_id'] == item.pk
+
+    detail.refresh_from_db()
+    assert str(detail.mark_achieved) == '80.00'
+
+
+@pytest.mark.parametrize('assessment_id', ['abc', 0, -1, True])
+def test_marks_simulation_rejects_invalid_assessment_id(
+    client, assessment_id
+):
+    response = client.post(
+        '/api/planning/marks/simulate/',
+        {'assessment_id': assessment_id, 'mark_achieved': 90},
+        format='json',
+    )
+
+    assert response.status_code == 400
+
+
+@pytest.mark.parametrize('mark', [-1, 100.01, 'invalid'])
+def test_marks_simulation_rejects_invalid_marks(
+    client, user, make_item, mark
+):
+    root = make_item(user, 'ELEC3609', ItemType.GOAL)
+    item = make_item(user, 'Assignment 1', ItemType.ASSIGNMENT, parent=root)
+
+    AssignmentDetail.objects.create(
+        planning_item=item,
+        weight_percent='25.00',
+        mark_achieved='80.00',
+    )
+
+    response = client.post(
+        '/api/planning/marks/simulate/',
+        {'assessment_id': item.pk, 'mark_achieved': mark},
+        format='json',
+    )
+
+    assert response.status_code == 400
+
+
+def test_marks_simulation_cannot_access_another_users_assessment(client, user, make_item, django_user_model):
+    other_user = django_user_model.objects.create_user(
+        email='other_marks_user@example.com',
+        password='test-password',
+    )
+    root = make_item(other_user, 'COMP2017', ItemType.GOAL)
+    item = make_item(
+        other_user, 'Assignment 1', ItemType.ASSIGNMENT, parent=root
+    )
+    AssignmentDetail.objects.create(
+        planning_item=item,
+        weight_percent='25.00',
+        mark_achieved='80.00',
+    )
+
+    response = client.post(
+        '/api/planning/marks/simulate/',
+        {'assessment_id': item.pk, 'mark_achieved': 90},
+        format='json',
+    )
+
     assert response.status_code == 404
 
 

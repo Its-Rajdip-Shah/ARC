@@ -64,6 +64,10 @@ class AssignmentDetailSerializer(serializers.ModelSerializer):
         model = AssignmentDetail
         fields = ['weight_percent', 'mark_achieved', 'submission_url', 'marks_position']
 
+    def validate_mark_achieved(self, value):
+        if value is not None and not 0 <= value <= 100:
+            raise serializers.ValidationError('Mark must be between 0 and 100.')
+        return value
 
 class TimelineNavigationItemSerializer(serializers.ModelSerializer):
     """Small canonical item index used by Timeline search/navigation.

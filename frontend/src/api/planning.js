@@ -134,6 +134,15 @@ export function reorderMarks(payload) {
   return apiClient.post('planning/marks/reorder/', payload).then((res) => res.data)
 }
 
+export function simulateMarks(payload) {
+  return apiClient.post('planning/marks/simulate/', payload).then((res) => res.data)
+}
+
+export function updateAssignmentMark(assessmentId, payload) {
+  return apiClient
+    .patch(`planning/assignment-details/${assessmentId}/`, payload)
+    .then((res) => res.data)
+}
 
 export function getHistoryStatus() {
   return apiClient

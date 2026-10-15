@@ -38,7 +38,9 @@ export default function App() {
             </Route>
           </Route>
 
-          <Route path="/dev/connection" element={<ConnectionStatus />} />
+          {import.meta.env.DEV && (
+            <Route path="/dev/connection" element={<ConnectionStatus />} />
+          )}
 
           <Route path="/admin/login" element={<AdminLoginPage />} />
           <Route element={<AdminRoute />}>

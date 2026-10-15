@@ -9,6 +9,14 @@ import { queryClient } from '../lib/queryClient'
 import { useAuthStore } from '../stores/authStore'
 
 const PING_PASSWORD = 'ArcPing-pass-1234'
+
+export function connectionPingRegistration(email) {
+  return {
+    email,
+    password: PING_PASSWORD,
+    scheduler_flavour: 'monk',
+  }
+}
 const GARBAGE_TOKEN = 'eyJhbGciOiJub25lIn0.e30.force-401'
 
 const STEP_META = [
@@ -69,7 +77,7 @@ export default function ConnectionStatus() {
       const pingEmail = `ping.${Date.now()}.${crypto.randomUUID().slice(0, 8)}@example.com`
       try {
         patchStep('register', { state: 'running', detail: pingEmail })
-        const registered = await register({ email: pingEmail, password: PING_PASSWORD })
+        const registered = await register(connectionPingRegistration(pingEmail))
         if (cancelled) return
         patchStep('register', { state: 'ok', detail: pingEmail })
 

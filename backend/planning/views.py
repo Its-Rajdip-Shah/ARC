@@ -1250,7 +1250,7 @@ class MarksView(APIView):
                     # unmarked is not zero, so it must not pull the running total down.
                     unmarked += 1
                 elif weight is not None:
-                    total_marks += (mark * weight) / Decimal('100')
+                    total_marks += mark * weight / Decimal('100')
 
                 rows.append({
                     'id': item.pk,
@@ -1277,21 +1277,16 @@ class MarksView(APIView):
         return Response(MarkGroupSerializer(groups, many=True).data)
 
 
-class MarksSimulationView(APIView):
-    """Calculate hypothetical marks without changing recorded assessment data."""
+class MarksWeightUpdateView(APIView):
+    """Update a manual assessment weight without changing assignment logic."""
 
-    def post(self, request):
+    def patch(self, request):
         assessment_id = request.data.get('assessment_id')
-        simulated_mark = request.data.get('mark_achieved')
 
-        if assessment_id is None or simulated_mark is None:
-            return Response(
-                {'detail': 'assessment_id and mark_achieved are required.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
         try:
             if isinstance(assessment_id, bool):
                 raise ValueError
+
             assessment_id = int(assessment_id)
             if assessment_id <= 0:
                 raise ValueError
@@ -1300,37 +1295,41 @@ class MarksSimulationView(APIView):
                 {'detail': 'assessment_id must be a positive integer.'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        simulated_mark = request.data.get('mark_achieved')
 
-        if assessment_id is None or simulated_mark is None:
+        if 'weight_percent' not in request.data:
             return Response(
-                {'detail': 'assessment_id and mark_achieved are required.'},
+                {'detail': 'weight_percent is required; use null to clear it.'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        try:
-            simulated_mark = Decimal(str(simulated_mark))
-        except (InvalidOperation, TypeError, ValueError):
-            return Response(
-                {'detail': 'Mark must be a valid number between 0 and 100.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        raw_weight = request.data['weight_percent']
 
-        if not simulated_mark.is_finite() or not Decimal('0') <= simulated_mark <= Decimal('100'):
-            return Response(
-                {'detail': 'Mark must be between 0 and 100.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        if raw_weight is None:
+            manual_weight = None
+        else:
+            try:
+                manual_weight = Decimal(str(raw_weight))
+            except (InvalidOperation, TypeError, ValueError):
+                return Response(
+                    {'detail': 'Weight must be a number between 0 and 100.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
 
-        item = (
-            PlanningItem.objects.for_user(request.user)
-            .filter(
-                pk=assessment_id,
-                item_type=ItemType.ASSIGNMENT,
-            )
-            .select_related('assignment_detail')
-            .first()
-        )
+            if (
+                not manual_weight.is_finite()
+                or not Decimal('0') <= manual_weight <= Decimal('100')
+            ):
+                return Response(
+                    {'detail': 'Weight must be between 0 and 100.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            manual_weight = manual_weight.quantize(Decimal('0.01'))
+
+        item = PlanningItem.objects.for_user(request.user).filter(
+            pk=assessment_id,
+            item_type=ItemType.ASSIGNMENT,
+        ).first()
 
         if item is None:
             return Response(
@@ -1338,73 +1337,262 @@ class MarksSimulationView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        detail = getattr(item, 'assignment_detail', None)
-        if detail is None or detail.weight_percent is None:
-            return Response(
-                {'detail': 'The assessment needs a weighting before it can be simulated.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        roots = _root_lookup(request.user)
-        target_root = roots[item.pk]
-        members = (
-            PlanningItem.objects.for_user(request.user)
-            .filter(item_type=ItemType.ASSIGNMENT)
-            .select_related('assignment_detail')
-            .order_by('id')
+        detail, _ = AssignmentDetail.objects.get_or_create(
+            planning_item=item,
         )
 
-        total_weight = Decimal('0')
-        total_marks = Decimal('0')
-        unmarked_count = 0
+        detail.manual_weight_percent = manual_weight
 
-        for member in members:
-            if roots[member.pk]['id'] != target_root['id']:
-                continue
+        canvas_weight = detail.canvas_weight_percent
+        if canvas_weight is not None and canvas_weight > 0:
+            detail.weight_percent = canvas_weight
+        else:
+            detail.weight_percent = manual_weight
 
-            member_detail = getattr(member, 'assignment_detail', None)
-            weight = member_detail.weight_percent if member_detail else None
-            mark = member_detail.mark_achieved if member_detail else None
+        detail.save(update_fields=[
+            'manual_weight_percent',
+            'weight_percent',
+        ])
 
-            if weight is not None:
-                total_weight += weight
+        return Response({
+            'assessment_id': item.pk,
+            'manual_weight_percent': detail.manual_weight_percent,
+            'weight_percent': detail.weight_percent,
+        })
 
-            if member.pk == item.pk:
-                mark = simulated_mark
 
-            if mark is None:
-                unmarked_count += 1
-            elif weight is not None:
-                total_marks += (mark * weight) / Decimal('100')
+class MarksSimulationView(APIView):
+    """Calculate hypothetical marks without changing recorded assessment data."""
 
-        # Build the same response shape as MarksView, with simulation metadata.
+    def post(self, request):
+        # Preserve compatibility with the existing single-assessment API.
+        multi_simulation = 'marks' in request.data
+
+        if multi_simulation:
+            entries = request.data.get('marks')
+            if not isinstance(entries, list) or not entries:
+                return Response(
+                    {'detail': 'marks must be a non-empty list.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+        else:
+            entries = [{
+                'assessment_id': request.data.get('assessment_id'),
+                'mark_achieved': request.data.get('mark_achieved'),
+            }]
+
+        simulations = {}
+
+        for entry in entries:
+            if not isinstance(entry, dict):
+                return Response(
+                    {'detail': 'Each simulated mark must be an object.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            assessment_id = entry.get('assessment_id')
+            simulated_mark = entry.get('mark_achieved')
+            has_weight_override = 'weight_percent' in entry
+            simulated_weight = entry.get('weight_percent')
+
+            if assessment_id is None or (
+                simulated_mark is None and not multi_simulation
+            ):
+                return Response(
+                    {
+                        'detail':
+                            'assessment_id and mark_achieved are required.'
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            try:
+                if isinstance(assessment_id, bool):
+                    raise ValueError
+
+                assessment_id = int(assessment_id)
+
+                if assessment_id <= 0:
+                    raise ValueError
+            except (TypeError, ValueError):
+                return Response(
+                    {'detail': 'assessment_id must be a positive integer.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            if assessment_id in simulations:
+                return Response(
+                    {'detail': 'Each assessment can only be simulated once.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            if simulated_mark is not None:
+                try:
+                    simulated_mark = Decimal(str(simulated_mark))
+                except (InvalidOperation, TypeError, ValueError):
+                    return Response(
+                        {
+                            'detail':
+                                'Mark must be a valid number between 0 and 100.'
+                        },
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+
+                if (
+                    not simulated_mark.is_finite()
+                    or not Decimal('0') <= simulated_mark <= Decimal('100')
+                ):
+                    return Response(
+                        {'detail': 'Mark must be between 0 and 100.'},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+
+                simulated_mark = simulated_mark.quantize(Decimal('0.01'))
+
+            if has_weight_override and simulated_weight is not None:
+                try:
+                    simulated_weight = Decimal(str(simulated_weight))
+                except (InvalidOperation, TypeError, ValueError):
+                    return Response(
+                        {
+                            'detail':
+                                'Weight must be a valid number between 0 and 100.'
+                        },
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+
+                if (
+                    not simulated_weight.is_finite()
+                    or not Decimal('0') <= simulated_weight <= Decimal('100')
+                ):
+                    return Response(
+                        {'detail': 'Weight must be between 0 and 100.'},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+
+                simulated_weight = simulated_weight.quantize(Decimal('0.01'))
+
+            simulations[assessment_id] = {
+                'mark_achieved': simulated_mark,
+                'weight_percent': simulated_weight,
+                'has_weight_override': has_weight_override,
+            }
+
+        # Scope the lookup to the authenticated user.
+        # Do not expose whether another user owns an assessment.
+        items = list(
+            PlanningItem.objects.for_user(request.user)
+            .filter(
+                pk__in=simulations,
+                item_type=ItemType.ASSIGNMENT,
+            )
+            .select_related('assignment_detail')
+        )
+
+        items_by_id = {item.pk: item for item in items}
+
+        if set(items_by_id) != set(simulations):
+            return Response(
+                {'detail': 'Assessment not found.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        for item in items:
+            detail = getattr(item, 'assignment_detail', None)
+            simulation = simulations[item.pk]
+
+            # A temporary weight can be used when no saved weight exists.
+            # Without either, retain the original validation behaviour.
+            if (
+                (detail is None or detail.weight_percent is None)
+                and not simulation['has_weight_override']
+            ):
+                return Response(
+                    {
+                        'detail':
+                            'Each assessment needs a weighting before it can '
+                            'be simulated, or provide a temporary weight.'
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+        # Change only the response data in memory. Never save these values.
         recorded_response = MarksView().get(request)
+
+        if recorded_response.status_code != status.HTTP_200_OK:
+            return recorded_response
+
         groups = recorded_response.data
 
         for group in groups:
-            if group['root']['id'] == target_root['id']:
-                group['total_weight'] = total_weight
-                group['total_marks'] = total_marks
-                group['unmarked_count'] = unmarked_count
+            changed_ids = []
 
-                for assessment in group['assessments']:
-                    if assessment['id'] == item.pk:
-                        assessment['mark_achieved'] = str(simulated_mark.quantize(Decimal('0.01')))
-                        break
+            for assessment in group['assessments']:
+                assessment_id = assessment['id']
 
+                if assessment_id in simulations:
+                    simulation = simulations[assessment_id]
+                    simulated_mark = simulation['mark_achieved']
+
+                    assessment['mark_achieved'] = (
+                        str(simulated_mark)
+                        if simulated_mark is not None
+                        else None
+                    )
+
+                    if simulation['has_weight_override']:
+                        simulated_weight = simulation['weight_percent']
+                        assessment['weight_percent'] = (
+                            str(simulated_weight)
+                            if simulated_weight is not None
+                            else None
+                        )
+
+                    changed_ids.append(assessment_id)
+
+            # Recalculate totals using the simulated marks and weights.
+            total_weight = Decimal('0')
+            total_marks = Decimal('0')
+            unmarked_count = 0
+
+            for assessment in group['assessments']:
+                weight_value = assessment['weight_percent']
+                mark_value = assessment['mark_achieved']
+
+                weight = (
+                    Decimal(str(weight_value))
+                    if weight_value is not None
+                    else None
+                )
+                mark = (
+                    Decimal(str(mark_value))
+                    if mark_value is not None
+                    else None
+                )
+
+                if weight is not None:
+                    total_weight += weight
+
+                if mark is None:
+                    unmarked_count += 1
+                elif weight is not None:
+                    total_marks += mark * weight / Decimal('100')
+
+            group['total_weight'] = total_weight.quantize(Decimal('0.01'))
+            group['total_marks'] = total_marks.quantize(Decimal('0.01'))
+            group['unmarked_count'] = unmarked_count
+
+            if changed_ids:
                 group['simulated'] = True
-                group['simulated_assessment_id'] = item.pk
-                break
+                group['simulated_assessment_ids'] = changed_ids
 
-        if not any(
-            group['root']['id'] == target_root['id']
-            for group in groups
-        ):
-            return Response(
-                {'detail': 'Course marks could not be calculated.'},
-                status=status.HTTP_404_NOT_FOUND,
-            )
+                # Preserve metadata expected by existing callers.
+                if len(changed_ids) == 1:
+                    group['simulated_assessment_id'] = changed_ids[0]
+
         return Response(groups)
+
+
 
 
 class MarksReorderView(APIView):

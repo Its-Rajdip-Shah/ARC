@@ -353,18 +353,73 @@ def test_missing_canvas_fields_do_not_break_the_import(connection, user):
     assert PlanningItem.objects.filter(user=user).count() == 2
 
 
-def test_canvas_gives_no_weighting_so_none_is_recorded(connection):
-    """points_possible is not a percentage of the unit, so FR-14's
-    weight_percent stays for the user to fill in."""
+def test_points_based_canvas_course_uses_points_as_assessment_weight(
+    connection,
+):
     stub = StubCanvas(
         courses=[{'id': 11, 'course_code': 'ELEC3609'}],
-        assignments={11: [{'id': 501, 'name': 'Quiz', 'points_possible': 40}]},
+        assignments={
+            11: [
+                {
+                    'id': 501,
+                    'name': 'Quiz',
+                    'points_possible': 40,
+                    'assignment_group_id': 1,
+                }
+            ]
+        },
+        assignment_groups={
+            11: [{'id': 1, 'group_weight': 0}]
+        },
     )
+
     sync.run_sync(connection, client=stub)
 
-    detail = AssignmentDetail.objects.get(planning_item__canvas_object_id='501')
-    assert detail.weight_percent is None
+    detail = AssignmentDetail.objects.get(
+        planning_item__canvas_object_id='501'
+    )
+
+    assert detail.weight_percent == Decimal('100.00')
     assert detail.mark_achieved is None
+
+
+def test_points_based_weights_are_proportional_to_course_points(
+    connection,
+):
+    stub = StubCanvas(
+        courses=[{'id': 11, 'course_code': 'ELEC3609'}],
+        assignments={
+            11: [
+                {
+                    'id': 501,
+                    'name': 'Quiz',
+                    'points_possible': 10,
+                    'assignment_group_id': 1,
+                },
+                {
+                    'id': 502,
+                    'name': 'Report',
+                    'points_possible': 30,
+                    'assignment_group_id': 1,
+                },
+            ]
+        },
+        assignment_groups={
+            11: [{'id': 1, 'group_weight': 0}]
+        },
+    )
+
+    sync.run_sync(connection, client=stub)
+
+    quiz = AssignmentDetail.objects.get(
+        planning_item__canvas_object_id='501'
+    )
+    report = AssignmentDetail.objects.get(
+        planning_item__canvas_object_id='502'
+    )
+
+    assert quiz.weight_percent == Decimal('25.00')
+    assert report.weight_percent == Decimal('75.00')
 
 
 def test_group_weight_is_split_by_assignment_points(connection, user):

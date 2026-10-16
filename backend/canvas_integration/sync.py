@@ -99,17 +99,38 @@ def _group_point_totals(assignments):
     return totals
 
 
-def _weight_percent(assignment, groups_by_id, point_totals):
-    """Share of the group's course weight, or None if Canvas omitted inputs."""
-    group = groups_by_id.get(assignment.get('assignment_group_id'))
-    if group is None:
-        return None
-    group_weight = _as_decimal(group.get('group_weight'))
+
+def _weight_percent(assignment, groups_by_id, point_totals, course_point_total=None, use_group_weights=True,):
+    """Calculate an assessment's percentage of the overall course.
+
+    Use Canvas assignment-group weights when the course has weighted
+    groups. Otherwise, calculate the assessment's share of total
+    available course points.
+    """
     points = _as_decimal(assignment.get('points_possible'))
-    total = point_totals.get(assignment.get('assignment_group_id'))
-    if group_weight is None or points is None or not total:
+
+    if points is None or points <= 0:
         return None
-    return (group_weight * points / total).quantize(Decimal('0.01'))
+
+    if use_group_weights:
+        group = groups_by_id.get(assignment.get('assignment_group_id'))
+        if group is None:
+            return None
+
+        group_weight = _as_decimal(group.get('group_weight'))
+        total = point_totals.get(assignment.get('assignment_group_id'))
+
+        if group_weight is None or group_weight <= 0 or not total:
+            return None
+
+        weight = (group_weight * points / total).quantize(Decimal('0.01'))
+    else:
+        if not course_point_total:
+            return None
+
+        weight = (points * Decimal('100') / course_point_total).quantize(Decimal('0.01'))
+
+    return weight if weight > 0 else None
 
 
 def _mark_percent(assignment, submissions_by_id):
@@ -181,6 +202,28 @@ def _import_course(user, client, course, counts, restore_deleted=False):
     }
     point_totals = _group_point_totals(assignments)
 
+    course_point_total = sum(
+        (
+            points
+            for assignment in assignments
+            if (points := _as_decimal(assignment.get('points_possible'))) is not None and points > 0),Decimal('0'),)
+
+
+    # Determine whether Canvas explicitly reports zero weights
+    # for every assignment group.
+    group_weights = [
+        _as_decimal(group.get('group_weight'))
+        for group in groups_by_id.values()
+    ]
+
+    use_points_fallback = (
+        bool(group_weights)
+        and all(
+            weight == 0
+            for weight in group_weights
+        )
+    )
+
     term = _term_window(course)
 
     with transaction.atomic():
@@ -209,7 +252,7 @@ def _import_course(user, client, course, counts, restore_deleted=False):
                 root,
                 assignment,
                 counts,
-                weight=_weight_percent(assignment, groups_by_id, point_totals),
+                weight=_weight_percent(assignment, groups_by_id, point_totals,course_point_total=course_point_total, use_group_weights=not use_points_fallback,),
                 mark=_mark_percent(assignment, submissions_by_id),
                 revive=course_was_deleted,
             )
@@ -240,15 +283,35 @@ def _import_assignment(user, root, assignment, counts, weight=None, mark=None, r
         },
     )
 
-    detail_defaults = {'submission_url': assignment.get('html_url') or None}
-    if weight is not None:
-        detail_defaults['weight_percent'] = weight
-    if mark is not None:
-        detail_defaults['mark_achieved'] = mark
-    AssignmentDetail.objects.update_or_create(
+    detail, _ = AssignmentDetail.objects.get_or_create(
         planning_item=item,
-        defaults=detail_defaults,
     )
+
+    detail.submission_url = assignment.get('html_url') or None
+
+    # Store the latest available Canvas weight separately.
+    if weight is not None and weight > 0:
+        # A valid Canvas weight takes priority.
+        detail.canvas_weight_percent = weight
+        detail.weight_percent = weight
+    else:
+        # Canvas has no usable weight. Preserve any existing manual weight.
+        detail.canvas_weight_percent = None
+
+        if detail.manual_weight_percent is not None:
+            detail.weight_percent = detail.manual_weight_percent
+        # Otherwise, preserve the existing effective weight.
+
+    # Preserve the existing mark if Canvas has no new mark.
+    if mark is not None:
+        detail.mark_achieved = mark
+
+    detail.save()
+
+    # AssignmentDetail.objects.update_or_create(
+    #     planning_item=item,
+    #     defaults=detail_defaults,
+    # )
 
     if not item.is_completed:
         lifecycle.reopen_ancestors(item)

@@ -537,6 +537,21 @@ class AssignmentDetail(models.Model):
         related_name='assignment_detail',
     )
     weight_percent = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
+    # Preserve the weight supplied by Canvas separately from the
+    # user's manual fallback.
+    canvas_weight_percent = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        null=True,
+        blank=True,
+    )
+    manual_weight_percent = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        null=True,
+        blank=True,
+    )
+
     # FR-14: NULL means unmarked and must never be displayed or totalled as 0.
     mark_achieved = models.DecimalField(max_digits=6, decimal_places=2, null=True, blank=True)
     submission_url = models.URLField(max_length=1000, null=True, blank=True)

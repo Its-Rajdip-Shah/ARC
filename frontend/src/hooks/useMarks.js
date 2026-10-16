@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { getMarks, reorderMarks, simulateMarks, updateAssignmentMark } from '../api/planning'
+import { getMarks, reorderMarks, simulateMarks, updateAssignmentMark, updateManualAssessmentWeight } from '../api/planning'
+
 
 export function useMarks() {
   return useQuery({
@@ -35,5 +36,16 @@ export function useUpdateAssignmentMark() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['planning', 'marks'] })
     },
+  })
+}
+
+export function useUpdateManualWeight() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: ({ assessmentId, weight }) =>
+      updateManualAssessmentWeight(assessmentId, weight),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ['planning', 'marks'] }),
   })
 }

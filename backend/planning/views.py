@@ -1366,10 +1366,15 @@ class MarksSimulationView(APIView):
 
     def post(self, request):
         # Preserve compatibility with the existing single-assessment API.
-        multi_simulation = 'marks' in request.data
+        multi_simulation = (
+    'marks' in request.data or 'assessments' in request.data
+        )
 
         if multi_simulation:
-            entries = request.data.get('marks')
+            entries = request.data.get(
+                'assessments',
+                request.data.get('marks'),
+            )
             if not isinstance(entries, list) or not entries:
                 return Response(
                     {'detail': 'marks must be a non-empty list.'},
@@ -1392,6 +1397,7 @@ class MarksSimulationView(APIView):
 
             assessment_id = entry.get('assessment_id')
             simulated_mark = entry.get('mark_achieved')
+            simulated_weight = entry.get('weight_percent')
             has_weight_override = 'weight_percent' in entry
             simulated_weight = entry.get('weight_percent')
 

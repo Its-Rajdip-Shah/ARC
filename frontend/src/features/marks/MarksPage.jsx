@@ -1,7 +1,27 @@
 
 import { useEffect, useState } from 'react'
-import {useMarks, useUpdateAssignmentMark, useSimulateMarks,} from '../../hooks/useMarks'
+import {useMarks, useUpdateAssignmentMark, useUpdateManualWeight, useSimulateMarks,} from '../../hooks/useMarks'
 import { useSyncCanvas } from '../../hooks/useCanvas'
+
+
+function getSimulatedGrade(group) {
+  const markedAssessments = group.assessments.filter(
+    (assessment) =>
+      assessment.mark_achieved != null &&
+      assessment.weight_percent != null,
+  )
+
+  const markedWeight = markedAssessments.reduce(
+    (total, assessment) =>
+      total + Number(assessment.weight_percent),
+    0,
+  )
+
+  if (markedWeight === 0) return null
+
+  return (Number(group.total_marks) / markedWeight) * 100
+}
+
 
 export default function MarksPage() {
   const {data: markGroups, isPending, isError, error, refetch,} = useMarks()
@@ -16,8 +36,12 @@ export default function MarksPage() {
   const updateMark = useUpdateAssignmentMark()
   const simulation = useSimulateMarks()
   const canvasSync = useSyncCanvas()
+  const updateWeight = useUpdateManualWeight()
   const [canvasSyncMessage, setCanvasSyncMessage] = useState('')
   const [canvasSyncError, setCanvasSyncError] = useState('')
+  const [viewMode, setViewMode] = useState('marks')
+  const [editedWeight, setEditedWeight] = useState('')
+  const [whatIfWeights, setWhatIfWeights] = useState({})
 
   // Initialize temporary values from saved marks.
   // Refresh them whenever the saved marks query changes.
@@ -25,6 +49,7 @@ export default function MarksPage() {
     if (!Array.isArray(markGroups)) return
 
     const initialMarks = {}
+    const initialWeights = {}
 
     markGroups.forEach((group) => {
       group.assessments.forEach((assessment) => {
@@ -32,10 +57,16 @@ export default function MarksPage() {
           assessment.mark_achieved == null
             ? ''
             : String(assessment.mark_achieved)
+
+        initialWeights[assessment.id] =
+          assessment.weight_percent == null
+            ? ''
+            : String(assessment.weight_percent)
       })
     })
 
     setWhatIfMarks(initialMarks)
+    setWhatIfWeights(initialWeights)
     simulation.reset()
     setSimulationError('')
   }, [markGroups])
@@ -47,12 +78,20 @@ export default function MarksPage() {
         ? ''
         : String(assessment.mark_achieved),
     )
+    setEditedWeight(
+      assessment.weight_percent == null
+        ? ''
+        : String(assessment.weight_percent),
+    )
+
     setSaveError('')
   }
+
 
   function cancelEditing() {
     setEditingId(null)
     setEditedMark('')
+    setEditedWeight('')
     setSaveError('')
   }
 
@@ -95,6 +134,31 @@ export default function MarksPage() {
     }
   }
 
+  async function saveWeight(assessmentId) {
+    const value = editedWeight.trim()
+    let weight = null
+
+    if (value !== '') {
+      weight = Number(value)
+
+      if (!Number.isFinite(weight) || weight < 0 || weight > 100) {
+        setSaveError('Weight must be between 0 and 100.')
+        return
+      }
+    }
+
+    setSaveError('')
+
+    try {
+      await updateWeight.mutateAsync({ assessmentId, weight })
+    } catch (err) {
+      setSaveError(
+        err?.response?.data?.detail ||
+          'Unable to save the weight. Please try again.',
+      )
+    }
+  }
+
   async function clearMark(assessmentId) {
     setSaveError('')
 
@@ -121,6 +185,16 @@ export default function MarksPage() {
     setSimulationError('')
   }
 
+  function changeWhatIfWeight(assessmentId, value) {
+    setWhatIfWeights((current) => ({
+      ...current,
+      [assessmentId]: value,
+    }))
+
+    simulation.reset()
+    setSimulationError('')
+  }
+
   async function calculateWhatIf() {
     setSimulationError('')
 
@@ -128,52 +202,63 @@ export default function MarksPage() {
 
     for (const group of markGroups ?? []) {
       for (const assessment of group.assessments) {
-        // The backend requires a weighting for simulation.
-        if (assessment.weight_percent == null) continue
+        const markValue = whatIfMarks[assessment.id] ?? ''
+        const weightValue = whatIfWeights[assessment.id] ?? ''
 
-        const value = whatIfMarks[assessment.id] ?? ''
         let mark = null
+        if (String(markValue).trim() !== '') {
+          mark = Number(markValue)
 
-        if (value.trim() !== '') {
-          mark = Number(value)
-
-          if (
-            !Number.isFinite(mark) ||
-            mark < 0 ||
-            mark > 100
-          ) {
+          if (!Number.isFinite(mark) || mark < 0 || mark > 100) {
             setSimulationError(
-              `Enter a valid mark between 0 and 100 for "${assessment.title}", or leave it blank.`,
+              `Enter a mark between 0 and 100 for ${assessment.title}.`,
             )
             return
           }
         }
 
+        let weight = null
+        if (String(weightValue).trim() !== '') {
+          weight = Number(weightValue)
+
+          if (!Number.isFinite(weight) || weight < 0 || weight > 100) {
+            setSimulationError(
+              `Enter a weight between 0 and 100 for ${assessment.title}.`,
+            )
+            return
+          }
+        }
+
+        const effectiveWeight =
+          String(weightValue).trim() !== ''
+            ? weight
+            : assessment.weight_percent
+
+        // Skip assessments without a saved or temporary weight.
+        if (effectiveWeight == null) continue
+
         entries.push({
           assessment_id: assessment.id,
           mark_achieved: mark,
+          weight_percent: weight,
         })
       }
     }
 
-    if (entries.length === 0) {
-      setSimulationError(
-        'There are no weighted assessments available to simulate.',
-      )
-      return
-    }
-
     try {
-      await simulation.mutateAsync({ marks: entries })
-    } catch {
+      await simulation.mutateAsync({ assessments: entries })
+    } catch (err) {
       setSimulationError(
-        'Unable to calculate the hypothetical results. Please try again.',
+        err?.response?.data?.detail ||
+          'Unable to calculate the simulation. Please try again.',
       )
     }
   }
 
+
   function resetWhatIf() {
     const savedMarks = {}
+    const savedWeights = {}
 
     for (const group of markGroups ?? []) {
       for (const assessment of group.assessments) {
@@ -181,10 +266,16 @@ export default function MarksPage() {
           assessment.mark_achieved == null
             ? ''
             : String(assessment.mark_achieved)
+
+        savedWeights[assessment.id] =
+          assessment.weight_percent == null
+            ? ''
+            : String(assessment.weight_percent)
       }
     }
 
     setWhatIfMarks(savedMarks)
+    setWhatIfWeights(savedWeights)
     simulation.reset()
     setSimulationError('')
   }
@@ -265,9 +356,42 @@ export default function MarksPage() {
           !isError &&
           Array.isArray(markGroups) &&
           markGroups.length > 0 && (
+            <>
+                    <div className="mt-6 flex gap-2" role="group" aria-label="Marks view">
+                      <button
+                        type="button"
+                        onClick={() => setViewMode('marks')}
+                        aria-pressed={viewMode === 'marks'}
+                        className={`rounded-lg border px-4 py-2 text-sm font-medium ${
+                          viewMode === 'marks'
+                            ? 'border-arc-text bg-arc-text/10'
+                            : 'border-arc-text/20'
+                        }`}
+                      >
+                        Marks
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setViewMode('what-if')}
+                        aria-pressed={viewMode === 'what-if'}
+                        className={`rounded-lg border px-4 py-2 text-sm font-medium ${
+                          viewMode === 'what-if'
+                            ? 'border-arc-text bg-arc-text/10'
+                            : 'border-arc-text/20'
+                        }`}
+                      >
+                        What-If Simulation
+                      </button>
+                    </div>
+
             <div className="mt-6 space-y-10">
-              {/* Saved marks: existing edit/save/clear workflow */}
-              <section>
+              {viewMode === 'marks' && (
+                <>
+                  {/* Saved marks: existing edit/save/clear workflow */}
+                  <section>
+
+
                 <h2 className="text-xl font-semibold">Recorded Marks</h2>
                 <p className="mt-1 text-sm text-arc-text/70">
                   These are your saved marks. Changes made here are
@@ -329,6 +453,38 @@ export default function MarksPage() {
                                   }
                                   className="mt-1 w-28 rounded-lg border border-arc-text/20 bg-transparent px-3 py-2 text-arc-text"
                                 />
+
+                                <label
+                                  htmlFor={`weight-${assessment.id}`}
+                                  className="mt-3 block text-sm text-arc-text/70"
+                                >
+                                  Manual weight (%)
+                                </label>
+
+                                <input
+                                  id={`weight-${assessment.id}`}
+                                  type="number"
+                                  min="0"
+                                  max="100"
+                                  step="any"
+                                  value={editedWeight}
+                                  onChange={(event) => setEditedWeight(event.target.value)}
+                                  placeholder="Not set"
+                                  className="mt-1 w-28 rounded-lg border border-arc-text/20 bg-transparent px-3 py-2 text-arc-text"
+                                />
+
+                                <p className="mt-1 text-xs text-arc-text/60">
+                                  Canvas weights take priority. Clear this field to remove the manual fallback.
+                                </p>
+
+                                <button
+                                  type="button"
+                                  onClick={() => saveWeight(assessment.id)}
+                                  disabled={updateWeight.isPending}
+                                  className="mt-3 rounded-lg border border-arc-text/20 px-3 py-2 text-sm font-medium disabled:opacity-50"
+                                >
+                                  {updateWeight.isPending ? 'Saving...' : 'Save weight'}
+                                </button>
 
                                 <div className="mt-2 flex flex-wrap gap-2">
                                   <button
@@ -410,10 +566,12 @@ export default function MarksPage() {
                     </section>
                   ))}
                 </div>
-              </section>
+                  </section>
+                    </>
+                  )}
 
-              {/* What-If: temporary state and simulation API only */}
-              <section className="rounded-xl border border-arc-text/20 p-5 md:p-6">
+              {viewMode === 'what-if' && (
+                <section className="rounded-xl border border-arc-text/20 p-5 md:p-6">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
                     <h2 className="text-xl font-semibold">
@@ -475,35 +633,51 @@ export default function MarksPage() {
                                   </p>
                                 </div>
 
-                                <div className="flex items-center gap-2">
-                                  <label
-                                    htmlFor={`whatif-${assessment.id}`}
-                                    className="text-sm"
-                                  >
-                                    What-if mark
-                                  </label>
-                                  <input
-                                    id={`whatif-${assessment.id}`}
-                                    type="number"
-                                    min="0"
-                                    max="100"
-                                    step="any"
-                                    disabled={!hasWeight || simulation.isPending}
-                                    value={whatIfMarks[assessment.id] ?? ''}
-                                    onChange={(event) =>
-                                      changeWhatIfMark(
-                                        assessment.id,
-                                        event.target.value,
-                                      )
-                                    }
-                                    placeholder="Blank"
-                                    title={
-                                      hasWeight
-                                        ? 'Enter a mark from 0 to 100, or leave blank'
-                                        : 'Set a weighting before simulating this assessment'
-                                    }
-                                    className="w-28 rounded-lg border border-arc-text/20 bg-transparent px-3 py-2 text-arc-text disabled:cursor-not-allowed disabled:opacity-50"
-                                  />
+                                <div className="flex flex-wrap items-end gap-3"><div>
+                                    <label
+                                      htmlFor={`whatif-${assessment.id}`}
+                                      className="block text-sm"
+                                    >
+                                      What-if mark (%)
+                                    </label>
+                                    <input
+                                      id={`whatif-${assessment.id}`}
+                                      type="number"
+                                      min="0"
+                                      max="100"
+                                      step="any"
+                                      disabled={simulation.isPending}
+                                      value={whatIfMarks[assessment.id] ?? ''}
+                                      onChange={(event) =>
+                                        changeWhatIfMark(assessment.id, event.target.value)
+                                      }
+                                      placeholder="Blank"
+                                      className="mt-1 w-28 rounded-lg border border-arc-text/20 bg-transparent px-3 py-2 text-arc-text disabled:opacity-50"
+                                    />
+                                  </div>
+
+                                  <div>
+                                    <label
+                                      htmlFor={`whatif-weight-${assessment.id}`}
+                                      className="block text-sm"
+                                    >
+                                      What-if weight (%)
+                                    </label>
+                                    <input
+                                      id={`whatif-weight-${assessment.id}`}
+                                      type="number"
+                                      min="0"
+                                      max="100"
+                                      step="any"
+                                      disabled={simulation.isPending}
+                                      value={whatIfWeights[assessment.id] ?? ''}
+                                      onChange={(event) =>
+                                        changeWhatIfWeight(assessment.id, event.target.value)
+                                      }
+                                      placeholder="Saved weight"
+                                      className="mt-1 w-28 rounded-lg border border-arc-text/20 bg-transparent px-3 py-2 text-arc-text disabled:opacity-50"
+                                    />
+                                  </div>
                                 </div>
                               </div>
                             )
@@ -511,17 +685,37 @@ export default function MarksPage() {
                         </div>
 
                         {hasSimulation && resultGroup && (
-                          <div className="mt-4 border-t border-arc-text/15 pt-4 text-sm">
-                            <p>
-                              Simulated contribution:{' '}
-                              <strong>{resultGroup.total_marks}</strong>
+                          <div className="mt-4 border-t border-arc-text/15 pt-4">
+                            <p className="text-sm text-arc-text/70">
+                              Projected grade across marked assessments
                             </p>
-                            <p className="mt-1 text-arc-text/70">
-                              Unmarked assessments:{' '}
-                              {resultGroup.unmarked_count}
+
+                            <p className="mt-1 text-l font-semibold">
+                              {getSimulatedGrade(resultGroup) == null
+                                ? 'N/A'
+                                : `${getSimulatedGrade(resultGroup).toFixed(2)}%`}
                             </p>
+
+                            <div className="mt-3 space-y-1 text-sm">
+                              <p>
+                                Contribution toward final grade:{' '}
+                                <strong>
+                                  {Number(resultGroup.total_marks).toFixed(2)} percentage points
+                                </strong>
+                              </p>
+
+                              <p>
+                                Total assessment weighting:{' '}
+                                {Number(resultGroup.total_weight).toFixed(2)}%
+                              </p>
+
+                              <p className="text-arc-text/70">
+                                Unmarked assessments: {resultGroup.unmarked_count}
+                              </p>
+                            </div>
                           </div>
                         )}
+
                       </section>
                     )
                   })}
@@ -566,9 +760,11 @@ export default function MarksPage() {
                   without a weighting are excluded from the calculation.
                   Reset restores the latest saved marks.
                 </p>
-              </section>
-            </div>
+            </section>
           )}
+         </div>
+        </>
+      )}
       </div>
     </div>
   )

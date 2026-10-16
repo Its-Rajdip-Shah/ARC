@@ -144,6 +144,16 @@ export function updateAssignmentMark(assessmentId, payload) {
     .then((res) => res.data)
 }
 
+export function updateManualAssessmentWeight(assessmentId, weight) {
+  return apiClient
+    .patch('planning/marks/weight/', {
+      assessment_id: assessmentId,
+      weight_percent: weight,
+    })
+    .then((res) => res.data)
+}
+
+
 export function getHistoryStatus() {
   return apiClient
     .get('planning/items/history-status/')

@@ -29,6 +29,7 @@ import editCalendarIcon from '../../assets/icons/edit-calendar.svg'
 
 import { BUCKETS } from './timelineDates'
 import DurationGlyph from './DurationGlyph'
+import ArcDateCalendar from '../../components/ArcDateCalendar'
 import SchedulerPanel from './SchedulerPanel'
 
 function IconButton({
@@ -431,89 +432,6 @@ function ZoomPicker({ value, onChange, controller }) {
   )
 }
 
-function DateCalendar({ anchor, onChoose }) {
-  const initial = /^\d{4}-\d{2}-\d{2}$/.test(anchor || '')
-    ? anchor
-    : new Date().toLocaleDateString('en-CA')
-
-  const [year, month] = initial.split('-').map(Number)
-  const [view, setView] = useState(() => new Date(year, month - 1, 1))
-
-  const firstDay = new Date(view.getFullYear(), view.getMonth(), 1).getDay()
-  const daysInMonth = new Date(
-    view.getFullYear(),
-    view.getMonth() + 1,
-    0,
-  ).getDate()
-
-  function moveMonth(amount) {
-    setView((current) => new Date(
-      current.getFullYear(),
-      current.getMonth() + amount,
-      1,
-    ))
-  }
-
-  function choose(day) {
-    const date = [
-      view.getFullYear(),
-      String(view.getMonth() + 1).padStart(2, '0'),
-      String(day).padStart(2, '0'),
-    ].join('-')
-
-    onChoose(date)
-  }
-
-  return (
-    <div className="timeline-date-calendar">
-      <div className="timeline-calendar-header">
-        <button type="button" aria-label="Previous month"
-          onClick={() => moveMonth(-1)}>
-          <ChevronLeft size={16} />
-        </button>
-        <strong>
-          {view.toLocaleDateString('en-AU', {
-            month: 'long',
-            year: 'numeric',
-          })}
-        </strong>
-        <button type="button" aria-label="Next month"
-          onClick={() => moveMonth(1)}>
-          <ChevronRight size={16} />
-        </button>
-      </div>
-      <div className="timeline-calendar-grid">
-        {['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'].map((day) => (
-          <span key={day} aria-hidden="true">{day}</span>
-        ))}
-        {Array.from({ length: firstDay }, (_, index) => (
-          <span key={'blank-' + index} aria-hidden="true" />
-        ))}
-        {Array.from({ length: daysInMonth }, (_, index) => {
-          const day = index + 1
-          const date = [
-            view.getFullYear(),
-            String(view.getMonth() + 1).padStart(2, '0'),
-            String(day).padStart(2, '0'),
-          ].join('-')
-
-          return (
-            <button
-              key={day}
-              type="button"
-              aria-label={date}
-              aria-pressed={date === anchor}
-              data-dropdown-select
-              onClick={() => choose(day)}
-            >
-              {day}
-            </button>
-          )
-        })}
-      </div>
-    </div>
-  )
-}
 
 export default function TimelineToolbar({
   find,
@@ -660,7 +578,7 @@ export default function TimelineToolbar({
         controller={dropdown}
         className="timeline-calendar"
       >
-        <DateCalendar
+        <ArcDateCalendar
           anchor={anchor}
           onChoose={(date) => jump(date)}
         />

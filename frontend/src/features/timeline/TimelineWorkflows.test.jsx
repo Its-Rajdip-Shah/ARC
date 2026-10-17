@@ -602,7 +602,12 @@ it('calendar opens on the Timeline anchor month', async () => {
     name: 'Jump to date',
   }))
 
-  expect(screen.getByText('February 2027')).toBeTruthy()
+  expect(
+    screen.getByRole('button', { name: 'Choose month' }).textContent
+  ).toBe('February')
+  expect(
+    screen.getByRole('button', { name: 'Edit calendar year' }).textContent
+  ).toBe('2027')
 
   fireEvent.click(screen.getByRole('button', {
     name: '2027-02-20',
@@ -788,13 +793,13 @@ it('calendar month navigation keeps the dropdown open', async () => {
   })
 
   fireEvent.click(trigger)
-  expect(screen.getByText('October 2026')).toBeTruthy()
+  expect(screen.getByRole('button', { name: 'Choose month' }).textContent.includes('October')).toBeTruthy()
 
   fireEvent.click(screen.getByRole('button', {
     name: 'Next month',
   }))
 
-  expect(screen.getByText('November 2026')).toBeTruthy()
+  expect(screen.getByRole('button', { name: 'Choose month' }).textContent.includes('November')).toBeTruthy()
   expect(trigger.getAttribute('aria-expanded')).toBe('true')
 
   fireEvent.click(screen.getByRole('button', {

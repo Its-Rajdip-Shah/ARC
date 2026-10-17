@@ -1,3 +1,4 @@
+import ArcDateField from '../../components/ArcDateField'
 import {
   useState,
 } from 'react'
@@ -92,7 +93,7 @@ function ZoneRow({
         aria-label="Timezone title"
       />
 
-      <input
+      <ArcDateField
         type="date"
         value={startDate}
         onChange={(event) =>
@@ -105,7 +106,7 @@ function ZoneRow({
         }
       />
 
-      <input
+      <ArcDateField
         type="date"
         value={endDate}
         onChange={(event) =>
@@ -313,7 +314,7 @@ export default function TimezonePanel({
           }
         />
 
-        <input
+        <ArcDateField
           type="date"
           value={
             draft.start_date
@@ -331,7 +332,7 @@ export default function TimezonePanel({
           }
         />
 
-        <input
+        <ArcDateField
           type="date"
           value={
             draft.end_date

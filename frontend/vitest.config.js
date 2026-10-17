@@ -32,6 +32,7 @@ export default defineConfig({
       'src/hooks/usePriorityOrder.test.jsx',
       'src/hooks/useFocus.test.js',
       'src/components/SessionHydrator.test.jsx',
+      'src/components/ArcDateCalendar.test.jsx',
       'src/pages/student/SettingsPage.timezone.test.jsx',
       'src/lib/calendarDates.test.js',
       'src/features/focus/FocusQueueManager.dnd.test.jsx',

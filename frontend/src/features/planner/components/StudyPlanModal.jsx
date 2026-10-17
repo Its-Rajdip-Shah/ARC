@@ -1,3 +1,4 @@
+import ArcDateField from '../../../components/ArcDateField'
 import { useEffect, useState } from 'react'
 import { X } from 'lucide-react'
 
@@ -275,7 +276,7 @@ export default function StudyPlanModal({ onClose }) {
                   {session.order}. {session.title}
                 </p>
                 <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-                  <input
+                  <ArcDateField
                     type="date"
                     aria-label={`${session.title} date`}
                     value={session.date}

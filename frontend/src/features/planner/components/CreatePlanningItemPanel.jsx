@@ -1,6 +1,7 @@
+import ArcDateField from '../../../components/ArcDateField'
 import { useEffect, useId, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { CalendarDays, Plus, Trash2, X } from 'lucide-react'
+import { Plus, Trash2, X } from 'lucide-react'
 import { userDateKey } from '../../../lib/calendarDates.js'
 
 import {
@@ -681,31 +682,24 @@ export default function CreatePlanningItemPanel({
             ['Start:', startDate, setStartDate],
             ['Due:', dueDate, setDueDate],
           ].map(([label, value, setter]) => (
-            <label
+            <div
               key={label}
               className="flex items-center gap-2 text-[12px] text-white"
             >
               <span className="w-[35px] shrink-0">{label}</span>
 
               <div className="relative flex-1">
-                <input
+                <ArcDateField
                   type="date"
+                  aria-label={label}
                   value={value}
                   aria-invalid={label === 'Due:' && invalidPastDueDate ? true : undefined}
                   aria-describedby={label === 'Due:' && invalidPastDueDate ? dueDateErrorId : undefined}
                   onChange={(event) => setter(event.target.value)}
                   className={`${inputClass} pr-8`}
                 />
-
-                <CalendarDays
-                  size={14}
-                  className="
-                    pointer-events-none absolute right-2 top-1/2
-                    -translate-y-1/2 text-[#a9a4cf]
-                  "
-                />
               </div>
-            </label>
+            </div>
           ))}
           {invalidPastDueDate && (
             <p id={dueDateErrorId} role="alert" className="text-[11px] text-[#e87979]">

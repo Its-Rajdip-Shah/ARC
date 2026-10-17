@@ -33,7 +33,7 @@ def test_recovery_preserves_facts_history_and_overdue_without_false_conflicts(us
         assert serialize_item(item)[key] == before[key]
     assert item.scheduled_date >= TODAY
     assert overdue.is_overdue(item, TODAY)
-    assert [entry['item'].pk for entry in overdue.classify(user, TODAY)['recent']] == [item.pk]
+    assert [entry['item'].pk for entry in overdue.classify_v3(user, TODAY)['deadline_overdue']] == [item.pk]
     assert {'item_id': item.pk, 'code': 'overdue'} in result['conflicts']
     assert not {'after_deadline', 'allocation_after_deadline', 'no_capacity_before_deadline'} & {
         row['code'] for row in result['conflicts'] if row['item_id'] == item.pk
@@ -160,3 +160,41 @@ def test_recent_backlog_cutoff_and_canonical_order_are_unchanged(user, make_item
     assert [row['item'].pk for row in result['recent']] == [items[1].pk, items[0].pk]
     assert [row['item'].pk for row in result['backlog']] == [items[2].pk]
     assert [row.item_id for row in scheduler_v1.build_scheduler_input(user, flavour='lock-in', today=TODAY).tasks] == [items[2].pk, items[1].pk, items[0].pk]
+
+
+
+@pytest.mark.parametrize('path', ['shared_anchor', 'timeline_move'])
+def test_reanchoring_clears_expired_anchor_history(user, make_item, path):
+    """A new commitment replaces historical missed-anchor classification."""
+    previous_anchor = DUE - timedelta(days=5)
+    new_anchor = TODAY + timedelta(days=1)
+
+    item = make_item(
+        user,
+        'Re-anchor expired task',
+        expired_manual_requested_date=previous_anchor,
+    )
+
+    assert overdue.is_expired_anchor_history(item, TODAY)
+
+    if path == 'shared_anchor':
+        scheduling.set_anchor(item, new_anchor)
+    else:
+        scheduling.move_to_date(
+            user,
+            item.pk,
+            new_anchor,
+            today=TODAY,
+        )
+
+    item.refresh_from_db()
+
+    assert item.manual_requested_date == new_anchor
+    assert item.manual_anchor_origin_date == new_anchor
+    assert item.expired_manual_requested_date is None
+
+    assert not overdue.is_expired_anchor_history(item, TODAY)
+    assert overdue.classify_v3(user, TODAY) == {
+        'deadline_overdue': [],
+        'anchor_overdue': [],
+    }

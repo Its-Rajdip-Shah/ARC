@@ -27,6 +27,8 @@ export default defineConfig({
       'src/features/timeline/TimelineWorkflows.test.jsx',
       'src/features/planner/components/CreatePlanningItemPanel.test.jsx',
       'src/features/planner/components/PlannerSidebar.test.jsx',
+      'src/features/planner/PlannerPage.overdueNavigation.test.jsx',
+      'src/features/planner/components/PlannerTree.test.jsx',
       'src/hooks/usePriorityOrder.test.jsx',
       'src/hooks/useFocus.test.js',
       'src/components/SessionHydrator.test.jsx',

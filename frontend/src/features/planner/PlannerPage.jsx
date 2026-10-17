@@ -267,11 +267,23 @@ export default function PlannerPage() {
 
   const [searchQuery, setSearchQuery] = useState('')
   const [showOverdue, setShowOverdue] = useState(false)
+  const [activeOverdueSection, setActiveOverdueSection] = useState(null)
+  const [pendingOverdueSection, setPendingOverdueSection] = useState(null)
+
+  function navigateToOverdueSection(section) {
+    setSearchQuery('')
+    setShowOverdue(true)
+    setActiveOverdueSection(section)
+    setPendingOverdueSection(section)
+    if (isPriority) navigate('/planner')
+  }
 
   function handleNavigateToRoot(rootId) {
     // A filtered view may currently hide the requested root.
     setSearchQuery('')
     setShowOverdue(false)
+    setActiveOverdueSection(null)
+    setPendingOverdueSection(null)
     setPendingRootId(rootId)
     if (isPriority) navigate('/planner')
   }
@@ -659,6 +671,20 @@ export default function PlannerPage() {
     return () => cancelAnimationFrame(frame)
   }, [isPriority, isLoading, isError, pendingRootId, planningTree])
 
+  // Wait until the Overdue filter has rendered the target, then scroll.
+  useEffect(() => {
+    if (isPriority || isLoading || isError || !showOverdue || !pendingOverdueSection) return
+    const section = pendingOverdueSection
+    const frame = requestAnimationFrame(() => {
+      const target = document.getElementById(`planner-overdue-${section}`)
+      if (target) {
+        target.scrollIntoView({ behavior: 'smooth', block: 'start' })
+        setPendingOverdueSection(null)
+      }
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [isPriority, isLoading, isError, showOverdue, pendingOverdueSection, planningTree])
+
   const items = planningTree ?? []
 
   return (
@@ -667,8 +693,13 @@ export default function PlannerPage() {
         scheduler={<FocusSchedulerMascot className="planner-scheduler-mascot" />}
         roots={items.filter((item) => !item.is_provisional)}
         showOverdue={showOverdue}
+        activeOverdueSection={activeOverdueSection}
+        onNavigateToOverdueSection={navigateToOverdueSection}
         onToggleOverdue={() => {
+          setSearchQuery('')
           setShowOverdue((current) => !current)
+          setActiveOverdueSection(null)
+          setPendingOverdueSection(null)
         }}
         onNavigateToRoot={handleNavigateToRoot}
       />}

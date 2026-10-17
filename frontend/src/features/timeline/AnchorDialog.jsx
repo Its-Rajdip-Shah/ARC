@@ -256,6 +256,12 @@ export default function AnchorDialog({
                     <p>
                       {copy.detail}
                     </p>
+
+                    {conflict.original_date && conflict.proposed_date && (
+                      <p>
+                        Canonical date: {conflict.original_date} → proposed {conflict.proposed_date}
+                      </p>
+                    )}
                   </div>
                 )
               },

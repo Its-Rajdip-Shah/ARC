@@ -7,6 +7,7 @@ import TimelineSidebar from './TimelineSidebar'
 import TimelineTaskNavigator from './TimelineTaskNavigator'
 import { addDays, todayKey, makeScale } from './timelineDates'
 import TimelinePage from './TimelinePage'
+import AnchorDialog from './AnchorDialog'
 
 const pageData = vi.hoisted(() => ({ roots: [], universe: [], groups: [], editor: vi.fn(), run: vi.fn(), windows: [], setFlavour: vi.fn() }))
 vi.mock('../../stores/authStore', () => ({ useAuthStore: Object.assign((selector) => selector({ user: { id: 77 } }), { getState: () => ({ user: { id: 77 } }) }) }))
@@ -72,6 +73,27 @@ it('task double-click uses canonical ID and ignores checkbox, anchor and read-on
   fireEvent.doubleClick(screen.getByText(task.title))
   expect(onEdit).toHaveBeenCalledTimes(1)
   expect(container.querySelector('[data-timeline-task-id]')).toBeNull()
+})
+
+it('deadline overdue hides canonical date blobs and renders its red duration dot', () => {
+  const { container } = render(<TimelineCard item={{ ...task, deadline_overdue: true, start_date: '2026-10-01', due_date: '2026-10-02' }} find={find} expanded />)
+  expect(container.querySelector('.timeline-deadline-overdue-dot')).toBeTruthy()
+  expect(screen.queryByText(/Release 2026-10-01/)).toBeNull()
+  expect(screen.queryByText(/Due 2026-10-02/)).toBeNull()
+})
+
+it('carried-anchor conflicts show canonical original and proposed values before confirmation', async () => {
+  const actions = {
+    busy: false,
+    run: vi.fn().mockRejectedValue({ response: { status: 409, data: {
+      conflicts: [{ code: 'after_deadline', original_date: '2026-10-12', proposed_date: '2026-10-15' }],
+      decisions: [{ code: 'change_deadline' }],
+    } } }),
+  }
+  render(<AnchorDialog request={{ item: task, date: '2026-10-15' }} actions={actions} onClose={vi.fn()} />)
+  fireEvent.click(screen.getByRole('button', { name: 'Anchor to this date' }))
+  await screen.findByText(/Canonical date: 2026-10-12 → proposed 2026-10-15/)
+  expect(actions.run).toHaveBeenCalledWith('anchor', expect.objectContaining({ item_id: 42, date: '2026-10-15' }))
 })
 
 it('navigator selection, tabs, minimize, restore and close remain presentation actions', () => {

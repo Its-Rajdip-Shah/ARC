@@ -87,7 +87,7 @@ def test_overdue_frozen_and_legacy_repaired_and_visible(user, make_item, api_for
     assert scheduling.schedule(user, mode='global')['changed_ids'] == []
     response = api_for(user).get('/api/planning/overdue/')
     assert response.status_code == 200
-    overdue_ids = {row['item']['id'] for bucket in ('recent', 'backlog') for row in response.data[bucket]}
+    overdue_ids = {row['item']['id'] for row in response.data['deadline_overdue']}
     assert {legacy.pk, existing.pk} <= overdue_ids
 
 

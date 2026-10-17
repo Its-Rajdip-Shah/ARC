@@ -861,7 +861,8 @@ export function taskGeometry(
    * footprint.
    */
   const showConstraints =
-    item.show_constraints !== false
+    item.show_constraints !== false &&
+    !(item.deadline_overdue ?? item.overdue)
 
   const start =
     showConstraints

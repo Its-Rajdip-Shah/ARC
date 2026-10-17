@@ -98,6 +98,8 @@ export default function PlannerSidebar({
   roots = [],
   showOverdue = false,
   onToggleOverdue,
+  onNavigateToOverdueSection,
+  activeOverdueSection = null,
   onNavigateToRoot,
 }) {
   const [isCreating, setIsCreating] = useState(false)
@@ -365,6 +367,24 @@ export default function PlannerSidebar({
           >
             Overdue
           </button>
+          {showOverdue && (
+            <div role="group" aria-label="Overdue sections" className="mb-2 ml-4 space-y-1">
+              {[
+                ['deadline', 'Deadline'],
+                ['anchor', 'Anchor'],
+              ].map(([section, label]) => (
+                <button
+                  key={section}
+                  type="button"
+                  aria-current={activeOverdueSection === section ? 'location' : undefined}
+                  onClick={() => onNavigateToOverdueSection?.(section)}
+                  className={`block w-full rounded-arc-sm px-3 py-1.5 text-left text-sm text-arc-danger-light hover:bg-white/5 ${activeOverdueSection === section ? 'bg-white/10 font-semibold' : ''}`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
 
           {isCreating && (
             <form onSubmit={handleSubmit} className="px-3 py-1">

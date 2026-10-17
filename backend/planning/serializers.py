@@ -234,6 +234,9 @@ class PlanningItemTreeSerializer(RemainingWorkMixin, serializers.ModelSerializer
     depth = serializers.IntegerField(read_only=True)
     children = serializers.SerializerMethodField()
     remaining_fraction = serializers.SerializerMethodField()
+    deadline_overdue = serializers.SerializerMethodField()
+    active_carried_anchor = serializers.SerializerMethodField()
+    expired_anchor_history = serializers.SerializerMethodField()
 
     #: Recursive, so the schema describes children as a list of nodes rather
     #: than trying to expand the nesting forever.
@@ -245,7 +248,9 @@ class PlanningItemTreeSerializer(RemainingWorkMixin, serializers.ModelSerializer
             'id', 'parent', 'item_type', 'title', 'description', 'depth',
             'sibling_order', 'start_date', 'due_date', 'scheduled_date',
             'duration_category', 'percent_completed', 'remaining_fraction', 'priority_position', 'is_completed',
-            'tags', 'assignment_detail', 'children',
+            'tags', 'assignment_detail', 'manual_requested_date', 'manual_anchor_origin_date',
+            'expired_manual_requested_date', 'deadline_overdue', 'active_carried_anchor',
+            'expired_anchor_history', 'children',
         ]
 
     @extend_schema_field(_children_schema)
@@ -253,6 +258,21 @@ class PlanningItemTreeSerializer(RemainingWorkMixin, serializers.ModelSerializer
         return PlanningItemTreeSerializer(
             getattr(item, 'child_nodes', []), many=True, context=self.context
         ).data
+
+    def _today(self, item):
+        return user_local_date(item.user)
+
+    def get_deadline_overdue(self, item):
+        from planning.services.overdue import is_overdue
+        return is_overdue(item, self._today(item))
+
+    def get_active_carried_anchor(self, item):
+        from planning.services.overdue import is_active_carried_anchor
+        return is_active_carried_anchor(item, self._today(item))
+
+    def get_expired_anchor_history(self, item):
+        from planning.services.overdue import is_expired_anchor_history
+        return is_expired_anchor_history(item, self._today(item))
 
 
 class RootRefSerializer(serializers.ModelSerializer):
@@ -459,6 +479,9 @@ class TimelineItemSerializer(serializers.ModelSerializer):
 
     tags = TagSerializer(many=True, read_only=True)
     overdue = serializers.SerializerMethodField()
+    deadline_overdue = serializers.SerializerMethodField()
+    active_carried_anchor = serializers.SerializerMethodField()
+    expired_anchor_history = serializers.SerializerMethodField()
     submission_url = serializers.CharField(source='assignment_detail.submission_url', read_only=True, allow_null=True, default=None)
     hierarchy_path = serializers.SerializerMethodField()
     has_children = serializers.SerializerMethodField()
@@ -470,15 +493,31 @@ class TimelineItemSerializer(serializers.ModelSerializer):
             'id', 'parent', 'title', 'description', 'item_type', 'start_date', 'due_date',
             'scheduled_date', 'execution_rank', 'completed_display_date',
             'manual_requested_date', 'manual_anchor_origin_date', 'manual_requested_order',
+            'expired_manual_requested_date',
             'duration_category',
-            'is_completed', 'priority_position', 'tags', 'overdue', 'submission_url',
+            'is_completed', 'priority_position', 'tags', 'overdue', 'deadline_overdue',
+            'active_carried_anchor', 'expired_anchor_history', 'submission_url',
             'hierarchy_path', 'has_children', 'allocations',
         ]
 
     @extend_schema_field(serializers.BooleanField())
     def get_overdue(self, item):
-        from planning.services.calendar_dates import user_local_date
-        return bool(not item.is_completed and item.due_date and item.due_date < user_local_date(item.user))
+        return self.get_deadline_overdue(item)
+
+    @extend_schema_field(serializers.BooleanField())
+    def get_deadline_overdue(self, item):
+        from planning.services.overdue import is_overdue
+        return is_overdue(item, user_local_date(item.user))
+
+    @extend_schema_field(serializers.BooleanField())
+    def get_active_carried_anchor(self, item):
+        from planning.services.overdue import is_active_carried_anchor
+        return is_active_carried_anchor(item, user_local_date(item.user))
+
+    @extend_schema_field(serializers.BooleanField())
+    def get_expired_anchor_history(self, item):
+        from planning.services.overdue import is_expired_anchor_history
+        return is_expired_anchor_history(item, user_local_date(item.user))
 
     @extend_schema_field(serializers.ListField(child=serializers.DictField()))
     def get_hierarchy_path(self, item):
@@ -502,10 +541,12 @@ class TimelineItemSerializer(serializers.ModelSerializer):
 
 
 class OverdueEntrySerializer(serializers.Serializer):
-    """One Recent or Backlog row (FR-12)."""
+    """One Deadline or Anchor Overdue row."""
 
     item = TimelineItemSerializer()
-    days_overdue = serializers.IntegerField()
+    days_overdue = serializers.IntegerField(allow_null=True)
+    anchor_kind = serializers.CharField(allow_null=True)
+    missed_anchor_date = serializers.DateField(allow_null=True)
     hierarchy_path = serializers.ListField(child=serializers.CharField())
 
 

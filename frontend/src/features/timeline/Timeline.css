@@ -15,7 +15,7 @@
 .timeline-popover input { color-scheme: dark; padding: 5px; width: 145px; }
 .timeline-sidebar { position: fixed; left: 0; top: 0; bottom: 0; width: var(--spacing-arc-sidebar); z-index: 31; overflow-y: auto; background: var(--color-arc-surface); border-right: 1px solid #ffffff19; padding: 20px 12px; }
 .timeline-sidebar-logo { width: 105px; height: 52px; object-fit: contain; margin: 0 auto 14px; }
-.timeline-sidebar h2 { font-size: 11px; letter-spacing: .12em; color: var(--color-arc-text-secondary); margin: 12px 8px; }
+.timeline-sidebar h2 { font-size: 13.2px; letter-spacing: .12em; color: var(--color-arc-text-secondary); margin: 12px 8px; }
 .timeline-sidebar nav button { display: flex; gap: 6px; align-items: center; width: 100%; text-align: left; font-size: 13px; padding: 9px 8px; border: 1px solid transparent; border-radius: 7px; cursor: pointer; }
 .timeline-sidebar nav button span { flex: 1; overflow-wrap: anywhere; }
 .timeline-sidebar nav button svg { flex-shrink: 0; }
@@ -69,7 +69,7 @@
 a.timeline-marker { outline-offset: 5px; }
 a.timeline-marker::after { content: ""; position: absolute; inset: -7px -2px; }
 .timeline-card-position { position: relative; width: max-content; z-index: 2; }
-.timeline-card { box-sizing: border-box; width: max-content; min-width: 145px; max-width: 285px; border: 1px solid #8fa8e840; border-radius: 8px; padding: 8px 10px; background: #272d59; box-shadow: 0 2px 8px #050a3525; font-size: 12px; }
+.timeline-card { position: relative; overflow: visible; box-sizing: border-box; width: max-content; min-width: 145px; max-width: 285px; border: 1px solid #8fa8e840; border-radius: 8px; padding: 8px 10px; background: #272d59; box-shadow: 0 2px 8px #050a3525; font-size: 12px; }
 .timeline-card-main { display: flex; align-items: baseline; gap: 7px; }
 .timeline-card-title { overflow-wrap: anywhere; max-width: 215px; }
 .timeline-duration { font-size: 19px; line-height: 12px; white-space: nowrap; color: #d1d7e8; }
@@ -423,9 +423,27 @@ a.timeline-marker::after { content: ""; position: absolute; inset: -7px -2px; }
   border-color: #4D569C;
 }
 
+.timeline-card-carried-anchor-overdue .timeline-anchor-button {
+  background: #dc2626;
+}
+
 .timeline-duration {
   display: inline-flex;
   margin-left: auto;
+  position: relative;
+}
+
+.timeline-deadline-overdue-dot {
+  position: absolute;
+  left: 0;
+  top: 1em;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #dc2626;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  z-index: 5;
 }
 
 /* Six estimated-time levels represented on one 2x3 dot matrix. */

@@ -99,6 +99,42 @@ def test_an_overdue_assignment_is_included(user, make_item, root):
     assert bucket_titles(overdue.classify(user, TODAY), 'recent') == ['report']
 
 
+def test_v3_anchor_sections_preserve_deadline_precedence_and_order(user, make_item, root):
+    deadline = make_item(user, 'deadline', parent=root, due_date=days(-1))
+    both = make_item(
+        user, 'both', parent=root, due_date=days(-2),
+        manual_requested_date=TODAY, manual_anchor_origin_date=days(-2),
+    )
+    carried_newer = make_item(
+        user, 'carried newer', parent=root, manual_requested_date=TODAY,
+        manual_anchor_origin_date=days(-1),
+    )
+    carried_older = make_item(
+        user, 'carried older', parent=root, manual_requested_date=TODAY,
+        manual_anchor_origin_date=days(-3),
+    )
+    expired = make_item(
+        user, 'expired history', parent=root,
+        expired_manual_requested_date=days(-10),
+    )
+
+    result = overdue.classify_v3(user, TODAY)
+
+    assert [row['item'].pk for row in result['deadline_overdue']] == [both.pk, deadline.pk]
+    assert [row['item'].pk for row in result['anchor_overdue']] == [carried_older.pk, carried_newer.pk, expired.pk]
+    assert [row['anchor_kind'] for row in result['anchor_overdue']] == [
+        'active_carried', 'active_carried', 'expired_history',
+    ]
+
+
+def test_v3_anchor_history_is_not_active_or_overdue_after_completion(user, make_item, root):
+    item = make_item(user, 'expired', parent=root, expired_manual_requested_date=days(-4))
+    assert overdue.classify_v3(user, TODAY)['anchor_overdue'][0]['item'] == item
+    item.is_completed = True
+    item.save(update_fields=['is_completed'])
+    assert overdue.classify_v3(user, TODAY) == {'deadline_overdue': [], 'anchor_overdue': []}
+
+
 # --------------------------------------------------------------------------
 # Presentation details the wireframe needs
 # --------------------------------------------------------------------------

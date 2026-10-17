@@ -133,3 +133,19 @@ test.runIf(process.env.SIDEBAR_BROWSER_TESTS === '1')('browser: only roots scrol
     await browser.close()
   }
 }, 30000)
+
+
+test('Overdue child links select the requested section accessibly', () => {
+  const navigate = vi.fn()
+  mount(1, {
+    showOverdue: true,
+    activeOverdueSection: 'deadline',
+    onNavigateToOverdueSection: navigate,
+  })
+  const deadline = screen.getByRole('button', { name: 'Deadline' })
+  const anchor = screen.getByRole('button', { name: 'Anchor' })
+  expect(deadline.getAttribute('aria-current')).toBe('location')
+  expect(anchor.hasAttribute('aria-current')).toBe(false)
+  fireEvent.click(anchor)
+  expect(navigate).toHaveBeenCalledWith('anchor')
+})

@@ -1240,23 +1240,23 @@ class TimelineView(APIView):
 
 
 class OverdueView(APIView):
-    """FR-12: GET /api/planning/overdue/"""
+    """GET /api/planning/overdue/: derived deadline and anchor misses."""
 
     @extend_schema(
         responses=inline_serializer(
             'OverdueResponse',
             {
-                'recent': OverdueEntrySerializer(many=True),
-                'backlog': OverdueEntrySerializer(many=True),
+                'deadline_overdue': OverdueEntrySerializer(many=True),
+                'anchor_overdue': OverdueEntrySerializer(many=True),
             },
         ),
-        description='Missed fixed deadlines, split into Recent (within 7 days) and Backlog.',
+        description='Incomplete deadline misses and missed manual-anchor commitments.',
     )
     def get(self, request):
-        buckets = overdue.classify(request.user, user_local_date(request.user))
+        buckets = overdue.classify_v3(request.user, user_local_date(request.user))
         return Response({
-            'recent': OverdueEntrySerializer(buckets['recent'], many=True).data,
-            'backlog': OverdueEntrySerializer(buckets['backlog'], many=True).data,
+            'deadline_overdue': OverdueEntrySerializer(buckets['deadline_overdue'], many=True).data,
+            'anchor_overdue': OverdueEntrySerializer(buckets['anchor_overdue'], many=True).data,
         })
 
 
@@ -1538,6 +1538,8 @@ def _schedule_anchor_response(user, data):
                 item.pk,
             'code':
                 'after_deadline',
+            'original_date': item.due_date,
+            'proposed_date': day,
         })
 
         decisions.append({
@@ -1562,6 +1564,8 @@ def _schedule_anchor_response(user, data):
                 item.pk,
             'code':
                 'before_release',
+            'original_date': item.start_date,
+            'proposed_date': day,
         })
 
         decisions.append({

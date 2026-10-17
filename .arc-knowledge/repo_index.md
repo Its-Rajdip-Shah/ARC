@@ -315,3 +315,32 @@ Run `.arc-knowledge/validate_index.py` after each Codex task. Changed file hashe
 - Separate technical debt: sortable Planner `<ul>` contains
   non-`<li>` row wrappers. No HA1 drag-and-drop refactor.
 - All work remains uncommitted.
+
+## V3 UI and Focus description reconciliation — 17 October 2026
+
+- Planner: nested creation regression tests use the task-card entry point.
+- Planner: Roots scrolling and full-width task-list scrolling verified.
+- Timeline: root navigation, overdue filters, sticky header, and CSS tests.
+- Timeline overdue classification helpers and tests indexed.
+- Focus: Show more / Show less descriptions implemented and tested.
+- Vitest: Focus description regression tests registered.
+- Frontend verification: 223 passed, 2 skipped.
+- Node verification: 167 passed, 2 skipped.
+- Production build and browser verification passed.
+- Repository index reconciled against inspected working-tree files.
+- No application code changed by this reconciliation.
+
+## V3 #13 — Planner tag management
+
+- `CreatePlanningItemPanel.jsx` owns inline tag rename and global delete confirmation.
+- Existing `planning/tags/` PATCH and DELETE API functions are reused.
+- Tag selection remains independent of management controls.
+- Tag mutations invalidate planning-tag and planning query caches.
+- `CreatePlanningItemPanel.test.jsx` covers rename, deletion, cancellation, and failures.
+
+
+### V3 #13 — Selected tag chips
+- Selected tags render inside the Tags input as removable chips.
+- Each chip's × unselects the tag locally; it does not delete the global tag.
+- The text input remains available for tag entry and creation.
+- The tag list retains single-click selection, double-click renaming, and confirmed global deletion.

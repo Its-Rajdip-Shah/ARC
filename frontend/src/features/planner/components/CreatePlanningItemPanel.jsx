@@ -1,11 +1,13 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { CalendarDays, Plus, X } from 'lucide-react'
+import { CalendarDays, Plus, Trash2, X } from 'lucide-react'
 import { userDateKey } from '../../../lib/calendarDates.js'
 
 import {
   createTag,
+  deleteTag,
   listTags,
+  updateTag,
 } from '../../../api/planning'
 
 const inputClass = `
@@ -34,12 +36,21 @@ export default function CreatePlanningItemPanel({
   const queryClient = useQueryClient()
   const submitted = useRef(false)
   const createOwner = useRef(null)
+  const tagClickTimer = useRef(null)
+
+  useEffect(() => {
+    return () => clearTimeout(tagClickTimer.current)
+  }, [])
   const [createSubmitted, setCreateSubmitted] = useState(false)
 
   const [itemType, setItemType] = useState(editingItem?.item_type ?? 'TASK')
   const [title, setTitle] = useState(editingItem?.title ?? '')
   const [description, setDescription] = useState(editingItem?.description ?? '')
   const [tagInput, setTagInput] = useState('')
+  const [editingTagId, setEditingTagId] = useState(null)
+  const [editingTagName, setEditingTagName] = useState('')
+  const [deletingTag, setDeletingTag] = useState(null)
+  const [tagManagementError, setTagManagementError] = useState('')
   const [selectedTagIds, setSelectedTagIds] = useState(() => (editingItem?.tags ?? []).map((tag) => tag.id))
   const [startDate, setStartDate] = useState((editingItem ? editingItem.start_date : parentItem?.start_date) ?? '')
   const [dueDate, setDueDate] = useState((editingItem ? editingItem.due_date : parentItem?.due_date) ?? '')
@@ -78,6 +89,65 @@ export default function CreatePlanningItemPanel({
       })
     },
   })
+
+  const updateTagMutation = useMutation({
+    mutationFn: ({ id, name }) => updateTag(id, { name }),
+    onSuccess: async () => {
+      setEditingTagId(null)
+      setEditingTagName('')
+      setTagManagementError('')
+      await queryClient.invalidateQueries({ queryKey: ['planning-tags'] })
+      await queryClient.invalidateQueries({ queryKey: ['planning'] })
+    },
+    onError: () => {
+      setTagManagementError('Could not rename tag. Please try again.')
+    },
+  })
+
+  const deleteTagMutation = useMutation({
+    mutationFn: (id) => deleteTag(id),
+    onSuccess: async (_, deletedId) => {
+      setSelectedTagIds((current) => current.filter((id) => id !== deletedId))
+      setDeletingTag(null)
+      setTagManagementError('')
+      await queryClient.invalidateQueries({ queryKey: ['planning-tags'] })
+      await queryClient.invalidateQueries({ queryKey: ['planning'] })
+    },
+    onError: () => {
+      setTagManagementError('Could not delete tag. Please try again.')
+    },
+  })
+
+  function beginRenameTag(tag) {
+    setTagManagementError('')
+    setEditingTagId(tag.id)
+    setEditingTagName(tag.name)
+  }
+
+  function saveRenamedTag(tag) {
+    const name = editingTagName.trim()
+
+    if (!name || updateTagMutation.isPending) return
+
+    if (name === tag.name) {
+      setEditingTagId(null)
+      return
+    }
+
+    const duplicate = tags.some(
+      (candidate) =>
+        candidate.id !== tag.id &&
+        candidate.name.toLowerCase() === name.toLowerCase(),
+    )
+
+    if (duplicate) {
+      setTagManagementError('A tag with that name already exists.')
+      return
+    }
+
+    setTagManagementError('')
+    updateTagMutation.mutate({ id: tag.id, name })
+  }
 
   useEffect(() => {
     /*
@@ -347,19 +417,65 @@ export default function CreatePlanningItemPanel({
           {/* Tags */}
           <div>
             <div className="flex gap-[5px]">
-              <input
-                type="text"
-                value={tagInput}
-                onChange={(event) => setTagInput(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter') {
-                    event.preventDefault()
-                    handleCreateTag()
-                  }
-                }}
-                placeholder="tags..."
-                className={inputClass}
-              />
+              <div
+                className="
+                  flex min-h-[35px] min-w-0 flex-1 flex-wrap items-center
+                  gap-[5px] rounded-[10px] border border-[#2e286b]
+                  bg-[#383969] px-[7px] py-[5px]
+                  focus-within:border-[#7c9cde]
+                "
+              >
+                {tags
+                  .filter((tag) => selectedTagIds.includes(tag.id))
+                  .map((tag) => (
+                    <span
+                      key={tag.id}
+                      className="
+                        inline-flex max-w-full items-center gap-[4px]
+                        rounded-[6px] bg-[#c3d19b] px-[6px] py-[3px]
+                        text-[11px] text-[#171a36]
+                      "
+                    >
+                      <span className="min-w-0 truncate">{tag.name}</span>
+                      <button
+                        type="button"
+                        aria-label={`Unselect tag ${tag.name}`}
+                        title={`Unselect ${tag.name}`}
+                        onClick={() => {
+                          clearTimeout(tagClickTimer.current)
+                          setSelectedTagIds((current) =>
+                            current.filter((id) => id !== tag.id),
+                          )
+                        }}
+                        className="
+                          flex shrink-0 items-center justify-center
+                          rounded-[3px] hover:bg-black/10
+                        "
+                      >
+                        <X size={11} />
+                      </button>
+                    </span>
+                  ))}
+
+                <input
+                  type="text"
+                  aria-label="Tags"
+                  value={tagInput}
+                  onChange={(event) => setTagInput(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') {
+                      event.preventDefault()
+                      handleCreateTag()
+                    }
+                  }}
+                  placeholder="tags..."
+                  className="
+                    min-w-[75px] flex-1 bg-transparent px-[3px]
+                    text-[13px] text-white outline-none
+                    placeholder:text-[#918bc7]
+                  "
+                />
+              </div>
 
               <button
                 type="button"
@@ -381,16 +497,14 @@ export default function CreatePlanningItemPanel({
               <div className="mt-[7px] flex flex-wrap gap-[5px]">
                 {tags.map((tag) => {
                   const selected = selectedTagIds.includes(tag.id)
+                  const renaming = editingTagId === tag.id
 
                   return (
-                    <button
+                    <div
                       key={tag.id}
-                      type="button"
-                      onClick={() => toggleTag(tag.id)}
                       className={`
-                        flex items-center gap-1
-                        rounded-[7px] border px-[7px] py-[3px]
-                        text-[10px]
+                        flex items-center gap-1 rounded-[7px] border
+                        px-[5px] py-[3px] text-[10px]
                         ${
                           selected
                             ? 'border-[#c3d19b] bg-[#c3d19b] text-[#171a36]'
@@ -398,13 +512,136 @@ export default function CreatePlanningItemPanel({
                         }
                       `}
                     >
-                      {tag.name}
+                      {renaming ? (
+                        <>
+                          <input
+                            aria-label={`Rename ${tag.name}`}
+                            value={editingTagName}
+                            onChange={(event) => setEditingTagName(event.target.value)}
+                            onKeyDown={(event) => {
+                              if (event.key === 'Enter') {
+                                event.preventDefault()
+                                saveRenamedTag(tag)
+                              }
+                              if (event.key === 'Escape') {
+                                setEditingTagId(null)
+                                setTagManagementError('')
+                              }
+                            }}
+                            className="w-[90px] rounded bg-[#383969] px-1 text-white"
+                          />
+                          <button
+                            type="button"
+                            aria-label={`Save rename ${tag.name}`}
+                            disabled={!editingTagName.trim() || updateTagMutation.isPending}
+                            onClick={() => saveRenamedTag(tag)}
+                          >
+                            Save
+                          </button>
+                          <button
+                            type="button"
+                            aria-label={`Cancel rename ${tag.name}`}
+                            onClick={() => {
+                              setEditingTagId(null)
+                              setTagManagementError('')
+                            }}
+                          >
+                            Cancel
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <button
+                            type="button"
+                            aria-label={`Select tag ${tag.name}`}
+                            aria-pressed={selected}
+                            onClick={(event) => {
+                              if (event.detail > 1) return
 
-                      {selected && <X size={9} />}
-                    </button>
+                              clearTimeout(tagClickTimer.current)
+                              tagClickTimer.current = setTimeout(() => {
+                                toggleTag(tag.id)
+                              }, 220)
+                            }}
+                            onDoubleClick={(event) => {
+                              event.preventDefault()
+                              event.stopPropagation()
+                              clearTimeout(tagClickTimer.current)
+                              beginRenameTag(tag)
+                            }}
+                            title="Double-click to rename"
+                            className="flex items-center gap-1"
+                          >
+                            {tag.name}
+                          </button>
+                          <button
+                            type="button"
+                            aria-label={`Delete tag ${tag.name}`}
+                            title={`Delete ${tag.name}`}
+                            onClick={() => {
+                              setTagManagementError('')
+                              setDeletingTag(tag)
+                            }}
+                            className="rounded p-[2px] hover:bg-red-400/30"
+                          >
+                            <Trash2 size={12} />
+                          </button>
+                        </>
+                      )}
+                    </div>
                   )
                 })}
               </div>
+            )}
+
+            {deletingTag && (
+              <div
+                role="alertdialog"
+                aria-label={`Delete tag ${deletingTag.name}`}
+                aria-describedby="tag-delete-explanation"
+                className="mt-2 rounded-[9px] border border-[#a45b6a] bg-[#29264c] p-3 text-white"
+                onKeyDown={(event) => {
+                  if (event.key === 'Escape' && !deleteTagMutation.isPending) {
+                    event.stopPropagation()
+                    setDeletingTag(null)
+                    setTagManagementError('')
+                  }
+                }}
+              >
+                <p className="text-[12px] font-semibold">
+                  Delete “{deletingTag.name}”?
+                </p>
+                <p id="tag-delete-explanation" className="mt-1 text-[11px]">
+                  This permanently deletes the tag from all tasks that use it.
+                </p>
+                <div className="mt-2 flex gap-2">
+                  <button
+                    type="button"
+                    disabled={deleteTagMutation.isPending}
+                    onClick={() => {
+                      setDeletingTag(null)
+                      setTagManagementError('')
+                    }}
+                    className="rounded bg-[#383969] px-3 py-1 text-[11px]"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    disabled={deleteTagMutation.isPending}
+                    onClick={() => deleteTagMutation.mutate(deletingTag.id)}
+                    className="rounded bg-[#a33f55] px-3 py-1 text-[11px]"
+                  >
+                    {deleteTagMutation.isPending ? 'Deleting...' : 'Delete'}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {tagManagementError && (
+              <p role="alert" className="mt-1 text-[10px] text-[#e87979]">
+                {tagManagementError}
+              </p>
             )}
 
             {createTagMutation.isError && (

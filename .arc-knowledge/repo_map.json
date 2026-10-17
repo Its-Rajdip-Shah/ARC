@@ -27,8 +27,8 @@
     "AGENTS.md": {
       "area": "documentation",
       "role_hint": "ARC (Goals Tracker) Project Rules",
-      "sha256": "042622380ac2a78142611ab18239339151fa6c083010a692abeeb11f5b24de60",
-      "bytes": 864,
+      "sha256": "36709a800ae0ddea83b5de67f5544f38f9a4503fdab9ca260023bec7d8da4a17",
+      "bytes": 2530,
       "imports": [],
       "local_imports": [],
       "top_level_symbols": [],
@@ -4402,8 +4402,8 @@
     "docs/implementation/ARC.md": {
       "area": "documentation",
       "role_hint": "Approved ARC domain rules",
-      "sha256": "0716d6f1b72a714e6bfc9423f335dc33065523474d11698260de3e9d3874b5b7",
-      "bytes": 15948,
+      "sha256": "a301aa44c388b039454a00be67cf4009800bfb7b379740255a849affb5680bbb",
+      "bytes": 15962,
       "imports": [],
       "local_imports": [],
       "top_level_symbols": [],
@@ -5078,7 +5078,8 @@
       ],
       "is_test": false,
       "imported_by": [
-        "frontend/src/App.jsx"
+        "frontend/src/App.jsx",
+        "frontend/src/features/planner/PlannerPage.overdueNavigation.test.jsx"
       ]
     },
     "frontend/src/components/student/StudentViewNav.jsx": {
@@ -5625,8 +5626,8 @@
     "frontend/src/features/focus/Focus.css": {
       "area": "frontend:focus",
       "role_hint": "Focus",
-      "sha256": "1d43d54308b3f06fac50dcf224298284d42956cd26d3c8bb4944f123b2d8787b",
-      "bytes": 37807,
+      "sha256": "79242d8872714bea58bbcb86c3ed19af75d1d18d65e8995748f86d9dd38be555",
+      "bytes": 38546,
       "imports": [],
       "local_imports": [],
       "top_level_symbols": [],
@@ -5974,12 +5975,13 @@
     "frontend/src/features/focus/FocusTaskRow.jsx": {
       "area": "frontend:focus",
       "role_hint": "FocusTaskRow",
-      "sha256": "2f00804dff30cc6be8af840c21dbadfa5ed8a9f32c8556c7adb4ccbe96ae6f9b",
-      "bytes": 5421,
+      "sha256": "21e05c06d6fb9cdf09094e3ae5b97fb4a5a22a4bca876760b4c5ccfe086225e9",
+      "bytes": 6230,
       "imports": [
         "../../lib/plainText",
         "./focusModel",
-        "lucide-react"
+        "lucide-react",
+        "react"
       ],
       "local_imports": [
         "frontend/src/features/focus/focusModel.js",
@@ -5992,13 +5994,16 @@
         "scheduled",
         "due",
         "anchored",
-        "descriptionText"
+        "descriptionText",
+        "descriptionExpanded",
+        "setDescriptionExpanded"
       ],
       "is_test": false,
       "imported_by": [
         "frontend/src/features/focus/FocusBoard.jsx",
         "frontend/src/features/focus/FocusQueueManager.jsx",
-        "frontend/src/features/focus/FocusQueueRow.jsx"
+        "frontend/src/features/focus/FocusQueueRow.jsx",
+        "frontend/src/features/focus/FocusTaskRow.test.jsx"
       ]
     },
     "frontend/src/features/focus/focusModel.js": {
@@ -6192,8 +6197,8 @@
     "frontend/src/features/planner/PlannerPage.jsx": {
       "area": "frontend:planner",
       "role_hint": "PlannerPage",
-      "sha256": "aa3a74f23ac4aa1404fad6b4acebc7a24e011aa630dd449bad1b08c702132d31",
-      "bytes": 33673,
+      "sha256": "3f06080a6c8fbd061636b496bc58c04ed120828c9d60c49faedb4f1b6395525f",
+      "bytes": 33686,
       "imports": [
         "../../api/planning",
         "../../hooks/usePlanningTree",
@@ -6255,6 +6260,7 @@
       "is_test": false,
       "imported_by": [
         "frontend/src/App.jsx",
+        "frontend/src/features/planner/PlannerPage.overdueNavigation.test.jsx",
         "frontend/src/features/planner/components/CreatePlanningItemPanel.test.jsx",
         "frontend/src/features/timeline/SchedulerMonk.test.jsx"
       ]
@@ -6262,10 +6268,25 @@
     "frontend/src/features/planner/PlannerPage.overdueNavigation.test.jsx": {
       "area": "frontend:planner",
       "role_hint": "HA1 real PlannerPage navigation regression tests",
-      "sha256": "2fefd842ae5a6cbe7856f74c55dd2cffd58fd76c41898101474bf8fad2e34cef",
-      "bytes": 8199,
-      "imports": [],
-      "local_imports": [],
+      "sha256": "495bf16a59dadedb253260fa3339cfdbc0f4f65a48aa4f61d1edede1600a315a",
+      "bytes": 8824,
+      "imports": [
+        "../../components/student/StudentLayout",
+        "../../lib/calendarDates",
+        "./PlannerPage",
+        "./components/PlannerTree",
+        "@tanstack/react-query",
+        "@testing-library/react",
+        "react",
+        "react-router-dom",
+        "vitest"
+      ],
+      "local_imports": [
+        "frontend/src/components/student/StudentLayout.jsx",
+        "frontend/src/features/planner/PlannerPage.jsx",
+        "frontend/src/features/planner/components/PlannerTree.jsx",
+        "frontend/src/lib/calendarDates.js"
+      ],
       "top_level_symbols": [],
       "is_test": true,
       "imported_by": []
@@ -6325,8 +6346,8 @@
     "frontend/src/features/planner/components/CreatePlanningItemPanel.jsx": {
       "area": "frontend:planner",
       "role_hint": "CreatePlanningItemPanel",
-      "sha256": "c80b328b60975d4542504bea8066294ff7429d9f79e75fa301a46c28695c2784",
-      "bytes": 19398,
+      "sha256": "c7dac174f052a3cd88547a3c29c0ba8ad9082f6e38e047dc2b4bb6cfcd49bf61",
+      "bytes": 28782,
       "imports": [
         "../../../api/planning",
         "../../../lib/calendarDates.js",
@@ -6339,30 +6360,34 @@
         "frontend/src/lib/calendarDates.js"
       ],
       "top_level_symbols": [
-        "inputClass",
         "CreatePlanningItemPanel",
-        "queryClient",
-        "submitted",
-        "createOwner",
-        "estimateFeedbackId",
-        "missingOriginalEstimate",
-        "dueDateErrorId",
-        "today",
-        "invalidPastDueDate",
-        "tagsQuery",
-        "tags",
-        "createTagMutation",
-        "source",
-        "toggleTag",
-        "handleCreateTag",
-        "name",
-        "existingTag",
-        "handleSubmit",
-        "trimmedTitle",
-        "payload",
         "assignmentDetail",
+        "beginRenameTag",
+        "createOwner",
+        "createTagMutation",
+        "deleteTagMutation",
+        "dueDateErrorId",
+        "estimateFeedbackId",
+        "existingTag",
         "form",
-        "selected"
+        "handleCreateTag",
+        "handleSubmit",
+        "inputClass",
+        "invalidPastDueDate",
+        "missingOriginalEstimate",
+        "name",
+        "payload",
+        "queryClient",
+        "saveRenamedTag",
+        "selected",
+        "source",
+        "submitted",
+        "tags",
+        "tagsQuery",
+        "today",
+        "toggleTag",
+        "trimmedTitle",
+        "updateTagMutation"
       ],
       "is_test": false,
       "imported_by": [
@@ -6374,8 +6399,8 @@
     "frontend/src/features/planner/components/CreatePlanningItemPanel.test.jsx": {
       "area": "frontend:planner",
       "role_hint": "CreatePlanningItemPanel.test",
-      "sha256": "904d622d4cdd9ca4e87874ee592b448b59087bc3de6876f633d00a0d1f142784",
-      "bytes": 45488,
+      "sha256": "ee42198ddc31c9a7ceb8e712cdfb475c0545623c8fbe6c8ac7af819e71f99aa3",
+      "bytes": 51073,
       "imports": [
         "../../../lib/calendarDates.js",
         "../../../stores/authStore.js",
@@ -6436,8 +6461,8 @@
     "frontend/src/features/planner/components/PlannerSidebar.jsx": {
       "area": "frontend:planner",
       "role_hint": "PlannerSidebar",
-      "sha256": "400922f9586a7e586dae94414f1e414227cf0ff9e3f1b7e1622102e32f5aaef3",
-      "bytes": 11018,
+      "sha256": "6cff1711fe5699f61c696856045586d3dc05b197d72a6203d75b8e0d42350272",
+      "bytes": 11065,
       "imports": [
         "../../../api/planning",
         "../../../assets/brand/arc-logo.svg",
@@ -6478,8 +6503,8 @@
     "frontend/src/features/planner/components/PlannerSidebar.test.jsx": {
       "area": "frontend:planner",
       "role_hint": "PlannerSidebar.test",
-      "sha256": "02fad043c97793b9fd76dd661ace92dc0ad6dcd7f4527a0c2dee7093c645309b",
-      "bytes": 7728,
+      "sha256": "5240cd51126648513d1448729974864e80a0d35c1dc296e702dd2a9b78fa31a2",
+      "bytes": 7719,
       "imports": [
         "./PlannerSidebar",
         "@playwright/test",
@@ -6582,6 +6607,7 @@
       "is_test": false,
       "imported_by": [
         "frontend/src/features/planner/PlannerPage.jsx",
+        "frontend/src/features/planner/PlannerPage.overdueNavigation.test.jsx",
         "frontend/src/features/planner/components/PlannerTree.test.jsx"
       ]
     },
@@ -7028,7 +7054,8 @@
       ],
       "is_test": false,
       "imported_by": [
-        "frontend/src/features/timeline/TimelinePage.jsx"
+        "frontend/src/features/timeline/TimelinePage.jsx",
+        "frontend/src/features/timeline/TimelineWorkflows.test.jsx"
       ]
     },
     "frontend/src/features/timeline/CapacityPanel.jsx": {
@@ -7119,8 +7146,8 @@
     "frontend/src/features/timeline/SchedulerMonk.test.jsx": {
       "area": "frontend:timeline",
       "role_hint": "SchedulerMonk.test",
-      "sha256": "0f95285ffcec7f8cc0adb0abc179a013d474e85abe2985530cc9f492f8c75291",
-      "bytes": 17768,
+      "sha256": "02364fc32af61645cba361d74a075c5423cc9c218962535e7a5d2e58a159393d",
+      "bytes": 19774,
       "imports": [
         "../focus/FocusPage",
         "../focus/FocusSchedulerMascot",
@@ -7182,8 +7209,8 @@
     "frontend/src/features/timeline/SchedulerPanel.jsx": {
       "area": "frontend:timeline",
       "role_hint": "SchedulerPanel",
-      "sha256": "ffb7ca51858cb2c40ceb46bdd3812e8bb36db3aae8b304c2ff8ab27cb35a6e01",
-      "bytes": 3781,
+      "sha256": "561553e99ffd1c46196a7639b869d464a54caed66928079a6167f099259f7987",
+      "bytes": 1942,
       "imports": [
         "../../hooks/useSchedulerSettings"
       ],
@@ -7201,18 +7228,20 @@
       "is_test": false,
       "imported_by": [
         "frontend/src/features/timeline/TimelinePage.jsx",
+        "frontend/src/features/timeline/TimelineToolbar.jsx",
         "frontend/src/features/timeline/TimelineWorkflows.test.jsx"
       ]
     },
     "frontend/src/features/timeline/SchedulerRunButton.jsx": {
       "area": "frontend:timeline",
       "role_hint": "SchedulerRunButton",
-      "sha256": "a5b82f579d7e9dd36cc5d36629fa501f6bbbe334a24f11d470f0ec4f9876d75b",
-      "bytes": 3396,
+      "sha256": "22028493420d3606825945039ab480c988038d37c7db3a6c3b2ddc54f59cae6a",
+      "bytes": 4028,
       "imports": [
         "../../assets/icons/locked-in_monk-mode/locked-in-hands-down-Dark.png",
         "../../assets/icons/locked-in_monk-mode/locked-in-hands-up-dark.png",
         "../../assets/icons/locked-in_monk-mode/monk-mode-hands-down-dark.png",
+        "../../hooks/useSchedulerSettings",
         "./SchedulerAura",
         "./SchedulerAura.css",
         "./useHoverIntent",
@@ -7223,7 +7252,8 @@
       "local_imports": [
         "frontend/src/features/timeline/SchedulerAura.css",
         "frontend/src/features/timeline/SchedulerAura.jsx",
-        "frontend/src/features/timeline/useHoverIntent.js"
+        "frontend/src/features/timeline/useHoverIntent.js",
+        "frontend/src/hooks/useSchedulerSettings.js"
       ],
       "top_level_symbols": [
         "SchedulerRunButton",
@@ -7246,8 +7276,8 @@
     "frontend/src/features/timeline/Timeline.css": {
       "area": "frontend:timeline",
       "role_hint": "Timeline",
-      "sha256": "a8a274673be5f49ff369ccf2211029065820b8bf9c9db699c859e76f1496cf47",
-      "bytes": 33376,
+      "sha256": "56dcddf55d3c013f9aa5c271f977398c91181514a481ed2a89915cfba45f8695",
+      "bytes": 40160,
       "imports": [],
       "local_imports": [],
       "top_level_symbols": [],
@@ -7259,8 +7289,8 @@
     "frontend/src/features/timeline/TimelineBoard.jsx": {
       "area": "frontend:timeline",
       "role_hint": "TimelineBoard",
-      "sha256": "13e39f1377bdc25320661d8ce80ada3f3ebe1fd0e8cf8e93850f757d4f639aed",
-      "bytes": 34844,
+      "sha256": "04b552c50adf49f816a0e0187020e5e5217058ebce3be0984d2b35251c904146",
+      "bytes": 35593,
       "imports": [
         "../../dnd/timeline/timelineDragPayload",
         "../../dnd/timeline/timelineProjection",
@@ -7371,8 +7401,8 @@
     "frontend/src/features/timeline/TimelinePage.jsx": {
       "area": "frontend:timeline",
       "role_hint": "TimelinePage",
-      "sha256": "e2a29cea38f48d62b645d0eb21bd4b8dbe08264aeb533855435c466f19c90653",
-      "bytes": 32093,
+      "sha256": "f1093543870e4a498a27810e69090a8b2fb09f60f4da866843dfe63922d046ec",
+      "bytes": 34990,
       "imports": [
         "../../api/planning",
         "../../hooks/usePlanningTree",
@@ -7391,6 +7421,7 @@
         "./TimelineToolbar",
         "./TimezonePanel",
         "./timelineDates",
+        "./timelineOverdue",
         "./timelineRootNavigation",
         "./useSequenceNavigator",
         "./useTimelineActions",
@@ -7411,6 +7442,7 @@
         "frontend/src/features/timeline/TimelineToolbar.jsx",
         "frontend/src/features/timeline/TimezonePanel.jsx",
         "frontend/src/features/timeline/timelineDates.js",
+        "frontend/src/features/timeline/timelineOverdue.js",
         "frontend/src/features/timeline/timelineRootNavigation.js",
         "frontend/src/features/timeline/useSequenceNavigator.js",
         "frontend/src/features/timeline/useTimelineActions.js",
@@ -7461,8 +7493,8 @@
     "frontend/src/features/timeline/TimelineSidebar.jsx": {
       "area": "frontend:timeline",
       "role_hint": "TimelineSidebar",
-      "sha256": "70047c49c780b10cc0616c75b1b7131d6bdaf5984327567bbe5b937c86642b7c",
-      "bytes": 5862,
+      "sha256": "d2a52da95d642ba8a6bfa4fff46fc71b66da34252985f811e1fb3b65183a696d",
+      "bytes": 8598,
       "imports": [
         "../../assets/brand/arc-logo.svg",
         "../../lib/subjectLabel",
@@ -7492,9 +7524,10 @@
     "frontend/src/features/timeline/TimelineTaskNavigator.jsx": {
       "area": "frontend:timeline",
       "role_hint": "TimelineTaskNavigator",
-      "sha256": "8fecd423134deadfc15e4b60f64204760f464e86de6fb891bdded5891d7fe708",
-      "bytes": 4515,
+      "sha256": "e5bf84806389f49615842367d8855738845a174621308a8760550a682787c63c",
+      "bytes": 7867,
       "imports": [
+        "lucide-react",
         "react"
       ],
       "local_imports": [],
@@ -7524,18 +7557,21 @@
     "frontend/src/features/timeline/TimelineToolbar.jsx": {
       "area": "frontend:timeline",
       "role_hint": "TimelineToolbar",
-      "sha256": "9abb9e1f18127868132ccdd5093582e1452df239d9f277ce7da61f35e776c29d",
-      "bytes": 15647,
+      "sha256": "503493996b60265419178abf6a4be739355d07bdec7bebfe73b770b9bc90273f",
+      "bytes": 18608,
       "imports": [
         "../../assets/icons/edit-calendar.svg",
         "../../assets/icons/locked-in_monk-mode/monk-mode-hands-down-dark.png",
         "./DurationGlyph",
+        "./SchedulerPanel",
         "./timelineDates",
         "lucide-react",
-        "react"
+        "react",
+        "react-dom"
       ],
       "local_imports": [
         "frontend/src/features/timeline/DurationGlyph.jsx",
+        "frontend/src/features/timeline/SchedulerPanel.jsx",
         "frontend/src/features/timeline/timelineDates.js"
       ],
       "top_level_symbols": [
@@ -7562,9 +7598,10 @@
     "frontend/src/features/timeline/TimelineWorkflows.test.jsx": {
       "area": "frontend:timeline",
       "role_hint": "TimelineWorkflows.test",
-      "sha256": "4df428cf3e87df3ab391be26992f6e13e7ad9768f42458a07cddec433706fb73",
-      "bytes": 28495,
+      "sha256": "3b6456f9c2d4cd877c1f219c2d46994ee6fbc1a705b2748fef2ec78debc43416",
+      "bytes": 37975,
       "imports": [
+        "./AnchorDialog",
         "./SchedulerPanel",
         "./TimelineBoard",
         "./TimelineCard",
@@ -7577,6 +7614,7 @@
         "vitest"
       ],
       "local_imports": [
+        "frontend/src/features/timeline/AnchorDialog.jsx",
         "frontend/src/features/timeline/SchedulerPanel.jsx",
         "frontend/src/features/timeline/TimelineBoard.jsx",
         "frontend/src/features/timeline/TimelineCard.jsx",
@@ -7653,8 +7691,8 @@
     "frontend/src/features/timeline/schedulerAuraMotion.js": {
       "area": "frontend:timeline",
       "role_hint": "schedulerAuraMotion",
-      "sha256": "0136df75a921b920492f2de33f1878bbd940c9bac359a02488f076de4eebea6c",
-      "bytes": 1562,
+      "sha256": "c183d2cfb3a357f5856e53edafc78d02b771dd8727b2d4fd65c390515d29c773",
+      "bytes": 1644,
       "imports": [],
       "local_imports": [],
       "top_level_symbols": [
@@ -7775,8 +7813,8 @@
     "frontend/src/features/timeline/timelineRendering.test.js": {
       "area": "frontend:timeline",
       "role_hint": "timelineRendering.test",
-      "sha256": "a192aa492089575118bb971db15d24a160700718e9737db65860dca78e48120a",
-      "bytes": 33645,
+      "sha256": "018fa90a1b3ef68ec977646bb368c682b503a5810faac2dc880acb970163ef7b",
+      "bytes": 33935,
       "imports": [
         "./timelineDates.js",
         "@playwright/test",
@@ -8352,6 +8390,7 @@
       "imported_by": [
         "frontend/src/features/focus/FocusSchedulerMascot.jsx",
         "frontend/src/features/timeline/SchedulerPanel.jsx",
+        "frontend/src/features/timeline/SchedulerRunButton.jsx",
         "frontend/src/pages/student/SettingsPage.jsx"
       ]
     },
@@ -8494,6 +8533,7 @@
       ],
       "is_test": false,
       "imported_by": [
+        "frontend/src/features/planner/PlannerPage.overdueNavigation.test.jsx",
         "frontend/src/features/planner/components/CreatePlanningItemPanel.jsx",
         "frontend/src/features/planner/components/CreatePlanningItemPanel.test.jsx",
         "frontend/src/features/planner/components/PlannerTree.jsx",
@@ -9344,8 +9384,8 @@
     "frontend/vitest.config.js": {
       "area": "configuration",
       "role_hint": "vitest.config",
-      "sha256": "61e6083af67ed19be9cde2ddd06eeb59e4fa5334f21d717a82d95f8d0fe17185",
-      "bytes": 1303,
+      "sha256": "572322121d49ae9ae1216725a2c3a79b68393464ebd10554a523755a95065611",
+      "bytes": 1353,
       "imports": [
         "@vitejs/plugin-react",
         "vitest/config"
@@ -9455,6 +9495,57 @@
         "pytest_command",
         "main"
       ],
+      "is_test": true,
+      "imported_by": []
+    },
+    "frontend/src/features/focus/FocusTaskRow.test.jsx": {
+      "area": "frontend:focus",
+      "role_hint": "FocusTaskRow description expansion regression tests",
+      "sha256": "e2c9040152b4427801b7be1a8a4a309c2368713aa1115ce5aef0df75efce3e34",
+      "bytes": 2788,
+      "imports": [
+        "@testing-library/react",
+        "vitest",
+        "./FocusTaskRow"
+      ],
+      "local_imports": [
+        "frontend/src/features/focus/FocusTaskRow.jsx"
+      ],
+      "top_level_symbols": [
+        "renderTask"
+      ],
+      "is_test": true,
+      "imported_by": []
+    },
+    "frontend/src/features/timeline/timelineOverdue.js": {
+      "area": "frontend:timeline",
+      "role_hint": "Timeline overdue classification helpers",
+      "sha256": "8e7b132cf46eef69664d1fee6744b67f9b290b34fa11586d063df104876e8f68",
+      "bytes": 1019,
+      "imports": [],
+      "local_imports": [],
+      "top_level_symbols": [
+        "classifyTimelineOverdue"
+      ],
+      "is_test": false,
+      "imported_by": [
+        "frontend/src/features/timeline/TimelinePage.jsx",
+        "frontend/src/features/timeline/timelineOverdue.test.js"
+      ]
+    },
+    "frontend/src/features/timeline/timelineOverdue.test.js": {
+      "area": "frontend:timeline",
+      "role_hint": "Timeline overdue classification regression tests",
+      "sha256": "7e0b38687caa82dfb949c3ff14734991a16e11286e3864b59a8041ea3d67f395",
+      "bytes": 1798,
+      "imports": [
+        "./timelineOverdue",
+        "vitest"
+      ],
+      "local_imports": [
+        "frontend/src/features/timeline/timelineOverdue.js"
+      ],
+      "top_level_symbols": [],
       "is_test": true,
       "imported_by": []
     }

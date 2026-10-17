@@ -3,7 +3,7 @@ import { act, fireEvent, render, screen, waitFor, cleanup } from '@testing-libra
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 
-const api = vi.hoisted(() => ({ createItem: vi.fn(), updateItem: vi.fn(), listTags: vi.fn(), createTag: vi.fn(), listPrerequisites: vi.fn(), listItems: vi.fn(), addPrerequisite: vi.fn(), removePrerequisite: vi.fn(), getPlanningTree: vi.fn(), getHistoryStatus: vi.fn(), undoPlanningAction: vi.fn(), redoPlanningAction: vi.fn(), completeItem: vi.fn(), deleteItem: vi.fn(), moveItem: vi.fn() }))
+const api = vi.hoisted(() => ({ createItem: vi.fn(), updateItem: vi.fn(), listTags: vi.fn(), createTag: vi.fn(), updateTag: vi.fn(), deleteTag: vi.fn(), listPrerequisites: vi.fn(), listItems: vi.fn(), addPrerequisite: vi.fn(), removePrerequisite: vi.fn(), getPlanningTree: vi.fn(), getHistoryStatus: vi.fn(), undoPlanningAction: vi.fn(), redoPlanningAction: vi.fn(), completeItem: vi.fn(), deleteItem: vi.fn(), moveItem: vi.fn() }))
 vi.mock('../../../api/planning', () => api)
 vi.mock('../../../lib/calendarDates.js', async (importOriginal) => {
   const actual = await importOriginal()
@@ -34,6 +34,8 @@ beforeEach(() => {
   api.listItems.mockResolvedValue({ results: [{ id: 2, title: 'Task' }, { id: 3, title: 'Prerequisite' }] })
   api.createItem.mockResolvedValue({ id: 10 })
   api.updateItem.mockResolvedValue(item)
+  api.updateTag.mockImplementation(async (id, payload) => ({ id, ...payload }))
+  api.deleteTag.mockResolvedValue(null)
 })
 
 test('child defaults inherit dates and tags; explicit clearing sends null without mutating parent', async () => {
@@ -174,7 +176,10 @@ test('edit uses its own null dates, shows progress, removes tags, and surfaces s
   mount({ editError: { response: { data: { due_date: ['Rejected deadline'] } } }, editingItem: { ...item, tags: [{ id: 7, name: 'Study' }] }, parentItem: { start_date: '2026-11-01' } })
   expect(screen.getByLabelText('Start:').value).toBe('')
   expect(screen.getByRole('status').textContent).toContain('75%')
-  fireEvent.click(await screen.findByText('Study'))
+  fireEvent.click(await screen.findByRole('button', { name: 'Select tag Study' }))
+  await waitFor(() =>
+    expect(screen.queryByRole('button', { name: 'Unselect tag Study' })).toBeNull(),
+  )
   fireEvent.click(screen.getByText('SAVE'))
   await screen.findByRole('alert')
   expect(screen.getByRole('alert').textContent).toContain('Rejected deadline')
@@ -425,29 +430,41 @@ function fillCreate(title = 'New work') {
   fireEvent.click(screen.getByRole('button', { name: '<1h' }))
 }
 
-test('valid root closes immediately, survives refetch, locks history and reconciles the real ID', async () => {
+function openNestedCreate(parentTitle = 'Parent') {
+  const card = screen.getByText(parentTitle).closest('[data-arc-planner-card-id]')
+  if (!card) throw new Error(`Missing Planner card for ${parentTitle}`)
+  fireEvent.mouseEnter(card)
+  fireEvent.click(screen.getByRole('button', {
+    name: `Create nested item under ${parentTitle}`,
+  }))
+}
+
+test('valid nested task closes immediately, survives refetch, locks history and reconciles the real ID', async () => {
   const request = deferred()
   api.createItem.mockReturnValue(request.promise)
   const cache = await mountPage()
-  fireEvent.click(screen.getByText('Create task or assignment'))
+  openNestedCreate()
   fillCreate()
   fireEvent.click(screen.getByText('CREATE'))
   expect(screen.queryByPlaceholderText('title...')).toBeNull()
   expect(await screen.findByText('New work')).toBeTruthy()
-  const pending = cache.getQueryData(['planning', 'tree'])[1]
+  const pending = cache.getQueryData(['planning', 'tree'])[0].children[0]
   expect(pending.id).toMatch(/^client:create:/)
+  expect(pending.parent).toBe(1)
   expect(screen.getByRole('button', { name: 'Undo' }).disabled).toBe(true)
   expect(screen.getByRole('button', { name: 'Redo' }).disabled).toBe(true)
   fireEvent.keyDown(window, { key: 'z', ctrlKey: true })
   expect(api.undoPlanningAction).not.toHaveBeenCalled()
   await act(async () => { await cache.invalidateQueries({ queryKey: ['planning', 'tree'] }) })
   expect(screen.getByText('New work')).toBeTruthy()
-  const real = { id: 88, parent: null, title: 'Server work', children: [] }
-  api.getPlanningTree.mockResolvedValue([{ id: 1, title: 'Parent changed', children: [] }, real])
+  const real = { id: 88, parent: 1, title: 'Server work', children: [] }
+  api.getPlanningTree.mockResolvedValue([
+    { id: 1, title: 'Parent changed', children: [real] },
+  ])
   await act(async () => { request.resolve(real) })
   await screen.findByText('Server work')
   await waitFor(() => expect(screen.getByRole('button', { name: 'Undo' }).disabled).toBe(false))
-  expect(cache.getQueryData(['planning', 'tree'])[1].id).toBe(88)
+  expect(cache.getQueryData(['planning', 'tree'])[0].children[0].id).toBe(88)
   expect(screen.queryByText('Pending save')).toBeNull()
 })
 
@@ -460,12 +477,14 @@ test('failed child restores every assignment field, shows server errors and reta
   fireEvent.click(screen.getByText('Assignment'))
   fillCreate('  Draft assignment  ')
   fireEvent.change(screen.getByPlaceholderText('description...'), { target: { value: '  Exact description  ' } })
-  fireEvent.click(await screen.findByText('Study'))
+  fireEvent.click(await screen.findByRole('button', { name: 'Select tag Study' }))
+  await screen.findByRole('button', { name: 'Unselect tag Study' })
   fireEvent.change(screen.getByPlaceholderText('tags...'), { target: { value: 'unfinished tag' } })
   fireEvent.change(screen.getByLabelText('Start:'), { target: { value: '2026-11-01' } })
   fireEvent.change(screen.getByLabelText('Due:'), { target: { value: '2026-11-02' } })
   fireEvent.change(screen.getByLabelText(/Weightage:/), { target: { value: '12.50' } })
   fireEvent.change(screen.getByPlaceholderText('submission link...'), { target: { value: 'https://example.com/submit' } })
+  expect(screen.getByRole('button', { name: 'Unselect tag Study' })).toBeTruthy()
   fireEvent.click(screen.getByText('CREATE'))
   await waitFor(() => expect(api.createItem).toHaveBeenCalledOnce())
   const pending = cache.getQueryData(['planning', 'tree'])[0].children[0]
@@ -493,7 +512,7 @@ test('failed child restores every assignment field, shows server errors and reta
 test('provisional rows cannot invoke backend actions or structural shortcuts', async () => {
   api.createItem.mockReturnValue(new Promise(() => {}))
   const cache = await mountPage()
-  fireEvent.click(screen.getByText('Create task or assignment'))
+  openNestedCreate()
   fillCreate()
   fireEvent.click(screen.getByText('CREATE'))
   const title = await screen.findByText('New work')
@@ -511,14 +530,14 @@ test('provisional rows cannot invoke backend actions or structural shortcuts', a
   expect(api.deleteItem).not.toHaveBeenCalled()
   expect(api.moveItem).not.toHaveBeenCalled()
   expect(screen.queryByPlaceholderText('title...')).toBeNull()
-  expect(cache.getQueryData(['planning', 'tree'])[1].is_provisional).toBe(true)
+  expect(cache.getQueryData(['planning', 'tree'])[0].children[0].is_provisional).toBe(true)
 })
 
 test('failure preserves a newer panel and offers explicit recovery', async () => {
   const request = deferred()
   api.createItem.mockReturnValue(request.promise)
   await mountPage()
-  fireEvent.click(screen.getByText('Create task or assignment'))
+  openNestedCreate()
   fillCreate('Earlier draft')
   fireEvent.click(screen.getByText('CREATE'))
   await waitFor(() => expect(api.createItem).toHaveBeenCalledOnce())
@@ -556,7 +575,7 @@ const editForm = {
 test('failed EDIT restores all form fields and SAVE passes one immutable snapshot immediately', async () => {
   const onSave = vi.fn(() => new Promise(() => {}))
   mount({ editingItem: item, editDraft: editForm, editError: { response: { data: { title: ['Rejected edit'] } } }, onSave })
-  await screen.findByText('Study')
+  await screen.findByRole('button', { name: 'Unselect tag Study' })
   expect(screen.getByPlaceholderText('title...').value).toBe(editForm.title)
   expect(screen.getByPlaceholderText('description...').value).toBe(editForm.description)
   expect(screen.getByPlaceholderText('tags...').value).toBe(editForm.tagInput)
@@ -647,7 +666,7 @@ test('failed edits survive another editor and CREATE panels until explicit recov
   await waitFor(() => expect(api.updateItem).toHaveBeenCalledOnce())
   fireEvent.doubleClick(screen.getByText('Other task'))
   expect(screen.queryByPlaceholderText('title...')).toBeNull()
-  fireEvent.click(screen.getByText('Create task or assignment'))
+  openNestedCreate('Other task')
   expect(screen.getByPlaceholderText('title...').value).toBe('')
   await act(async () => { request.reject(new Error('Offline')) })
   expect(screen.getByPlaceholderText('title...').value).toBe('')
@@ -693,12 +712,13 @@ test.each(['CREATE', 'SAVE'])('%s badge follows its item ID from pending to conf
   const cache = await mountPage()
   vi.useFakeTimers()
   if (action === 'CREATE') {
-    fireEvent.click(screen.getByText('Create task or assignment'))
+    openNestedCreate()
     fillCreate('New badge')
   } else fireEvent.doubleClick(screen.getByText('Parent'))
   fireEvent.click(screen.getByText(action))
   await act(async () => { await vi.advanceTimersByTimeAsync(0) })
-  const pendingItem = cache.getQueryData(['planning', 'tree'])[action === 'CREATE' ? 1 : 0]
+  const tree = cache.getQueryData(['planning', 'tree'])
+  const pendingItem = action === 'CREATE' ? tree[0].children[0] : tree[0]
   const badge = screen.getByRole('status', { name: action === 'CREATE' ? 'Creating item' : 'Saving changes' })
   expectPendingBadge(badge)
   expect(badge.closest('[data-planner-item-id]').dataset.plannerItemId).toBe(String(pendingItem.id))
@@ -718,7 +738,11 @@ test.each(['CREATE', 'SAVE'])('%s badge follows its item ID from pending to conf
     expect(screen.getByRole('status', { name: 'Saving changes' })).toBeTruthy()
   }
   const server = { id: action === 'CREATE' ? 88 : 1, title: 'Confirmed badge', is_completed: action === 'SAVE', children: [] }
-  api.getPlanningTree.mockResolvedValue(action === 'CREATE' ? [{ id: 1, title: 'Parent', children: [] }, server] : [server])
+  api.getPlanningTree.mockResolvedValue(
+    action === 'CREATE'
+      ? [{ id: 1, title: 'Parent', children: [{ ...server, parent: 1 }] }]
+      : [server],
+  )
   await act(async () => { request.resolve(server); await vi.advanceTimersByTimeAsync(0) })
   const confirmed = screen.getByRole('status', { name: 'Changes saved' })
   expect(confirmed.className).toContain('bg-[#7c9cde]')
@@ -740,7 +764,7 @@ test.each(['CREATE', 'SAVE'])('%s failure removes the pending badge', async (act
   else api.updateItem.mockReturnValue(request.promise)
   await mountPage()
   if (action === 'CREATE') {
-    fireEvent.click(screen.getByText('Create task or assignment'))
+    openNestedCreate()
     fillCreate('Failed badge')
   } else fireEvent.doubleClick(screen.getByText('Parent'))
   fireEvent.click(screen.getByText(action))
@@ -793,4 +817,123 @@ test.each(['success', 'failure'])('global edit lock blocks task B and duplicate 
   fireEvent.click(screen.getByRole('button', { name: 'Edit Other task' }))
   expect(screen.getByPlaceholderText('title...').value).toBe('Other task')
   expect(api.updateItem).toHaveBeenCalledOnce()
+})
+
+
+test('renames a tag without toggling its selection', async () => {
+  mount()
+  fireEvent.doubleClick(await screen.findByRole('button', { name: 'Select tag Study' }))
+  fireEvent.change(screen.getByRole('textbox', { name: 'Rename Study' }), {
+    target: { value: 'Revision' },
+  })
+  fireEvent.click(screen.getByRole('button', { name: 'Save rename Study' }))
+  await waitFor(() =>
+    expect(api.updateTag).toHaveBeenCalledWith(7, { name: 'Revision' }),
+  )
+  expect(api.deleteTag).not.toHaveBeenCalled()
+})
+
+test('canceling tag deletion leaves the tag intact', async () => {
+  mount()
+  fireEvent.click(await screen.findByRole('button', { name: 'Delete tag Study' }))
+  expect(screen.getByRole('alertdialog').textContent).toContain('all tasks')
+  fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+  expect(screen.queryByRole('alertdialog')).toBeNull()
+  expect(api.deleteTag).not.toHaveBeenCalled()
+})
+
+test('tag deletion requires confirmation and removes its selected ID', async () => {
+  mount({ editingItem: { ...item, tags: [{ id: 7, name: 'Study' }] } })
+  const tagButton = await screen.findByRole('button', { name: 'Select tag Study' })
+  expect(tagButton.getAttribute('aria-pressed')).toBe('true')
+  fireEvent.click(screen.getByRole('button', { name: 'Delete tag Study' }))
+  expect(api.deleteTag).not.toHaveBeenCalled()
+  fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
+  await waitFor(() => expect(api.deleteTag).toHaveBeenCalledWith(7))
+  await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull())
+  fireEvent.click(screen.getByRole('button', { name: 'SAVE' }))
+  expect(saveSubmission).toHaveBeenCalled()
+  expect(saveSubmission.mock.calls[0][0].payload.tag_ids).toEqual([])
+})
+
+test('failed tag rename displays feedback and preserves edit mode', async () => {
+  api.updateTag.mockRejectedValueOnce(new Error('network'))
+  mount()
+  fireEvent.doubleClick(await screen.findByRole('button', { name: 'Select tag Study' }))
+  fireEvent.change(screen.getByRole('textbox', { name: 'Rename Study' }), {
+    target: { value: 'Revision' },
+  })
+  fireEvent.click(screen.getByRole('button', { name: 'Save rename Study' }))
+  expect(await screen.findByRole('alert')).toHaveProperty(
+    'textContent',
+    'Could not rename tag. Please try again.',
+  )
+  expect(screen.getByRole('textbox', { name: 'Rename Study' })).toBeTruthy()
+})
+
+test('failed tag deletion keeps confirmation open', async () => {
+  api.deleteTag.mockRejectedValueOnce(new Error('network'))
+  mount()
+  fireEvent.click(await screen.findByRole('button', { name: 'Delete tag Study' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
+  await waitFor(() => expect(api.deleteTag).toHaveBeenCalledWith(7))
+  expect(await screen.findByRole('alert')).toHaveProperty(
+    'textContent',
+    'Could not delete tag. Please try again.',
+  )
+  expect(screen.getByRole('alertdialog')).toBeTruthy()
+})
+
+
+test('selected tags appear as removable chips without disabling tag creation', async () => {
+  mount({ editingItem: { ...item, tags: [{ id: 7, name: 'Study' }] } })
+
+  const chip = await screen.findByRole('button', { name: 'Unselect tag Study' })
+  expect(chip).toBeTruthy()
+
+  const input = screen.getByRole('textbox', { name: 'Tags' })
+  fireEvent.change(input, { target: { value: 'New tag' } })
+  expect(input.value).toBe('New tag')
+
+  fireEvent.click(chip)
+
+  expect(screen.queryByRole('button', { name: 'Unselect tag Study' })).toBeNull()
+  expect(input.value).toBe('New tag')
+
+  fireEvent.click(screen.getByRole('button', { name: 'SAVE' }))
+  expect(saveSubmission.mock.calls[0][0].payload.tag_ids).toEqual([])
+})
+
+test('single-click adds a chip and its cross unselects without deleting globally', async () => {
+  mount()
+
+  fireEvent.click(await screen.findByRole('button', { name: 'Select tag Study' }))
+  const chip = await screen.findByRole('button', { name: 'Unselect tag Study' })
+
+  expect(screen.getByRole('button', { name: 'Select tag Study' }).getAttribute('aria-pressed')).toBe('true')
+
+  fireEvent.click(chip)
+
+  expect(screen.queryByRole('button', { name: 'Unselect tag Study' })).toBeNull()
+  expect(api.deleteTag).not.toHaveBeenCalled()
+})
+
+test('creating a new tag adds a chip and keeps the input usable', async () => {
+  api.createTag.mockResolvedValue({ id: 8, name: 'New' })
+  api.listTags.mockResolvedValue([
+    { id: 7, name: 'Study' },
+    { id: 8, name: 'New' },
+  ])
+
+  mount()
+
+  const input = screen.getByRole('textbox', { name: 'Tags' })
+  fireEvent.change(input, { target: { value: 'New' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Add tag' }))
+
+  await screen.findByRole('button', { name: 'Unselect tag New' })
+  expect(input.value).toBe('')
+
+  fireEvent.change(input, { target: { value: 'Another' } })
+  expect(input.value).toBe('Another')
 })

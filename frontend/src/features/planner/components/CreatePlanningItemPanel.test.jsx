@@ -3,7 +3,7 @@ import { act, fireEvent, render, screen, waitFor, cleanup } from '@testing-libra
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 
-const api = vi.hoisted(() => ({ createItem: vi.fn(), updateItem: vi.fn(), listTags: vi.fn(), createTag: vi.fn(), updateTag: vi.fn(), deleteTag: vi.fn(), listPrerequisites: vi.fn(), listItems: vi.fn(), addPrerequisite: vi.fn(), removePrerequisite: vi.fn(), getPlanningTree: vi.fn(), getHistoryStatus: vi.fn(), undoPlanningAction: vi.fn(), redoPlanningAction: vi.fn(), completeItem: vi.fn(), deleteItem: vi.fn(), moveItem: vi.fn() }))
+const api = vi.hoisted(() => ({ createItem: vi.fn(), updateItem: vi.fn(), listTags: vi.fn(), createTag: vi.fn(), updateTag: vi.fn(), deleteTag: vi.fn(), listPrerequisites: vi.fn(), listItems: vi.fn(), addPrerequisite: vi.fn(), removePrerequisite: vi.fn(), getDependencyGraph: vi.fn(), getPlanningTree: vi.fn(), getPriorityOrder: vi.fn(), reorderPriority: vi.fn(), getHistoryStatus: vi.fn(), undoPlanningAction: vi.fn(), redoPlanningAction: vi.fn(), completeItem: vi.fn(), deleteItem: vi.fn(), moveItem: vi.fn() }))
 vi.mock('../../../api/planning', () => api)
 vi.mock('../../../lib/calendarDates.js', async (importOriginal) => {
   const actual = await importOriginal()
@@ -12,6 +12,7 @@ vi.mock('../../../lib/calendarDates.js', async (importOriginal) => {
 import { userDateKey } from '../../../lib/calendarDates.js'
 import { useAuthStore } from '../../../stores/authStore.js'
 import CreatePlanningItemPanel from './CreatePlanningItemPanel'
+import DependencyGraphModal, { graphLayout } from './DependencyGraphModal'
 import TaskPrerequisites from './TaskPrerequisites'
 
 const saveSubmission = vi.fn()
@@ -30,12 +31,75 @@ beforeEach(() => {
   vi.resetAllMocks()
   userDateKey.mockReturnValue('2026-10-12')
   api.listTags.mockResolvedValue([{ id: 7, name: 'Study' }])
+  api.getPriorityOrder.mockResolvedValue([{ item_id: 2, position: 1 }])
   api.listPrerequisites.mockResolvedValue([])
   api.listItems.mockResolvedValue({ results: [{ id: 2, title: 'Task' }, { id: 3, title: 'Prerequisite' }] })
+  api.getDependencyGraph.mockResolvedValue({ task_id: 2, nodes: [{ id: 2, title: 'Task', item_type: 'TASK' }], edges: [] })
   api.createItem.mockResolvedValue({ id: 10 })
   api.updateItem.mockResolvedValue(item)
   api.updateTag.mockImplementation(async (id, payload) => ({ id, ...payload }))
   api.deleteTag.mockResolvedValue(null)
+})
+
+test('untouched creation priority stays outside the item payload and reorder submission', async () => {
+  const onCreate = vi.fn()
+  mount({ onCreate })
+  await waitFor(() => expect(screen.getByLabelText('Priority position').value).toBe('2'))
+  fireEvent.change(screen.getByPlaceholderText('title...'), { target: { value: 'Prioritised task' } })
+  fireEvent.click(screen.getByRole('button', { name: '<1h' }))
+  fireEvent.click(screen.getByText('CREATE'))
+  await waitFor(() => expect(onCreate).toHaveBeenCalledOnce())
+  expect(onCreate.mock.calls[0][0]).toMatchObject({ priorityPosition: null })
+  expect(onCreate.mock.calls[0][0].payload).not.toHaveProperty('priority_position')
+})
+
+test('priority input clamps invalid, fractional, and out-of-range values without creating a reorder', async () => {
+  const onCreate = vi.fn()
+  mount({ onCreate })
+  const priority = screen.getByLabelText('Priority position')
+  await waitFor(() => expect(priority.value).toBe('2'))
+  fireEvent.change(priority, { target: { value: '0' } })
+  fireEvent.blur(priority)
+  expect(priority.value).toBe('1')
+  fireEvent.change(priority, { target: { value: '99' } })
+  fireEvent.blur(priority)
+  expect(priority.value).toBe('2')
+  fireEvent.change(priority, { target: { value: '1.5' } })
+  fireEvent.change(screen.getByPlaceholderText('title...'), { target: { value: 'Validated priority' } })
+  fireEvent.click(screen.getByRole('button', { name: '<1h' }))
+  fireEvent.click(screen.getByText('CREATE'))
+  await waitFor(() => expect(onCreate).toHaveBeenCalledOnce())
+  expect(onCreate.mock.calls[0][0]).toMatchObject({ priorityPosition: null })
+})
+
+test('priority editing starts at the task current priority', async () => {
+  mount({ editingItem: { ...item, priority_position: 1 } })
+  await waitFor(() => expect(screen.getByLabelText('Priority position').value).toBe('1'))
+})
+
+test('only an explicit different eligible edit priority is submitted for reorder', async () => {
+  mount({ editingItem: { ...item, priority_position: 2 } })
+  const priority = await screen.findByLabelText('Priority position')
+
+  fireEvent.click(screen.getByText('SAVE'))
+  await waitFor(() => expect(saveSubmission).toHaveBeenCalledOnce())
+  expect(saveSubmission.mock.calls[0][0].priorityPosition).toBeNull()
+
+  cleanup()
+  saveSubmission.mockClear()
+  mount({ editingItem: { ...item, priority_position: 2 } })
+  fireEvent.change(await screen.findByLabelText('Priority position'), { target: { value: '1' } })
+  fireEvent.click(screen.getByText('SAVE'))
+  await waitFor(() => expect(saveSubmission).toHaveBeenCalledOnce())
+  expect(saveSubmission.mock.calls[0][0].priorityPosition).toBe(1)
+
+  cleanup()
+  saveSubmission.mockClear()
+  mount({ editingItem: item })
+  fireEvent.change(await screen.findByLabelText('Priority position'), { target: { value: '1' } })
+  fireEvent.click(screen.getByText('SAVE'))
+  await waitFor(() => expect(saveSubmission).toHaveBeenCalledOnce())
+  expect(saveSubmission.mock.calls[0][0].priorityPosition).toBeNull()
 })
 
 test('child defaults inherit dates and tags; explicit clearing sends null without mutating parent', async () => {
@@ -51,6 +115,23 @@ test('child defaults inherit dates and tags; explicit clearing sends null withou
   await waitFor(() => expect(api.createItem).toHaveBeenCalled())
   expect(api.createItem.mock.calls[0][0]).toMatchObject({ parent: 1, start_date: null, due_date: null, tag_ids: [7] })
   expect(parent.start_date).toBe('2026-11-01')
+})
+
+test('untouched child and inherited edit due dates are omitted to preserve backend provenance', async () => {
+  const onCreate = vi.fn()
+  const parent = { start_date: null, due_date: '2026-11-05', tags: [] }
+  mount({ parentId: 1, parentItem: parent, onCreate })
+  fireEvent.change(screen.getByPlaceholderText('title...'), { target: { value: 'Inherited child' } })
+  fireEvent.click(screen.getByRole('button', { name: '<1h' }))
+  fireEvent.click(screen.getByText('CREATE'))
+  await waitFor(() => expect(onCreate).toHaveBeenCalledOnce())
+  expect(onCreate.mock.calls[0][0].payload).not.toHaveProperty('due_date')
+
+  cleanup()
+  mount({ editingItem: { ...item, due_date: parent.due_date, due_date_inherited: true } })
+  fireEvent.click(screen.getByText('SAVE'))
+  await waitFor(() => expect(saveSubmission).toHaveBeenCalled())
+  expect(saveSubmission.mock.calls.at(-1)[0].payload).not.toHaveProperty('due_date')
 })
 
 test('invalid date range is visible and blocks save', () => {
@@ -254,6 +335,33 @@ test('editor omits prerequisites and delegates save without a form-owned mutatio
     payload: expect.objectContaining({ title: item.title }) }))
   expect(api.updateItem).not.toHaveBeenCalled()
   expect(invalidate).not.toHaveBeenCalled()
+})
+
+test('dependency button follows either edge direction and opening it preserves an unsaved title', async () => {
+  api.getDependencyGraph.mockResolvedValue({ task_id: 2, nodes: [{ id: 1, title: 'Before', item_type: 'TASK' }, { id: 2, title: 'Task', item_type: 'TASK' }], edges: [{ prerequisite_id: 1, dependent_id: 2 }] })
+  mount({ editingItem: item })
+  fireEvent.change(screen.getByPlaceholderText('title...'), { target: { value: 'Unsaved title' } })
+  fireEvent.click(await screen.findByRole('button', { name: 'Dependencies' }))
+  expect(await screen.findByRole('dialog', { name: 'Dependencies' })).toBeTruthy()
+  fireEvent.click(screen.getByRole('button', { name: 'Close dependency graph' }))
+  expect(screen.getByPlaceholderText('title...').value).toBe('Unsaved title')
+  expect(saveSubmission).not.toHaveBeenCalled()
+})
+
+test('dependency graph distinguishes matching titles, closes on Escape/backdrop, and lays out branches', async () => {
+  const onClose = vi.fn()
+  api.getDependencyGraph.mockResolvedValue({ nodes: [{ id: 1, title: 'Matching', item_type: 'TASK' }, { id: 2, title: 'Matching', item_type: 'TASK' }, { id: 3, title: 'End', item_type: 'TASK' }], edges: [{ prerequisite_id: 1, dependent_id: 2 }, { prerequisite_id: 2, dependent_id: 3 }] })
+  const cache = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  render(<QueryClientProvider client={cache}><DependencyGraphModal task={item} onClose={onClose} /></QueryClientProvider>)
+  expect(await screen.findByLabelText('Dependency graph')).toBeTruthy()
+  expect(screen.getByLabelText(/Matching, Root level, task ID 1/)).toBeTruthy()
+  expect(screen.getByLabelText(/Matching, Root level, task ID 2/)).toBeTruthy()
+  fireEvent.keyDown(window, { key: 'Escape' })
+  fireEvent.mouseDown(screen.getByRole('presentation'))
+  expect(onClose).toHaveBeenCalledTimes(2)
+  const layout = graphLayout([{ id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }], [{ prerequisite_id: 1, dependent_id: 2 }, { prerequisite_id: 1, dependent_id: 3 }, { prerequisite_id: 2, dependent_id: 4 }, { prerequisite_id: 3, dependent_id: 4 }])
+  expect(layout.positions.get(2).y).toBe(layout.positions.get(3).y)
+  expect(layout.positions.get(4).y).toBeGreaterThan(layout.positions.get(2).y)
 })
 
 
@@ -594,7 +702,7 @@ test('failed EDIT restores all form fields and SAVE passes one immutable snapsho
   fireEvent.submit(form)
   expect(onSave).toHaveBeenCalledOnce()
   const submission = onSave.mock.calls[0][0]
-  expect(submission.form).toEqual(editForm)
+  expect(submission.form).toMatchObject(editForm)
   expect(submission.payload).toEqual({ item_type: 'ASSIGNMENT', title: 'Edited assignment', description: 'Exact description',
     tag_ids: [7], start_date: '2026-11-01', due_date: '2026-11-02', duration_category: 'UNDER_1_HOUR',
     assignment_detail: { weight_percent: 12.5, submission_url: editForm.submissionUrl } })
@@ -631,6 +739,18 @@ test('SAVE closes before PATCH resolves, survives stale reads, locks history and
   await waitFor(() => expect(screen.getByRole('button', { name: 'Undo' }).disabled).toBe(false))
   expect(screen.queryByPlaceholderText('title...')).toBeNull()
 })
+
+test('ordinary due-date edits never invoke priority reorder', async () => {
+  api.updateItem.mockResolvedValue({ id: 1, title: 'Parent', due_date: '2026-11-02', children: [] })
+  await mountPage()
+  fireEvent.doubleClick(screen.getByText('Parent'))
+  fireEvent.change(screen.getByLabelText('Due:'), { target: { value: '2026-11-02' } })
+  fireEvent.click(screen.getByText('SAVE'))
+
+  await waitFor(() => expect(api.updateItem).toHaveBeenCalledOnce())
+  expect(api.reorderPriority).not.toHaveBeenCalled()
+})
+
 
 test('failed SAVE rolls back edited fields, preserves other changes, reopens the draft and permits retry', async () => {
   const request = deferred()

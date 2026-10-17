@@ -15,8 +15,8 @@
 .timeline-popover input { color-scheme: dark; padding: 5px; width: 145px; }
 .timeline-sidebar { position: fixed; left: 0; top: 0; bottom: 0; width: var(--spacing-arc-sidebar); z-index: 31; overflow-y: auto; background: var(--color-arc-surface); border-right: 1px solid #ffffff19; padding: 20px 12px; }
 .timeline-sidebar-logo { width: 105px; height: 52px; object-fit: contain; margin: 0 auto 14px; }
-.timeline-sidebar h2 { font-size: 13.2px; letter-spacing: .12em; color: var(--color-arc-text-secondary); margin: 12px 8px; }
-.timeline-sidebar nav button { display: flex; gap: 6px; align-items: center; width: 100%; text-align: left; font-size: 13px; padding: 9px 8px; border: 1px solid transparent; border-radius: 7px; cursor: pointer; }
+.timeline-sidebar h2 { font-size: 22px; letter-spacing: .12em; color: var(--color-arc-text-secondary); margin: 0; }
+.timeline-sidebar nav button { display: flex; gap: 6px; align-items: center; width: 100%; text-align: left; font-size: 14px; padding: 9px 8px; border: 1px solid transparent; border-radius: 7px; cursor: pointer; }
 .timeline-sidebar nav button span { flex: 1; overflow-wrap: anywhere; }
 .timeline-sidebar nav button svg { flex-shrink: 0; }
 .timeline-sidebar nav button:hover { background: #ffffff08; }
@@ -75,7 +75,6 @@ a.timeline-marker::after { content: ""; position: absolute; inset: -7px -2px; }
 .timeline-duration { font-size: 19px; line-height: 12px; white-space: nowrap; color: #d1d7e8; }
 .timeline-card input { accent-color: var(--color-arc-accent); }
 .timeline-card-details { display: none; color: var(--color-arc-text-muted); font-size: 10px; line-height: 1.6; padding-top: 5px; overflow-wrap: anywhere; }
-.timeline-today .timeline-card-details,
 .timeline-card-expanded .timeline-card-details {
   display: block;
 }
@@ -101,7 +100,7 @@ a.timeline-marker::after { content: ""; position: absolute; inset: -7px -2px; }
 }
 @media (max-width: 800px) {
   .timeline-sidebar { width: 145px; padding: 12px 6px; }
-  .timeline-sidebar nav button { font-size: 11px; }
+  .timeline-sidebar nav button { font-size: 14px; }
   .timeline-page { margin-left: 145px; padding: 80px 8px 10px; }
 }
 @media (hover: none) { .timeline-card-details { display: block; } }
@@ -1451,6 +1450,105 @@ a.timeline-marker::after { content: ""; position: absolute; inset: -7px -2px; }
   box-shadow: 0 12px 30px #00000040;
 }
 
+
+/* Root navigation belongs beneath each Root Tasks tab, not in the sidebar. */
+.timeline-task-navigator-root {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  align-items: flex-start;
+  min-width: 0;
+}
+
+.timeline-task-navigator-root > button {
+  max-width: 220px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 12px;
+}
+
+.timeline-task-navigator-root > button[aria-pressed="true"] {
+  background: #C3D19B22;
+}
+
+.timeline-task-navigator-root .timeline-root-navigation {
+  padding: 2px 0 0;
+}
+
+.timeline-task-navigator-root .timeline-root-navigation-arrow {
+  display: grid;
+  place-items: center;
+  padding: 0;
+}
+
+.timeline-task-navigator-root .timeline-root-navigation-missing {
+  padding: 2px 4px;
+}
+
+.timeline-roots-clear {
+  display: grid;
+  flex: 0 0 28px;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: 6px;
+  font-size: 22px;
+  line-height: 1;
+  color: var(--color-arc-text-secondary);
+}
+
+.timeline-roots-clear:hover {
+  background: #ffffff12;
+}
+
+
+/*
+ * Timeline sticky header:
+ * dates + current-week indicator + dynamically packed timezone lanes.
+ *
+ * The stack participates in normal layout, reserving its full height
+ * before task rows, while remaining fixed at the top during vertical scroll.
+ */
+.timeline-sticky-header {
+  position: sticky;
+  top: 0;
+  z-index: 8;
+  width: var(--timeline-width);
+  max-width: none;
+  background: var(--color-arc-bg);
+  isolation: isolate;
+  box-shadow: 0 1px 0 #7c9cde55;
+}
+
+/* The parent owns stickiness; avoid competing sticky contexts. */
+.timeline-sticky-header .timeline-axis {
+  position: relative;
+  top: auto;
+  z-index: auto;
+}
+
+/* Opaque backing prevents scrolling task cards showing through gaps. */
+.timeline-sticky-header .timeline-zone-shell,
+.timeline-sticky-header .timeline-zone-lanes {
+  background: var(--color-arc-bg);
+}
+
+/* Navigation and scroll-to operations respect the full dynamic stack. */
+.timeline-scroll {
+  scroll-padding-top: calc(
+    var(--timeline-sticky-header-height, 140px) + 8px
+  );
+}
+
+/* Keep keyboard-targeted task cards clear of the sticky header. */
+.timeline-row {
+  scroll-margin-top: calc(
+    var(--timeline-sticky-header-height, 140px) + 8px
+  );
+}
+
+
 /* Shared calendar: month/year navigation and today's date. */
 .timeline-calendar-heading {
   display: flex;
@@ -1608,6 +1706,7 @@ a.timeline-marker::after { content: ""; position: absolute; inset: -7px -2px; }
 .timeline-calendar-navigation > button:focus-visible {
   background: #ffffff25;
 }
+
 
 /* The Timezones manager opens directly beneath the actual toolbar. */
 .timeline-toolbar-stack {

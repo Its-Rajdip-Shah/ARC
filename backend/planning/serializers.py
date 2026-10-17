@@ -126,6 +126,7 @@ class PlanningItemSerializer(RemainingWorkMixin, serializers.ModelSerializer):
         fields = [
             'id', 'parent', 'item_type', 'title', 'description', 'sibling_order',
             'start_date', 'due_date', 'scheduled_date', 'execution_rank',
+            'due_date_inherited',
             'completed_display_date', 'manual_requested_date', 'manual_anchor_origin_date',
             'duration_category', 'percent_completed', 'remaining_fraction',
             'priority_position', 'is_completed', 'has_deadline',
@@ -135,6 +136,7 @@ class PlanningItemSerializer(RemainingWorkMixin, serializers.ModelSerializer):
         ]
         read_only_fields = [
             'priority_position', 'scheduled_date', 'execution_rank',
+            'due_date_inherited',
             'completed_display_date', 'manual_requested_date', 'manual_anchor_origin_date',
             'percent_completed', 'canvas_object_type',
             'canvas_object_id', 'created_at', 'updated_at',
@@ -246,7 +248,7 @@ class PlanningItemTreeSerializer(RemainingWorkMixin, serializers.ModelSerializer
         model = PlanningItem
         fields = [
             'id', 'parent', 'item_type', 'title', 'description', 'depth',
-            'sibling_order', 'start_date', 'due_date', 'scheduled_date',
+            'sibling_order', 'start_date', 'due_date', 'due_date_inherited', 'scheduled_date',
             'duration_category', 'percent_completed', 'remaining_fraction', 'priority_position', 'is_completed',
             'tags', 'assignment_detail', 'manual_requested_date', 'manual_anchor_origin_date',
             'expired_manual_requested_date', 'deadline_overdue', 'active_carried_anchor',

@@ -532,6 +532,31 @@ export default function TimelineBoard({
         ]
       : [visibleItems]
 
+  const stickyHeaderRef = useRef(null)
+
+  useLayoutEffect(() => {
+    const header = stickyHeaderRef.current
+    const scroller = scrollRef?.current
+
+    if (!header || !scroller) return undefined
+
+    const updateHeaderHeight = () => {
+      scroller.style.setProperty(
+        '--timeline-sticky-header-height',
+        `${Math.ceil(header.getBoundingClientRect().height)}px`,
+      )
+    }
+
+    updateHeaderHeight()
+
+    if (typeof ResizeObserver === 'undefined') return undefined
+
+    const observer = new ResizeObserver(updateHeaderHeight)
+    observer.observe(header)
+
+    return () => observer.disconnect()
+  }, [scrollRef])
+
   const {
     assignments:
       rangeAssignments,
@@ -676,6 +701,10 @@ export default function TimelineBoard({
           handleDrop
         }
       >
+        <div
+          className="timeline-sticky-header"
+          ref={stickyHeaderRef}
+        >
         <div
           className="timeline-axis"
           style={{
@@ -844,53 +873,6 @@ export default function TimelineBoard({
           )}
         </div>
 
-        <div
-          className="timeline-status-guides"
-          aria-hidden="true"
-        >
-          {scale.columns.map(
-            (
-              column,
-              index,
-            ) => {
-              const active =
-                (
-                  dateHighlights
-                    ?.overloadActive &&
-                  dateHighlights
-                    .overloadDates
-                    ?.has(
-                      column.from,
-                    )
-                ) ||
-                (
-                  dateHighlights
-                    ?.infeasibleActive &&
-                  dateHighlights
-                    .infeasibleDates
-                    ?.has(
-                      column.from,
-                    )
-                )
-
-              return active
-                ? (
-                    <span
-                      key={
-                        column.from
-                      }
-                      style={{
-                        left:
-                          index *
-                          scale.columnWidth,
-                      }}
-                    />
-                  )
-                : null
-            },
-          )}
-        </div>
-
         <div className="timeline-zone-shell">
           {laneCount > 0 && (
             <div className="timeline-zone-lanes">
@@ -1023,6 +1005,55 @@ export default function TimelineBoard({
                 },
               )}
             </div>
+          )}
+        </div>
+
+        </div>
+
+        <div
+          className="timeline-status-guides"
+          aria-hidden="true"
+        >
+          {scale.columns.map(
+            (
+              column,
+              index,
+            ) => {
+              const active =
+                (
+                  dateHighlights
+                    ?.overloadActive &&
+                  dateHighlights
+                    .overloadDates
+                    ?.has(
+                      column.from,
+                    )
+                ) ||
+                (
+                  dateHighlights
+                    ?.infeasibleActive &&
+                  dateHighlights
+                    .infeasibleDates
+                    ?.has(
+                      column.from,
+                    )
+                )
+
+              return active
+                ? (
+                    <span
+                      key={
+                        column.from
+                      }
+                      style={{
+                        left:
+                          index *
+                          scale.columnWidth,
+                      }}
+                    />
+                  )
+                : null
+            },
           )}
         </div>
 

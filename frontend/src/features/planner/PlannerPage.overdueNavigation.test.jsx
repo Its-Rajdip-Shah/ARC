@@ -133,6 +133,45 @@ it('Planner task list owns scrolling independently of the search toolbar', () =>
   expect(screen.getByText('Deadline regression task')).toBeTruthy()
 })
 
+it('shows a non-interactive deadline marker only for incomplete overdue Planner cards', () => {
+  const { container, rerender } = mount()
+  expect(screen.getByRole('img', { name: 'Deadline overdue' })).toBeTruthy()
+  const marker = container.querySelector('[aria-label="Deadline overdue"]')
+  expect(marker.className).toContain('pointer-events-none')
+  expect(marker.className).toContain('border-[#e0b84f]')
+  expect(marker.className).toContain('bg-[#e0b84f]')
+  expect(marker.className).not.toContain('bg-red')
+  expect(marker.style.left).toBe('33px')
+
+  const completed = makeItems()
+  completed[0].children[0].is_completed = true
+  data.roots = completed
+  rerender(
+    <QueryClientProvider client={client}>
+      <MemoryRouter initialEntries={['/planner']}>
+        <RoutePath />
+        <Routes><Route element={<StudentLayout />}><Route path="/planner" element={<PlannerPage />} /></Route></Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  )
+  expect(screen.queryByRole('img', { name: 'Deadline overdue' })).toBeNull()
+})
+
+it('aligns a nested overdue marker to its rightmost own indentation rail', () => {
+  const nested = [{
+    id: 100, title: 'Root', item_type: 'GOAL', is_completed: false, children: [{
+      id: 101, title: 'Parent', item_type: 'TASK', is_completed: false, children: [{
+        id: 102, title: 'Deep overdue task', item_type: 'TASK', due_date: '2020-01-01',
+        deadline_overdue: true, is_completed: false, children: [],
+      }],
+    }],
+  }]
+  const { container } = mount('/planner', nested)
+  const marker = container.querySelector('[data-arc-planner-card-id="102"] [data-arc-overdue-marker]')
+  expect(marker).not.toBeNull()
+  expect(marker.style.left).toBe('75px')
+})
+
 it('HA1 harness: matches overdue classification and mounts actual Planner components', () => {
   const classified = filterOverdueTree(makeItems(), userDateKey())
   expect(classified.items.map((item) => item.overdue_section))

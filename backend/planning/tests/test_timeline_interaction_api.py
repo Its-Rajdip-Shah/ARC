@@ -106,8 +106,8 @@ def test_anchor_after_deadline_requires_explicit_decision(
         {
             'item_id': item.pk,
             'code': 'after_deadline',
-            'original_date': '2026-10-18',
-            'proposed_date': '2026-10-21',
+            'original_date': due.isoformat(),
+            'proposed_date': target.isoformat(),
         },
     ]
 

@@ -806,7 +806,14 @@ test('all rows top-align while selected-date anchor expansion rules stay scoped'
   assert.match(css.match(/\.timeline-row \{([^}]+)\}/)[1], /align-items: start/)
   assert.doesNotMatch(css, /\.timeline-row-selected-date \{ align-items:/)
   assert.match(css, /\.timeline-card-expanded \.timeline-anchor-button,\s*\.timeline-anchor-visible \{/)
-  const scoped = css.slice(css.indexOf('/* Selected-date emphasis'))
+  const selectedDateStart = css.indexOf(
+    '/* Selected-date emphasis and intentional-hover anchor visibility. */',
+  )
+  const selectedDateEnd = css.indexOf('.timeline-root-navigation {', selectedDateStart)
+  assert.ok(selectedDateStart >= 0)
+  assert.ok(selectedDateEnd > selectedDateStart)
+
+  const scoped = css.slice(selectedDateStart, selectedDateEnd)
   assert.doesNotMatch(scoped, /!important|scaleY|translateY|position: absolute/)
   assert.match(scoped, /\.timeline-card-selected-date\.timeline-card-hover-intent/)
   assert.doesNotMatch(scoped, /\.timeline-card-selected-date:hover/)

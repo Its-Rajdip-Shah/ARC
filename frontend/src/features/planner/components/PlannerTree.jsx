@@ -273,6 +273,7 @@ export default function PlannerTree({
   onHoverItem,
   onSelectItem,
   onEditItem,
+  onCreateDependency,
   onCreateNested,
   onResidualEstimatePrompt,
 }) {
@@ -871,6 +872,7 @@ export default function PlannerTree({
               onHoverItem={onHoverItem}
               onSelectItem={onSelectItem}
               onEditItem={onEditItem}
+              onCreateDependency={onCreateDependency}
               onCreateNested={onCreateNested}
               onResidualEstimatePrompt={onResidualEstimatePrompt}
               dndEnabled={!showOverdue && !item.is_provisional}

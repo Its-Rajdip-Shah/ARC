@@ -6,6 +6,7 @@ import PlannerTree from './components/PlannerTree'
 import PriorityPanel from './components/PriorityPanel'
 import CreatePlanningItemPanel from './components/CreatePlanningItemPanel'
 import StudyPlanModal from './components/StudyPlanModal'
+import DependencyDialog from './components/DependencyDialog'
 import { usePlanningTree } from '../../hooks/usePlanningTree'
 import { useIsMutating, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
@@ -14,6 +15,7 @@ import {
   getHistoryStatus,
   undoPlanningAction,
   redoPlanningAction,
+  reorderPriority,
 } from '../../api/planning'
 import {
   ListTree,
@@ -37,6 +39,15 @@ function findItemById(items, id) {
   }
 
   return null
+}
+
+function shouldReorderPriority(item, requestedPosition) {
+  return (
+    Number.isInteger(requestedPosition) &&
+    requestedPosition > 0 &&
+    Number.isInteger(item?.priority_position) &&
+    requestedPosition !== item.priority_position
+  )
 }
 
 import { provisionalPlanningItem, protectPlanningCreation, protectPlanningEdit, whenOtherPlanningMutationsIdle } from '../../lib/planningOptimistic'
@@ -248,6 +259,7 @@ export default function PlannerPage() {
 
 
   const [studyPlanOpen, setStudyPlanOpen] = useState(false)
+  const [dependencyFixedTask, setDependencyFixedTask] = useState(null)
   const [selectedItemId, setSelectedItemId] = useState(null)
   const [toolbarPreferences] = useState(
     loadToolbarPreferences,
@@ -397,7 +409,13 @@ export default function PlannerPage() {
 
   const editMutation = useMutation({
     mutationKey: ['planning', 'edit'],
-    mutationFn: ({ submission }) => updateItem(submission.id, submission.payload),
+    mutationFn: async ({ submission }) => {
+      const item = await updateItem(submission.id, submission.payload)
+      if (shouldReorderPriority(item, submission.priorityPosition)) {
+        await reorderPriority({ item_id: submission.id, new_position: submission.priorityPosition })
+      }
+      return item
+    },
     onSuccess: async (serverFields, { submission, protection }) => {
       await queryClient.cancelQueries({ queryKey: ['planning', 'tree'] })
       protection.reconcile(serverFields)
@@ -434,6 +452,9 @@ export default function PlannerPage() {
         let serverItem
         try {
           serverItem = await createItem(submission.payload)
+          if (shouldReorderPriority(serverItem, submission.priorityPosition)) {
+            await reorderPriority({ item_id: serverItem.id, new_position: submission.priorityPosition })
+          }
         } catch (error) {
           if (!protection.isActive()) {
             removeSaveStatus(String(provisionalId))
@@ -687,6 +708,16 @@ export default function PlannerPage() {
 
   const items = planningTree ?? []
 
+  async function handleDependencyCreated() {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['planning', 'tree'] }),
+      queryClient.invalidateQueries({ queryKey: ['planning', 'priority'] }),
+      queryClient.invalidateQueries({ queryKey: ['planning', 'history'] }),
+      queryClient.invalidateQueries({ queryKey: ['planning', 'dependency-graph'] }),
+    ])
+    setDependencyFixedTask(null)
+  }
+
   return (
     <div className="relative flex h-dvh min-h-0 flex-col overflow-hidden md:flex-row">
       {!isPriority && <PlannerSidebar
@@ -714,14 +745,15 @@ export default function PlannerPage() {
             onRedo={() => redoMutation.mutate()}
           />
         ) : (
-        <div className="mx-auto flex min-h-0 w-full max-w-[620px] flex-1 flex-col">
+        <div className="flex min-h-0 w-full flex-1 flex-col">
           {isLoading && <p>Loading planner...</p>}
           {isError && !planningTree && <p>Could not load planner.</p>}
 
           {!isLoading && (!isError || planningTree) && (
             <>
             <div className="
-              relative z-20 mb-2 flex h-[38px] shrink-0
+              relative z-20 mx-auto mb-2 flex h-[38px] w-full
+              max-w-[620px] shrink-0
               items-center justify-between gap-1 px-3
 
               rounded-[10px]
@@ -891,7 +923,8 @@ export default function PlannerPage() {
                 <button type="button" onClick={() => setFailedEdit(null)}>Dismiss edit error</button>
               </div>
             )}
-            <div aria-label="Planner task list" role="region" className="min-h-0 flex-1 overflow-y-auto overscroll-contain pb-16 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+            <div aria-label="Planner task list" role="region" className="min-h-0 w-full flex-1 overflow-y-auto overscroll-contain pb-16 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+              <div className="mx-auto w-full max-w-[620px]">
               <PlannerTree
                 editLocked={pendingEdits > 0}
                 saveStatuses={saveStatuses}
@@ -908,9 +941,11 @@ export default function PlannerPage() {
                 onHoverItem={setHoveredItemId}
                 onSelectItem={handleSelectItem}
                 onEditItem={handleEditItem}
+                onCreateDependency={setDependencyFixedTask}
                 onCreateNested={handleCreateNested}
                 onResidualEstimatePrompt={handleResidualEstimatePrompt}
               />
+              </div>
             </div>
             </>
           )}
@@ -943,6 +978,15 @@ export default function PlannerPage() {
             editError={panelMode === 'edit' && failedEdit?.id === editingItem?.id ? failedEdit.error : null}
           />
         </div>
+      )}
+
+      {!isPriority && dependencyFixedTask && (
+        <DependencyDialog
+          fixedTask={dependencyFixedTask}
+          planningTree={items}
+          onClose={() => setDependencyFixedTask(null)}
+          onCreated={handleDependencyCreated}
+        />
       )}
 
       {!isPriority && estimatePrompt && (

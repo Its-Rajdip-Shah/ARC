@@ -14,6 +14,66 @@ def client(api_for, user):
 def route(item):
     return f'/api/planning/items/{item.pk}/prerequisites/'
 
+
+def graph_route(item):
+    return f'/api/planning/items/{item.pk}/dependency_graph/'
+
+
+def test_dependency_graph_returns_transitive_component_in_directional_order(client, user, make_item):
+    a = make_item(user, 'Same name')
+    b = make_item(user, 'Middle')
+    c = make_item(user, 'Same name')
+    d = make_item(user, 'Branch')
+    isolated = make_item(user, 'Isolated')
+    for prerequisite, dependent in ((a, b), (b, c), (a, d)):
+        PlanningDependency.objects.create(prerequisite=prerequisite, dependent=dependent)
+
+    response = client.get(graph_route(b))
+
+    assert response.status_code == 200, response.data
+    assert {node['id'] for node in response.data['nodes']} == {a.pk, b.pk, c.pk, d.pk}
+    assert isolated.pk not in {node['id'] for node in response.data['nodes']}
+    assert response.data['edges'] == [
+        {'prerequisite_id': a.pk, 'dependent_id': b.pk},
+        {'prerequisite_id': a.pk, 'dependent_id': d.pk},
+        {'prerequisite_id': b.pk, 'dependent_id': c.pk},
+    ]
+
+
+def test_dependency_graph_is_user_scoped(client, user, other_user, make_item):
+    own = make_item(user, 'own')
+    foreign = make_item(other_user, 'secret')
+
+    assert client.get(graph_route(foreign)).status_code == 404
+    assert client.get(graph_route(own)).data['nodes'] == [{
+        'id': own.pk, 'title': 'own', 'description': '', 'item_type': own.item_type,
+        'ancestry': [],
+    }]
+
+
+def test_dependency_graph_includes_visible_parent_ancestry_without_n_plus_one(client, user, other_user, make_item, django_assert_num_queries):
+    root = make_item(user, 'Project')
+    assignment = make_item(user, 'Assignment', parent=root)
+    prerequisite = make_item(user, 'Duplicate', parent=assignment)
+    dependent = make_item(user, 'Duplicate', description='A detailed task description.')
+    foreign_parent = make_item(other_user, 'Private')
+    PlanningDependency.objects.create(prerequisite=prerequisite, dependent=dependent)
+
+    # get_object loads its owner for the IsOwner backstop and retains the
+    # viewset's tags prefetch (two queries); the component edges and full
+    # visible hierarchy add exactly two bulk queries.
+    with django_assert_num_queries(4):
+        response = client.get(graph_route(dependent))
+
+    assert response.status_code == 200
+    nodes = {node['id']: node for node in response.data['nodes']}
+    assert nodes[prerequisite.pk]['ancestry'] == [
+        {'id': root.pk, 'title': 'Project'}, {'id': assignment.pk, 'title': 'Assignment'},
+    ]
+    assert nodes[dependent.pk]['ancestry'] == []
+    assert nodes[dependent.pk]['description'] == 'A detailed task description.'
+    assert foreign_parent.title not in str(response.data)
+
 def test_dependency_lifecycle_history_and_duplicates(client, user, make_item):
     a, b = [make_item(user, title) for title in ('a', 'b')]
     with patch.object(lifecycle, 'finish', wraps=lifecycle.finish) as finish:
@@ -115,6 +175,96 @@ def test_date_inheritance_and_explicit_clearing(client, user, make_item):
     assert parent.due_date == date(2026, 11, 5)
     assert client.patch(url, {'start_date': '2026-11-06', 'due_date': '2026-11-05'}, format='json').status_code == 400
     assert client.patch(url, {'start_date': ''}, format='json').status_code == 400
+
+
+def test_inherited_due_date_tracks_parent_until_the_child_is_explicit(client, user, make_item):
+    parent = make_item(user, 'parent', due_date=date(2026, 11, 5))
+    created = client.post('/api/planning/items/', {
+        'item_type': 'TASK', 'title': 'child', 'parent': parent.pk,
+    }, format='json')
+    assert created.status_code == 201, created.data
+    child_url = f"/api/planning/items/{created.data['id']}/"
+    assert created.data['due_date_inherited'] is True
+
+    response = client.patch(f'/api/planning/items/{parent.pk}/', {
+        'due_date': '2026-11-12',
+    }, format='json')
+    assert response.status_code == 200, response.data
+    assert client.get(child_url).data['due_date'] == '2026-11-12'
+
+    assert client.patch(child_url, {'due_date': None}, format='json').status_code == 200
+    assert client.patch(f'/api/planning/items/{parent.pk}/', {
+        'due_date': None,
+    }, format='json').status_code == 200
+    child = client.get(child_url).data
+    assert child['due_date'] is None
+    assert child['due_date_inherited'] is False
+
+
+def test_inherited_due_date_propagates_through_multiple_generations(client, user, make_item):
+    parent = make_item(user, 'parent')
+    child = client.post('/api/planning/items/', {
+        'item_type': 'TASK', 'title': 'child', 'parent': parent.pk,
+    }, format='json').data
+    grandchild = client.post('/api/planning/items/', {
+        'item_type': 'TASK', 'title': 'grandchild', 'parent': child['id'],
+    }, format='json').data
+    assert child['due_date_inherited'] is grandchild['due_date_inherited'] is True
+
+    assert client.patch(f'/api/planning/items/{parent.pk}/', {
+        'due_date': '2026-11-12',
+    }, format='json').status_code == 200
+    assert client.get(f"/api/planning/items/{child['id']}/").data['due_date'] == '2026-11-12'
+    assert client.get(f"/api/planning/items/{grandchild['id']}/").data['due_date'] == '2026-11-12'
+
+
+def test_existing_parent_due_assignment_updates_inherited_descendants_but_not_explicit_overrides(client, user, make_item):
+    parent = make_item(user, 'existing parent')
+    inherited_child = client.post('/api/planning/items/', {
+        'item_type': 'TASK', 'title': 'inherited child', 'parent': parent.pk,
+    }, format='json').data
+    inherited_grandchild = client.post('/api/planning/items/', {
+        'item_type': 'TASK', 'title': 'inherited grandchild', 'parent': inherited_child['id'],
+    }, format='json').data
+    explicit_child = client.post('/api/planning/items/', {
+        'item_type': 'TASK', 'title': 'explicit child', 'parent': parent.pk,
+        'due_date': '2026-11-18',
+    }, format='json').data
+
+    response = client.patch(f'/api/planning/items/{parent.pk}/', {
+        'due_date': '2026-11-12',
+    }, format='json')
+    assert response.status_code == 200, response.data
+    assert client.get(f"/api/planning/items/{inherited_child['id']}/").data['due_date'] == '2026-11-12'
+    assert client.get(f"/api/planning/items/{inherited_grandchild['id']}/").data['due_date'] == '2026-11-12'
+    assert client.get(f"/api/planning/items/{explicit_child['id']}/").data['due_date'] == '2026-11-18'
+
+    assert client.patch(f'/api/planning/items/{parent.pk}/', {
+        'due_date': '2026-11-15',
+    }, format='json').status_code == 200
+    assert client.get(f"/api/planning/items/{inherited_grandchild['id']}/").data['due_date'] == '2026-11-15'
+    assert client.get(f"/api/planning/items/{explicit_child['id']}/").data['due_date'] == '2026-11-18'
+
+
+def test_pre_0021_child_dates_are_not_guessed_to_be_inherited(client, user, make_item):
+    """The migration default is intentionally conservative for legacy rows."""
+    parent = make_item(user, 'legacy parent', due_date=date(2026, 11, 5))
+    legacy_child = make_item(
+        user,
+        'legacy child',
+        parent=parent,
+        due_date=date(2026, 11, 5),
+        due_date_inherited=False,
+    )
+
+    response = client.patch(f'/api/planning/items/{parent.pk}/', {
+        'due_date': '2026-11-12',
+    }, format='json')
+
+    assert response.status_code == 200, response.data
+    legacy_child.refresh_from_db()
+    assert legacy_child.due_date == date(2026, 11, 5)
+    assert legacy_child.due_date_inherited is False
 
 
 @pytest.fixture

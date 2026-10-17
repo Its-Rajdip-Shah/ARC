@@ -39,17 +39,37 @@ const find = { matchIds: new Set(), registerCard() {} }
 const roots = [1, 2, 3].map((id) => ({ id, title: `Root ${id}` }))
 const index = new Map([[1, [{ id: 42, title: task.title, date: task.scheduled_date }, { id: 43, title: 'Missing task', date: null, missingSchedule: true }]], [2, [{ id: 44, title: 'Other task', date: '2026-10-20', isCompleted: true }]]])
 
-it('root arrows are sibling buttons and navigate without toggling selection', () => {
-  const toggle = vi.fn(), navigateRoot = vi.fn()
-  const { container } = render(<TimelineSidebar roots={roots} selected={[1]} toggle={toggle} rootLeafIndex={index} navigateRoot={navigateRoot} />)
+it('root arrows live beneath panel tabs and never toggle sidebar selection', () => {
+  const toggle = vi.fn()
+  const navigateRoot = vi.fn()
+  const { container } = render(
+    <>
+      <TimelineSidebar roots={roots} selected={[1]} toggle={toggle} />
+      <TimelineTaskNavigator
+        selectedRoots={[roots[0]]}
+        rootLeafIndex={index}
+        activeRootId={1}
+        currentLeafByRoot={{ 1: 42 }}
+        navigateRoot={navigateRoot}
+        onSetActiveRoot={vi.fn()}
+        onSelectTask={vi.fn()}
+        onClose={vi.fn()}
+      />
+    </>,
+  )
+
   expect(container.querySelector('button button')).toBeNull()
+  const sidebar = screen.getByLabelText('Timeline root filters')
+  expect(sidebar.querySelector('[aria-label="Next task in Root 1"]')).toBeNull()
+
   fireEvent.click(screen.getByRole('button', { name: 'Next task in Root 1' }))
   fireEvent.click(screen.getByRole('button', { name: 'Previous task in Root 1' }))
   expect(navigateRoot.mock.calls).toEqual([[1, 1], [1, -1]])
   expect(toggle).not.toHaveBeenCalled()
   expect(screen.getByText('1/1')).toBeTruthy()
   expect(screen.getByText('1 schedule unavailable')).toBeTruthy()
-  fireEvent.click(screen.getByRole('button', { name: 'Root 1' }))
+
+  fireEvent.click(sidebar.querySelector('button[aria-label="Root 1"]'))
   expect(toggle).toHaveBeenCalledWith(1)
 })
 
@@ -136,6 +156,17 @@ it.each(['default', 'selected-date'])('%s expansion preserves the 155ms intentio
   fireEvent.mouseLeave(card)
   expect(card.classList.contains('timeline-card-hover-intent')).toBe(false)
   expect(card.classList.contains('timeline-card-expanded')).toBe(expansionVariant === 'selected-date')
+})
+
+it('today cards remain collapsed until hovered or focused', () => {
+  const { container } = render(<TimelineCard item={{ ...task, scheduled_date: todayKey() }} find={find} />)
+  const card = container.querySelector('article')
+  expect(card.classList.contains('timeline-today')).toBe(true)
+  expect(card.classList.contains('timeline-card-expanded')).toBe(false)
+  fireEvent.focus(card)
+  expect(card.classList.contains('timeline-card-expanded')).toBe(true)
+  fireEvent.blur(card)
+  expect(card.classList.contains('timeline-card-expanded')).toBe(false)
 })
 
 it('selected-date modifiers follow persistent concentration and disappear during temporary preview', () => {
@@ -810,6 +841,95 @@ it('calendar month navigation keeps the dropdown open', async () => {
   expect(jump).toHaveBeenCalledWith('2026-11-12')
   expect(trigger.getAttribute('aria-expanded')).toBe('false')
 })
+
+
+
+it('Roots heading eye toggles the whole panel without changing selection', () => {
+  const toggle = vi.fn()
+  const togglePanel = vi.fn()
+  const deselectRoots = vi.fn()
+
+  const props = {
+    roots,
+    selected: [1],
+    toggle,
+    toggleNavigatorPanel: togglePanel,
+    deselectRoots,
+  }
+
+  const { rerender } = render(
+    <TimelineSidebar {...props} navigatorVisible />,
+  )
+
+  fireEvent.click(screen.getByRole('button', {
+    name: 'Hide Root Tasks panel',
+  }))
+
+  expect(togglePanel).toHaveBeenCalledTimes(1)
+  expect(toggle).not.toHaveBeenCalled()
+  expect(deselectRoots).not.toHaveBeenCalled()
+
+  expect(screen.queryByRole('button', {
+    name: 'Hide Root 1 in Root Tasks panel',
+  })).toBeNull()
+
+  rerender(
+    <TimelineSidebar {...props} navigatorVisible={false} />,
+  )
+
+  fireEvent.click(screen.getByRole('button', {
+    name: 'Show Root Tasks panel',
+  }))
+
+  expect(togglePanel).toHaveBeenCalledTimes(2)
+  expect(toggle).not.toHaveBeenCalled()
+
+  rerender(
+    <TimelineSidebar
+      {...props}
+      selected={[]}
+      navigatorVisible={false}
+    />,
+  )
+
+  expect(screen.queryByRole('button', {
+    name: 'Show Root Tasks panel',
+  })).toBeNull()
+})
+
+
+it('date headers and timezone lanes share one sticky stack above task rows', () => {
+  const { container } = render(
+    <TimelineBoard
+      scale={makeScale('2026-10-12', 'day')}
+      items={[task]}
+      data={{ timezones: [] }}
+      grouped={false}
+      find={find}
+      scrollRef={{ current: null }}
+    />,
+  )
+
+  const board = container.querySelector('.timeline-board')
+  const header = board.querySelector('.timeline-sticky-header')
+  const axis = board.querySelector('.timeline-axis')
+  const week = board.querySelector('.timeline-current-week-strip')
+  const zones = board.querySelector('.timeline-zone-shell')
+  const guides = board.querySelector('.timeline-status-guides')
+  const row = board.querySelector('.timeline-row')
+
+  expect(header).toBeTruthy()
+  expect(header.contains(axis)).toBe(true)
+  expect(header.contains(week)).toBe(true)
+  expect(header.contains(zones)).toBe(true)
+  expect(header.contains(guides)).toBe(false)
+  expect(header.contains(row)).toBe(false)
+
+  expect(
+    header.compareDocumentPosition(row) & Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy()
+})
+
 
 it('Reset filters restores persisted Timeline defaults without changing task data', async () => {
   const { defaultTimelinePreferences } = await import('./useTimelinePreferences')

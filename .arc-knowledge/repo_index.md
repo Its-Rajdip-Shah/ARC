@@ -28,6 +28,27 @@ Generated from 358 source/config/docs files; not a test run. Read exact source b
 - Focus: `frontend/src/features/focus/*`, `frontend/src/dnd/focus/*`.
 - Regression: `backend/planning/tests/contract/*`, `backend/planning/tests/*`, frontend `*.test.*`, `tests/runners/*`.
 
+## Incremental V3 addendum — active task work
+
+- Planner task hover controls now open a confirmation-only dependency dialog. Its clicked task remains in slot one; reversing changes only the prerequisite/dependent mapping and reuses the existing dependent-scoped prerequisites API.
+- The task editor exposes a read-only dependency-DAG viewer only for connected tasks. It uses the user-scoped `items/{id}/dependency_graph/` bulk component response, keeping hierarchy out of dependency traversal.
+- Dependency-DAG cards use parent-derived ancestry and a bounded hover/focus expansion beneath the compact card; the layout uses a 44px horizontal gap without description reservation, and explicit SVG polygon arrow tips align to destination card top boundaries.
+- Child due-date inheritance is now an explicit backend fact: `PlanningItem.due_date_inherited` and migration `0021` distinguish following a parent deadline from an explicit child date/clear. Propagation is implemented in `planning.services.domain_commands` and is covered by `test_task_editor.py`.
+- Planner creation/editing invokes the established `/priority/reorder/` command only for an explicitly changed, valid priority position after the ordinary item mutation; the item API continues to reject direct `priority_position` writes.
+- Planner task forms use a clamped numeric priority position sourced from the current priority order; untouched priorities and inherited due dates stay omitted so Django retains their provenance.
+- Planner deadline markers are filled gold indicators positioned on each overdue task's own indentation rail, including nested rows.
+- Timeline Today-card detail visibility is hover/focus driven like every other date. Planner uses its existing derived `deadline_overdue` fact for a non-interactive card marker.
+- `StudentLayout` owns the multi-origin radial page background; its fixed header is transparent so the navbar retains background continuity.
+
+## Incremental update — PR freeze verification (2026-10-18)
+
+- `dependency_graph` returns `""` for nullable persisted descriptions, matching
+  the graph UI's string contract while keeping the model nullable.
+- Detail lookups eager-load the owner for the existing `IsOwner` backstop, so
+  the dependency graph remains tenant-isolated within its four-query budget.
+- Timeline anchor-conflict regression expectations derive from their current
+  date fixture rather than a stale literal calendar date.
+
 ## Area inventory
 
 ### backend:accounts — 21 files (5 test-like)
@@ -160,7 +181,7 @@ Paths: `frontend/src/dnd/timeline/timelineDragPayload.js` … `frontend/src/dnd/
 - `frontend/src/dnd/timeline/timelineProjection.js`
 - `frontend/src/dnd/timeline/timelineProjection.test.js`
 
-### documentation — 14 files (0 test-like)
+### documentation — 16 files (0 test-like)
 Paths: `AGENTS.md` … `frontend/README.md`
 - `AGENTS.md`
 - `ARCHITECTURE.md`
@@ -171,6 +192,8 @@ Paths: `AGENTS.md` … `frontend/README.md`
 - `docs/PLANNER_IMPLEMENTATION_REPORT.md`
 - `docs/developer_setup_guide.md`
 - `docs/production_setup_guide.md`
+- `docs/reviews/ARC_PR_DESCRIPTION.md`
+- `docs/reviews/ARC_PR_FREEZE_REVIEW.md`
 - `docs/scheduler.md`
 - `docs/scheduler_contract.md`
 - `docs/timeline_contract.md`
@@ -344,3 +367,28 @@ Run `.arc-knowledge/validate_index.py` after each Codex task. Changed file hashe
 - Each chip's × unselects the tag locally; it does not delete the global tag.
 - The text input remains available for tag entry and creation.
 - The tag list retains single-click selection, double-click renaming, and confirmed global deletion.
+
+## Incremental update — Shared calendar (2026-10-17)
+
+- `frontend/src/components/ArcDateCalendar.jsx`: shared date grid, month selector,
+  editable year, Today navigation and current-date highlighting.
+- `frontend/src/components/ArcDateField.jsx` and `.css`: reusable form date field
+  and popup, used by task, timezone, anchor and study-plan forms.
+- `frontend/src/components/ArcDateCalendar.test.jsx`: four interaction tests.
+- `frontend/src/features/timeline/TimelineToolbar.jsx`: uses the shared calendar.
+- `frontend/src/features/timeline/TimelineWorkflows.test.jsx`: updated heading assertions.
+- `frontend/vitest.config.js`: registers the new calendar test.
+- The eight modified files were indexed at their current working-tree hashes.
+  Their hashes do not imply that all their changes belong to the calendar checkpoint.
+- Automated verification: 237 passed, 2 skipped; production build passed.
+- Browser verification passed; calendar checkpoint committed locally as `03c334c` on `feature/arc-next-development`.
+
+## Incremental update — Dependency DAG viewer (2026-10-18)
+
+- `DependencyGraphModal.jsx` is a portaled, viewport-centered, resizable read-only,
+  top-to-bottom layered DAG. It persists validated dimensions locally, clamps them to
+  the viewport, retains intrinsic scroll dimensions, SVG arrows behind HTML task cards,
+  and empty-space drag panning.
+- `DependencyGraphModal.test.jsx` covers layout, portal positioning, resize persistence,
+  viewport constraints, graph interactions, modal lifecycle, and malformed cyclic data;
+  Vitest registers the focused test.

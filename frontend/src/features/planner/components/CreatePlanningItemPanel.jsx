@@ -3,13 +3,16 @@ import { useEffect, useId, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Plus, Trash2, X } from 'lucide-react'
 import { userDateKey } from '../../../lib/calendarDates.js'
+import { usePriorityOrder } from '../../../hooks/usePriorityOrder'
 
 import {
   createTag,
   deleteTag,
+  getDependencyGraph,
   listTags,
   updateTag,
 } from '../../../api/planning'
+import DependencyGraphModal from './DependencyGraphModal'
 
 const inputClass = `
   w-full rounded-[10px]
@@ -21,6 +24,20 @@ const inputClass = `
   placeholder:text-[#918bc7]
   focus:border-[#7c9cde]
 `
+
+function priorityMaximum(rows, isCreating) {
+  const currentMaximum = rows.reduce((maximum, row) => (
+    Number.isInteger(row.position) && row.position > maximum
+      ? row.position
+      : maximum
+  ), 0)
+  return Math.max(1, currentMaximum + (isCreating ? 1 : 0))
+}
+
+function clampPriorityPosition(value, maximum) {
+  if (!/^\d+$/.test(String(value).trim())) return maximum
+  return Math.min(Math.max(Number(value), 1), maximum)
+}
 
 export default function CreatePlanningItemPanel({
   onClose,
@@ -38,11 +55,13 @@ export default function CreatePlanningItemPanel({
   const submitted = useRef(false)
   const createOwner = useRef(null)
   const tagClickTimer = useRef(null)
+  const priorityTouched = useRef(false)
 
   useEffect(() => {
     return () => clearTimeout(tagClickTimer.current)
   }, [])
   const [createSubmitted, setCreateSubmitted] = useState(false)
+  const [dependencyGraphOpen, setDependencyGraphOpen] = useState(false)
 
   const [itemType, setItemType] = useState(editingItem?.item_type ?? 'TASK')
   const [title, setTitle] = useState(editingItem?.title ?? '')
@@ -55,6 +74,7 @@ export default function CreatePlanningItemPanel({
   const [selectedTagIds, setSelectedTagIds] = useState(() => (editingItem?.tags ?? []).map((tag) => tag.id))
   const [startDate, setStartDate] = useState((editingItem ? editingItem.start_date : parentItem?.start_date) ?? '')
   const [dueDate, setDueDate] = useState((editingItem ? editingItem.due_date : parentItem?.due_date) ?? '')
+  const [priorityPosition, setPriorityPosition] = useState(editingItem?.priority_position?.toString() ?? '')
   const [durationCategory, setDurationCategory] = useState(editingItem?.duration_category ?? '')
   const [weightPercent, setWeightPercent] = useState(editingItem?.assignment_detail?.weight_percent ?? '')
   const [submissionUrl, setSubmissionUrl] = useState(editingItem?.assignment_detail?.submission_url ?? '')
@@ -89,6 +109,14 @@ export default function CreatePlanningItemPanel({
     queryKey: ['planning-tags'],
     queryFn: listTags,
   })
+  const priorityQuery = usePriorityOrder()
+  const dependencyGraphQuery = useQuery({
+    queryKey: ['planning', 'dependency-graph', editingItem?.id],
+    queryFn: () => getDependencyGraph(editingItem.id),
+    enabled: Boolean(editingItem?.id),
+  })
+  const priorityRows = Array.isArray(priorityQuery.data) ? priorityQuery.data : []
+  const maximumPriorityPosition = priorityMaximum(priorityRows, !editingItem)
 
   const tags = Array.isArray(tagsQuery.data)
     ? tagsQuery.data
@@ -179,6 +207,7 @@ export default function CreatePlanningItemPanel({
     if (editingItem) {
       createOwner.current = null
       const source = editDraft ?? editingItem
+      priorityTouched.current = Boolean(editDraft?.priorityChanged)
       setItemType(editDraft ? source.itemType : source.item_type ?? 'TASK')
       setTitle(source.title ?? '')
       setDescription(source.description ?? '')
@@ -187,6 +216,11 @@ export default function CreatePlanningItemPanel({
       ))
       setStartDate(editDraft ? source.startDate : source.start_date ?? '')
       setDueDate(editDraft ? source.dueDate : source.due_date ?? '')
+      setPriorityPosition(
+        editDraft
+          ? source.priorityPosition ?? source.priority_position?.toString() ?? String(maximumPriorityPosition)
+          : source.priority_position?.toString() ?? String(maximumPriorityPosition),
+      )
       setDurationCategory(editDraft ? source.durationCategory : source.duration_category ?? '')
       setWeightPercent(editDraft ? source.weightPercent : source.assignment_detail?.weight_percent ?? '')
       setSubmissionUrl(editDraft ? source.submissionUrl : source.assignment_detail?.submission_url ?? '')
@@ -217,10 +251,18 @@ export default function CreatePlanningItemPanel({
     )
     setStartDate(draft?.startDate ?? parentItem?.start_date ?? '')
     setDueDate(draft?.dueDate ?? parentItem?.due_date ?? '')
+    priorityTouched.current = Boolean(draft?.priorityChanged)
+    setPriorityPosition(draft?.priorityPosition ?? String(maximumPriorityPosition))
     setDurationCategory(draft?.durationCategory ?? '')
     setWeightPercent(draft?.weightPercent ?? '')
     setSubmissionUrl(draft?.submissionUrl ?? '')
-  }, [editingItem, editDraft, parentId, parentItem, draft])
+  }, [editingItem, editDraft, parentId, parentItem, draft, maximumPriorityPosition])
+
+  useEffect(() => {
+    if (!editingItem && !draft?.priorityPosition && !priorityTouched.current) {
+      setPriorityPosition(String(maximumPriorityPosition))
+    }
+  }, [draft?.priorityPosition, editingItem, maximumPriorityPosition])
 
   function toggleTag(tagId) {
     setSelectedTagIds((current) =>
@@ -275,6 +317,20 @@ export default function CreatePlanningItemPanel({
       return
     }
 
+    const normalisedPriorityPosition = clampPriorityPosition(
+      priorityPosition,
+      maximumPriorityPosition,
+    )
+    setPriorityPosition(String(normalisedPriorityPosition))
+
+    const currentPriorityPosition = editingItem?.priority_position
+    const priorityChanged = priorityTouched.current && (
+      editingItem
+        ? Number.isInteger(currentPriorityPosition) &&
+          normalisedPriorityPosition !== currentPriorityPosition
+        : normalisedPriorityPosition !== maximumPriorityPosition
+    )
+
     const payload = {
       ...(editingItem ? {} : { parent: parentId }),
       item_type: itemType,
@@ -284,7 +340,15 @@ export default function CreatePlanningItemPanel({
     }
 
     payload.start_date = startDate || null
-    payload.due_date = dueDate || null
+    // Omit an untouched inherited deadline so Django can preserve its
+    // explicit/inherited provenance instead of treating it as an override.
+    const isUntouchedInheritedDueDate = (
+      (!editingItem && parentItem && dueDate === (parentItem.due_date ?? '')) ||
+      (editingItem?.due_date_inherited && dueDate === (editingItem.due_date ?? ''))
+    )
+    if (!isUntouchedInheritedDueDate) {
+      payload.due_date = dueDate || null
+    }
 
     if (durationCategory) {
       payload.duration_category = durationCategory
@@ -319,6 +383,8 @@ export default function CreatePlanningItemPanel({
         selectedTagIds: Object.freeze([...selectedTagIds]),
         startDate,
         dueDate,
+        priorityPosition,
+        priorityChanged,
         durationCategory,
         weightPercent,
         submissionUrl,
@@ -338,6 +404,7 @@ export default function CreatePlanningItemPanel({
             : {}),
         }),
         form,
+        priorityPosition: priorityChanged ? normalisedPriorityPosition : null,
         tags: tags
           .filter((tag) => selectedTagIds.includes(tag.id))
           .map((tag) => ({ ...tag })),
@@ -348,13 +415,14 @@ export default function CreatePlanningItemPanel({
       const form = Object.freeze({
         itemType, title, description, tagInput,
         selectedTagIds: Object.freeze([...selectedTagIds]),
-        startDate, dueDate, durationCategory, weightPercent, submissionUrl,
+        startDate, dueDate, priorityPosition, priorityChanged, durationCategory, weightPercent, submissionUrl,
       })
       onCreate?.({
         payload: Object.freeze({ ...payload, tag_ids: Object.freeze([...selectedTagIds]),
           ...(payload.assignment_detail ? { assignment_detail: Object.freeze({ ...payload.assignment_detail }) } : {}),
         }),
         form,
+        priorityPosition: priorityChanged ? normalisedPriorityPosition : null,
         tags: tags.filter((tag) => selectedTagIds.includes(tag.id)).map((tag) => ({ ...tag })),
       })
     }
@@ -388,7 +456,7 @@ export default function CreatePlanningItemPanel({
         <X size={16} strokeWidth={1.9} />
       </button>
 
-      <form onSubmit={handleSubmit}>
+      <form noValidate onSubmit={handleSubmit}>
         <div
           className="
             flex h-[26px] w-full overflow-hidden
@@ -710,6 +778,27 @@ export default function CreatePlanningItemPanel({
 
         {/* Manual estimate */}
         <div className="mt-[15px]">
+          <label className="flex items-center gap-2 text-[12px] text-white">
+            <span className="shrink-0">Priority:</span>
+            <input
+              type="number"
+              inputMode="numeric"
+              min="1"
+              max={maximumPriorityPosition}
+              step="1"
+              aria-label="Priority position"
+              value={priorityPosition}
+              onChange={(event) => {
+                priorityTouched.current = true
+                setPriorityPosition(event.target.value)
+              }}
+              onBlur={() => setPriorityPosition(String(clampPriorityPosition(priorityPosition, maximumPriorityPosition)))}
+              className={`${inputClass} w-[72px] py-[5px]`}
+            />
+          </label>
+        </div>
+
+        <div className="mt-[15px]">
           <p className="mb-[6px] text-[12px] text-white">
             Original estimate:
           </p>
@@ -760,6 +849,16 @@ export default function CreatePlanningItemPanel({
             Progress {Number(editingItem.percent_completed ?? 0)}%
             {editingItem.remaining_fraction != null && <> · Remaining {Math.round(Number(editingItem.remaining_fraction) * 100)}%</>}
           </p>
+        )}
+
+        {editingItem && dependencyGraphQuery.data?.edges?.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setDependencyGraphOpen(true)}
+            className="mt-3 w-full rounded-[8px] border border-[#7c9cde] bg-[#2c3369] px-3 py-2 text-[12px] font-medium text-[#c3d19b] hover:bg-[#383969]"
+          >
+            Dependencies
+          </button>
         )}
 
         {/* Assignment-only */}
@@ -883,6 +982,12 @@ export default function CreatePlanningItemPanel({
           {editingItem ? 'SAVE' : 'CREATE'}
         </button>
       </form>
+      {dependencyGraphOpen && (
+        <DependencyGraphModal
+          task={editingItem}
+          onClose={() => setDependencyGraphOpen(false)}
+        />
+      )}
     </aside>
   )
 }

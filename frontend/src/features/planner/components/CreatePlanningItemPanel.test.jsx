@@ -584,7 +584,11 @@ test('failed EDIT restores all form fields and SAVE passes one immutable snapsho
   expect(screen.getByLabelText(/Weightage:/).value).toBe(editForm.weightPercent)
   expect(screen.getByPlaceholderText('submission link...').value).toBe(editForm.submissionUrl)
   expect(screen.getByRole('button', { name: '<1h' }).getAttribute('aria-pressed')).toBe('true')
-  expect(screen.getByRole('alert').textContent).toContain('Rejected edit')
+  expect(
+    screen.getAllByRole('alert').some(
+      (alert) => alert.textContent.includes('Rejected edit'),
+    ),
+  ).toBe(true)
   const form = screen.getByText('SAVE').closest('form')
   fireEvent.submit(form)
   fireEvent.submit(form)
@@ -644,7 +648,11 @@ test('failed SAVE rolls back edited fields, preserves other changes, reopens the
   await screen.findByPlaceholderText('title...')
   expect(screen.getByPlaceholderText('title...').value).toBe('  Preserved title  ')
   expect(screen.getByPlaceholderText('tags...').value).toBe('unfinished tag')
-  expect(screen.getByRole('alert').textContent).toContain('Rejected edit')
+  expect(
+    screen.getAllByRole('alert').some(
+      (alert) => alert.textContent.includes('Rejected edit'),
+    ),
+  ).toBe(true)
   expect(cache.getQueryData(['planning', 'tree'])[0]).toMatchObject({ title: 'Parent', is_completed: true })
   expect(cache.getQueryData(['planning', 'tree'])[1].title).toBe('Unrelated')
   api.updateItem.mockResolvedValue({ id: 1, title: 'Saved', children: [] })
@@ -936,4 +944,41 @@ test('creating a new tag adds a chip and keeps the input usable', async () => {
 
   fireEvent.change(input, { target: { value: 'Another' } })
   expect(input.value).toBe('Another')
+})
+
+
+test('assignment weightage outside 0–100 blocks submission', () => {
+  mount()
+  fireEvent.click(screen.getByRole('button', { name: 'Assignment' }))
+  fireEvent.change(screen.getByPlaceholderText('title...'), {
+    target: { value: 'Assignment' },
+  })
+  fireEvent.click(screen.getByRole('button', { name: '<1h' }))
+  fireEvent.change(screen.getByLabelText(/Weightage:/), {
+    target: { value: '101' },
+  })
+
+  expect(screen.getByRole('alert').textContent).toContain(
+    'Weightage must be between 0 and 100',
+  )
+  expect(screen.getByRole('button', { name: 'CREATE' }).disabled).toBe(true)
+  expect(api.createItem).not.toHaveBeenCalled()
+})
+
+test('invalid assignment submission link blocks submission', () => {
+  mount()
+  fireEvent.click(screen.getByRole('button', { name: 'Assignment' }))
+  fireEvent.change(screen.getByPlaceholderText('title...'), {
+    target: { value: 'Assignment' },
+  })
+  fireEvent.click(screen.getByRole('button', { name: '<1h' }))
+  fireEvent.change(screen.getByPlaceholderText('submission link...'), {
+    target: { value: 'not-a-url' },
+  })
+
+  expect(screen.getByRole('alert').textContent).toContain(
+    'Enter a valid http:// or https:// submission link.',
+  )
+  expect(screen.getByRole('button', { name: 'CREATE' }).disabled).toBe(true)
+  expect(api.createItem).not.toHaveBeenCalled()
 })

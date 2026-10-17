@@ -60,6 +60,27 @@ export default function CreatePlanningItemPanel({
   const estimateFeedbackId = useId()
   const missingOriginalEstimate = !editingItem && !durationCategory
   const dueDateErrorId = useId()
+  const assignmentWeightInvalid =
+    itemType === 'ASSIGNMENT' &&
+    weightPercent !== '' &&
+    (
+      !Number.isFinite(Number(weightPercent)) ||
+      Number(weightPercent) < 0 ||
+      Number(weightPercent) > 100 ||
+      !/^\d+(?:\.\d{1,2})?$/.test(String(weightPercent))
+    )
+
+  const assignmentUrlInvalid = (() => {
+    if (itemType !== 'ASSIGNMENT' || !submissionUrl.trim()) return false
+
+    try {
+      const url = new URL(submissionUrl.trim())
+      return !['https:', 'http:'].includes(url.protocol)
+    } catch {
+      return true
+    }
+  })()
+
   const today = userDateKey()
   const invalidPastDueDate = Boolean(dueDate && dueDate < today && dueDate !== editingItem?.due_date)
 
@@ -242,6 +263,8 @@ export default function CreatePlanningItemPanel({
       !trimmedTitle ||
       missingOriginalEstimate ||
       invalidPastDueDate ||
+      assignmentWeightInvalid ||
+      assignmentUrlInvalid ||
       (!editingItem && submitted.current)
     ) {
       return
@@ -759,6 +782,7 @@ export default function CreatePlanningItemPanel({
                   min="0"
                   max="100"
                   step="0.01"
+                  aria-invalid={assignmentWeightInvalid}
                   value={weightPercent}
                   onChange={(event) =>
                     setWeightPercent(event.target.value)
@@ -777,8 +801,15 @@ export default function CreatePlanningItemPanel({
               </div>
             </label>
 
+            {assignmentWeightInvalid && (
+              <p role="alert" className="text-[11px] text-[#e87979]">
+                Weightage must be between 0 and 100, with at most two decimal places.
+              </p>
+            )}
+
             <input
               type="url"
+              aria-invalid={assignmentUrlInvalid}
               value={submissionUrl}
               onChange={(event) =>
                 setSubmissionUrl(event.target.value)
@@ -786,6 +817,11 @@ export default function CreatePlanningItemPanel({
               placeholder="submission link..."
               className={inputClass}
             />
+            {assignmentUrlInvalid && (
+              <p role="alert" className="text-[11px] text-[#e87979]">
+                Enter a valid http:// or https:// submission link.
+              </p>
+            )}
           </div>
         )}
 
@@ -834,6 +870,8 @@ export default function CreatePlanningItemPanel({
             !title.trim() ||
             missingOriginalEstimate ||
             invalidPastDueDate ||
+            assignmentWeightInvalid ||
+            assignmentUrlInvalid ||
             Boolean(startDate && dueDate && startDate > dueDate) ||
             (!editingItem && createSubmitted)
           }

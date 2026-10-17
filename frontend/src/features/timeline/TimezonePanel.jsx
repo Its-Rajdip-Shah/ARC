@@ -46,6 +46,8 @@ function ZoneRow({
     zone.end_date,
   )
 
+  const invalidRange = Boolean(startDate && endDate && endDate < startDate)
+
   const save =
     useMutation({
       mutationFn: () =>
@@ -122,7 +124,8 @@ function ZoneRow({
           save.isPending ||
           !title.trim() ||
           !startDate ||
-          !endDate
+          !endDate ||
+          invalidRange
         }
         onClick={() =>
           save.mutate()
@@ -146,6 +149,16 @@ function ZoneRow({
       >
         <Trash2 size={15} />
       </button>
+
+      {invalidRange && (
+        <p role="alert">End date cannot be earlier than start date.</p>
+      )}
+      {save.isError && (
+        <p role="alert">Could not save timezone. Please try again.</p>
+      )}
+      {remove.isError && (
+        <p role="alert">Could not delete timezone. Please try again.</p>
+      )}
     </div>
   )
 }
@@ -212,6 +225,12 @@ export default function TimezonePanel({
           await refresh()
         },
     })
+
+  const invalidDraftRange = Boolean(
+    draft.start_date &&
+    draft.end_date &&
+    draft.end_date < draft.start_date
+  )
 
   const zones =
     Array.isArray(
@@ -336,7 +355,8 @@ export default function TimezonePanel({
             create.isPending ||
             !draft.title.trim() ||
             !draft.start_date ||
-            !draft.end_date
+            !draft.end_date ||
+            invalidDraftRange
           }
           onClick={() =>
             create.mutate()
@@ -346,6 +366,13 @@ export default function TimezonePanel({
           Add
         </button>
       </div>
+
+      {invalidDraftRange && (
+        <p role="alert">End date cannot be earlier than start date.</p>
+      )}
+      {create.isError && (
+        <p role="alert">Could not create timezone. Please try again.</p>
+      )}
     </section>
   )
 }

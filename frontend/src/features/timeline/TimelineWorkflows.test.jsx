@@ -23,9 +23,10 @@ vi.mock('../planner/components/CreatePlanningItemPanel', () => ({ default: (prop
   pageData.editor(props)
   return <aside aria-label="Canonical editor"><button onClick={props.onClose}>Close editor</button></aside>
 } }))
-vi.mock('./TimelineToolbar', () => ({ default: ({ find, options, update, navigate }) => <div>
+vi.mock('./TimelineToolbar', () => ({ default: ({ find, options, update, navigate, onReset }) => <div>
   <input aria-label="Timeline search" value={find.query} onChange={(event) => find.changeQuery(event.target.value)} />
   <button onClick={() => navigate(1)}>Next date window</button>
+  <button onClick={onReset}>Reset filters</button>
   <button onClick={() => update({ completed: !options.completed })}>Show completed</button>
 </div> }))
 vi.mock('./SchedulerRunButton', () => ({ default: () => <button>Run scheduler</button> }))
@@ -808,4 +809,57 @@ it('calendar month navigation keeps the dropdown open', async () => {
 
   expect(jump).toHaveBeenCalledWith('2026-11-12')
   expect(trigger.getAttribute('aria-expanded')).toBe('false')
+})
+
+it('Reset filters restores persisted Timeline defaults without changing task data', async () => {
+  const { defaultTimelinePreferences } = await import('./useTimelinePreferences')
+
+  // TimelineBoard observes its dimensions in browsers; jsdom lacks ResizeObserver.
+  vi.stubGlobal('ResizeObserver', class {
+    observe() {}
+    disconnect() {}
+  })
+
+  // jsdom does not implement scrolling on HTML elements.
+  const scrollTo = vi.fn()
+  vi.spyOn(HTMLElement.prototype, 'scrollTo', 'get').mockReturnValue(scrollTo)
+
+  localStorage.setItem(
+    'arc.timeline.v1.77',
+    JSON.stringify({
+      zoom: 'month',
+      type: 'tasks',
+      durations: ['UNDER_1_HOUR'],
+      grouped: false,
+      completed: true,
+      roots: [1],
+    }),
+  )
+
+  pageData.roots = roots
+  pageData.universe = []
+  pageData.groups = []
+  pageData.run.mockClear()
+
+  const { unmount } = render(<TimelinePage />)
+
+  fireEvent.change(
+    screen.getByRole('textbox', { name: 'Timeline search' }),
+    { target: { value: 'something' } },
+  )
+
+  fireEvent.click(screen.getByRole('button', { name: 'Reset filters' }))
+
+  expect(
+    screen.getByRole('textbox', { name: 'Timeline search' }).value,
+  ).toBe('')
+
+  expect(
+    JSON.parse(localStorage.getItem('arc.timeline.v1.77')),
+  ).toEqual(defaultTimelinePreferences())
+
+  expect(pageData.run).not.toHaveBeenCalled()
+
+  unmount()
+  localStorage.removeItem('arc.timeline.v1.77')
 })

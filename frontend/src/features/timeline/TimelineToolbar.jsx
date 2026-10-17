@@ -21,6 +21,7 @@ import {
   TriangleAlert,
   Undo2,
   X,
+  RotateCcw,
 } from 'lucide-react'
 
 import monkSettingsIcon from '../../assets/icons/locked-in_monk-mode/monk-mode-hands-down-dark.png'
@@ -441,6 +442,7 @@ export default function TimelineToolbar({
   setZoom,
   navigate,
   jump,
+  onReset,
   options,
   update,
   anchorNav,
@@ -543,6 +545,14 @@ export default function TimelineToolbar({
           </>
         )}
       </div>
+
+      <IconButton
+        label="Reset filters"
+        onClick={onReset}
+        disabled={!onReset}
+      >
+        <RotateCcw size={16} />
+      </IconButton>
 
       <IconButton
         label="Previous period"

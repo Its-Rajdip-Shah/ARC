@@ -37,7 +37,9 @@ import { buildRootLeafIndex, findInitialVisibleRootLeaf, findTreeItemById, stepR
 import TimelineSidebar from './TimelineSidebar'
 import TimelineToolbar from './TimelineToolbar'
 import useTimelineActions from './useTimelineActions'
-import useTimelinePreferences from './useTimelinePreferences'
+import useTimelinePreferences, {
+  defaultTimelinePreferences,
+} from './useTimelinePreferences'
 import useSequenceNavigator from './useSequenceNavigator'
 
 import {
@@ -556,6 +558,35 @@ function TimelineContent({
       jump,
     )
 
+  function resetTimelineView() {
+    // Reset user-facing preferences using the existing persistence mechanism.
+    update(defaultTimelinePreferences())
+
+    // Clear search and all temporary navigation modes.
+    find.changeQuery('')
+    setNavigationTarget(null)
+
+    setAnchoredActive(false)
+    anchoredSequence.reset()
+
+    setOverloadActive(false)
+    overloadSequence.reset()
+
+    setInfeasibleActive(false)
+    infeasibleSequence.reset()
+
+    // Remove transient root-navigation state.
+    explicitLeafByRoot.current.clear()
+    setCurrentLeafByRoot({})
+    setActiveNavigatorRootId(null)
+    setNavigatorVisible(false)
+    setNavigatorMinimized(false)
+    setNavigatorPosition(null)
+
+    // Restore the default date and scroll position.
+    jump()
+  }
+
   const navigateWindow =
     useCallback(
       (amount) => {
@@ -1024,6 +1055,7 @@ function TimelineContent({
         Timeline
       </h1>
 
+      <div className="timeline-toolbar-stack">
       <TimelineToolbar
         find={find}
         actions={actions}
@@ -1041,6 +1073,7 @@ function TimelineContent({
           navigateWindow
         }
         jump={jump}
+        onReset={resetTimelineView}
         options={options}
         update={update}
         anchorNav={{
@@ -1144,6 +1177,7 @@ function TimelineContent({
           }
         />
       )}
+      </div>
 
       {query.isPending ? (
         <p

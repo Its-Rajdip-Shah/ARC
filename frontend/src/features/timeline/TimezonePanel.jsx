@@ -93,7 +93,7 @@ function ZoneRow({
         aria-label="Timezone title"
       />
 
-      <ArcDateField
+      <ArcDateField monthFormat="short" cardMode
         type="date"
         value={startDate}
         onChange={(event) =>
@@ -106,7 +106,7 @@ function ZoneRow({
         }
       />
 
-      <ArcDateField
+      <ArcDateField monthFormat="short" cardMode
         type="date"
         value={endDate}
         onChange={(event) =>
@@ -314,7 +314,7 @@ export default function TimezonePanel({
           }
         />
 
-        <ArcDateField
+        <ArcDateField monthFormat="short" cardMode
           type="date"
           value={
             draft.start_date
@@ -332,7 +332,7 @@ export default function TimezonePanel({
           }
         />
 
-        <ArcDateField
+        <ArcDateField monthFormat="short" cardMode
           type="date"
           value={
             draft.end_date

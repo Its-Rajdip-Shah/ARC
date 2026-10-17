@@ -5,7 +5,7 @@ import { CalendarDays, X } from 'lucide-react'
 import ArcDateCalendar from './ArcDateCalendar'
 import './ArcDateField.css'
 
-function formatDisplayDate(value) {
+function formatDisplayDate(value, monthFormat = 'long') {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value || '')) {
     return value || ''
   }
@@ -29,7 +29,7 @@ function formatDisplayDate(value) {
     : ({ 1: 'st', 2: 'nd', 3: 'rd' }[day % 10] || 'th')
 
   const monthName = date.toLocaleDateString('en-AU', {
-    month: 'long',
+    month: monthFormat,
   })
 
   return `${day}${suffix} ${monthName} ${year}`
@@ -39,6 +39,8 @@ export default function ArcDateField({
   value = '',
   onChange,
   className = '',
+  monthFormat = 'long',
+  cardMode = false,
   disabled = false,
   style,
   ...inputProps
@@ -137,7 +139,11 @@ export default function ArcDateField({
   return (
     <span
       ref={wrapperRef}
-      className="arc-date-field"
+      className={
+        cardMode
+          ? 'arc-date-field arc-date-field-card'
+          : 'arc-date-field'
+      }
       style={style}
     >
       <input
@@ -164,10 +170,12 @@ export default function ArcDateField({
         aria-controls={open ? popupId : undefined}
         onClick={() => setOpen((current) => !current)}
       >
-        {formatDisplayDate(value)}
+        {formatDisplayDate(value, monthFormat) || (
+          cardMode ? 'Select date' : ''
+        )}
       </button>
 
-      {value && !disabled && (
+      {value && !disabled && !cardMode && (
         <button
           type="button"
           className="arc-date-field-clear"
@@ -184,7 +192,7 @@ export default function ArcDateField({
         </button>
       )}
 
-      <button
+      {!cardMode && <button
         type="button"
         className="arc-date-field-trigger"
         aria-label={
@@ -198,7 +206,7 @@ export default function ArcDateField({
         onClick={() => setOpen((current) => !current)}
       >
         <CalendarDays size={15} />
-      </button>
+      </button>}
 
       {open && position && createPortal(
         <div

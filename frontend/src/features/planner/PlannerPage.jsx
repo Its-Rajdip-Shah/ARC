@@ -688,7 +688,7 @@ export default function PlannerPage() {
   const items = planningTree ?? []
 
   return (
-    <div className="relative flex min-h-screen flex-col md:flex-row">
+    <div className="relative flex h-dvh min-h-0 flex-col overflow-hidden md:flex-row">
       {!isPriority && <PlannerSidebar
         scheduler={<FocusSchedulerMascot className="planner-scheduler-mascot" />}
         roots={items.filter((item) => !item.is_provisional)}
@@ -704,7 +704,7 @@ export default function PlannerPage() {
         onNavigateToRoot={handleNavigateToRoot}
       />}
 
-      <main className={isPriority ? 'priority-page-content min-w-0 flex-1' : 'min-w-0 flex-1 px-16 pb-16 pt-0'}>
+      <main className={isPriority ? 'priority-page-content min-w-0 flex-1' : 'flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden px-16 pt-[80px]'}>
         {isPriority ? (
           <PriorityPanel
             canUndo={canUndo}
@@ -714,14 +714,14 @@ export default function PlannerPage() {
             onRedo={() => redoMutation.mutate()}
           />
         ) : (
-        <div className="mx-auto w-full max-w-[620px]">
+        <div className="mx-auto flex min-h-0 w-full max-w-[620px] flex-1 flex-col">
           {isLoading && <p>Loading planner...</p>}
           {isError && !planningTree && <p>Could not load planner.</p>}
 
           {!isLoading && (!isError || planningTree) && (
             <>
             <div className="
-              sticky top-[80px] z-20 mb-2 flex h-[38px]
+              relative z-20 mb-2 flex h-[38px] shrink-0
               items-center justify-between gap-1 px-3
 
               rounded-[10px]
@@ -874,13 +874,6 @@ export default function PlannerPage() {
               </button>
             </div>
 
-            <button type="button" onClick={() => {
-              panelGeneration.current += 1
-              setActiveDraft(null)
-              setEditingItem(null)
-              setCreateParentId(null)
-              setPanelMode('create')
-            }} className="text-sm text-[#9db6e8]">Create task or assignment</button>
             {recoveryDrafts.map((draft, index) => (
               <div key={index} role="alert" className="mt-2 text-sm text-[#e87979]">
                 Could not create “{draft.form.title}”. Your draft is saved.
@@ -898,7 +891,7 @@ export default function PlannerPage() {
                 <button type="button" onClick={() => setFailedEdit(null)}>Dismiss edit error</button>
               </div>
             )}
-            <div className="mt-[80px]">
+            <div aria-label="Planner task list" role="region" className="min-h-0 flex-1 overflow-y-auto overscroll-contain pb-16 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
               <PlannerTree
                 editLocked={pendingEdits > 0}
                 saveStatuses={saveStatuses}

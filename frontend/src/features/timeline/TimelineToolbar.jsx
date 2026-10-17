@@ -1,3 +1,5 @@
+import { createPortal } from 'react-dom'
+
 import {
   useEffect,
   useRef,
@@ -27,6 +29,7 @@ import editCalendarIcon from '../../assets/icons/edit-calendar.svg'
 
 import { BUCKETS } from './timelineDates'
 import DurationGlyph from './DurationGlyph'
+import SchedulerPanel from './SchedulerPanel'
 
 function IconButton({
   label,
@@ -120,332 +123,395 @@ function SequenceToggle({
 }
 
 
+
+// One controller owns all toolbar dropdowns. Hover previews a menu;
+// clicking pins it, and selecting an option may optionally close it.
+function useToolbarDropdown() {
+  const HOVER_DELAY_MS = 220
+
+  const [active, setActive] = useState(null)
+  const [pinned, setPinned] = useState(false)
+  const rootRef = useRef(null)
+  const hoverTimer = useRef(null)
+
+  function cancelHover() {
+    if (hoverTimer.current !== null) {
+      clearTimeout(hoverTimer.current)
+      hoverTimer.current = null
+    }
+  }
+
+  function close() {
+    cancelHover()
+    setActive(null)
+    setPinned(false)
+  }
+
+  function enter(id) {
+    cancelHover()
+
+    // A pinned menu cannot be displaced by passing over another button.
+    if (pinned || active === id) return
+
+    hoverTimer.current = setTimeout(() => {
+      hoverTimer.current = null
+      setActive(id)
+    }, HOVER_DELAY_MS)
+  }
+
+  function leave(id) {
+    cancelHover()
+
+    if (!pinned) {
+      setActive((current) => current === id ? null : current)
+    }
+  }
+
+  function toggle(id) {
+    cancelHover()
+
+    if (active === id && pinned) {
+      close()
+    } else {
+      setActive(id)
+      setPinned(true)
+    }
+  }
+
+  function select(closeOnSelect = true) {
+    if (closeOnSelect) close()
+  }
+
+  useEffect(() => {
+    function outside(event) {
+      if (!rootRef.current?.contains(event.target)) close()
+    }
+
+    function escape(event) {
+      if (event.key === 'Escape') close()
+    }
+
+    document.addEventListener('pointerdown', outside)
+    document.addEventListener('keydown', escape)
+
+    return () => {
+      cancelHover()
+      document.removeEventListener('pointerdown', outside)
+      document.removeEventListener('keydown', escape)
+    }
+  }, [])
+
+  return {
+    active,
+    pinned,
+    rootRef,
+    close,
+    enter,
+    leave,
+    toggle,
+    select,
+  }
+}
+
+function ToolbarDropdown({
+  id,
+  label,
+  trigger,
+  controller,
+  children,
+  className = '',
+  closeOnSelect = true,
+}) {
+  const open = controller.active === id
+  const triggerRef = useRef(null)
+  const tooltipTimer = useRef(null)
+  const [tooltipPosition, setTooltipPosition] = useState(null)
+
+  function hideTooltip() {
+    if (tooltipTimer.current !== null) {
+      clearTimeout(tooltipTimer.current)
+      tooltipTimer.current = null
+    }
+    setTooltipPosition(null)
+  }
+
+  function showTooltipAfterDelay() {
+    if (tooltipTimer.current !== null) {
+      clearTimeout(tooltipTimer.current)
+    }
+
+    tooltipTimer.current = setTimeout(() => {
+      tooltipTimer.current = null
+
+      const rect = triggerRef.current?.getBoundingClientRect()
+      if (!rect) return
+
+      setTooltipPosition({
+        left: rect.left + rect.width / 2,
+        top: rect.top - 9,
+      })
+    }, 450)
+  }
+
+  useEffect(() => {
+    return () => {
+      if (tooltipTimer.current !== null) {
+        clearTimeout(tooltipTimer.current)
+      }
+    }
+  }, [])
+
+  return (
+    <div
+      className={'timeline-picker timeline-dropdown-host ' + className}
+      onMouseEnter={() => controller.enter(id)}
+      onMouseLeave={() => {
+        controller.leave(id)
+        hideTooltip()
+      }}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) {
+          controller.leave(id)
+          hideTooltip()
+        }
+      }}
+    >
+      <button
+        ref={triggerRef}
+        type="button"
+        aria-label={label}
+        aria-expanded={open}
+        onMouseEnter={showTooltipAfterDelay}
+        onMouseLeave={hideTooltip}
+        onFocus={() => controller.enter(id)}
+        onBlur={hideTooltip}
+        onClick={() => controller.toggle(id)}
+      >
+        {trigger}
+      </button>
+
+      {tooltipPosition && createPortal(
+        <span
+          role="tooltip"
+          className="timeline-dropdown-floating-tooltip"
+          style={{
+            left: tooltipPosition.left,
+            top: tooltipPosition.top,
+          }}
+        >
+          {label}
+        </span>,
+        document.body,
+      )}
+
+      {open && (
+        <div
+          className="timeline-popover timeline-dropdown-content"
+          role="group"
+          aria-label={label + ' options'}
+          onClick={(event) => {
+            if (event.target.closest('[data-dropdown-select]')) {
+              controller.select(closeOnSelect)
+            }
+          }}
+        >
+          {children}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function HoverPicker({
   label,
   value,
   options,
   onChange,
+  controller,
 }) {
-  const [
-    open,
-    setOpen,
-  ] = useState(false)
-
-  const trigger =
-    useRef(null)
-
-  const hoverTimer =
-    useRef(null)
-
-  useEffect(
-    () => () => {
-      if (
-        hoverTimer.current
-      ) {
-        clearTimeout(
-          hoverTimer.current,
-        )
-      }
-    },
-    [],
-  )
-
-  function delayedOpen() {
-    if (
-      hoverTimer.current
-    ) {
-      clearTimeout(
-        hoverTimer.current,
-      )
-    }
-
-    hoverTimer.current =
-      setTimeout(
-        () =>
-          setOpen(true),
-        180,
-      )
-  }
-
-  function cancelDelayedOpen() {
-    if (
-      hoverTimer.current
-    ) {
-      clearTimeout(
-        hoverTimer.current,
-      )
-
-      hoverTimer.current =
-        null
-    }
-  }
-
   const selected =
-    options.find(
-      (option) =>
-        option.value ===
-        value,
-    ) ??
-    options[0]
+    options.find((option) => option.value === value) ?? options[0]
 
   return (
-    <div
-      className="timeline-picker"
-      onMouseEnter={
-        delayedOpen
-      }
-      onMouseLeave={(event) => {
-        cancelDelayedOpen()
-
-        if (
-          !event.currentTarget.contains(
-            document.activeElement,
-          )
-        ) {
-          setOpen(false)
-        }
-      }}
-      onFocus={() =>
-        setOpen(true)
-      }
-      onBlur={(event) => {
-        if (
-          !event.currentTarget.contains(
-            event.relatedTarget,
-          )
-        ) {
-          setOpen(false)
-        }
-      }}
+    <ToolbarDropdown
+      id={label}
+      label={label}
+      trigger={<>{selected.label} ▾</>}
+      controller={controller}
     >
-      <button
-        ref={trigger}
-        type="button"
-        aria-label={label}
-        aria-expanded={open}
-        onClick={() =>
-          setOpen(
-            (current) =>
-              !current,
-          )
-        }
-      >
-        {selected.label} ▾
-      </button>
-
-      {open && (
-        <div
-          className="
-            timeline-popover
-            timeline-picker-options
-          "
-          role="group"
-          aria-label={label}
-        >
-          {options.map(
-            (option) => (
-              <button
-                key={
-                  option.value
-                }
-                type="button"
-                aria-pressed={
-                  option.value ===
-                  value
-                }
-                onClick={() => {
-                  onChange(
-                    option.value,
-                  )
-
-                  trigger.current
-                    ?.focus()
-
-                  setOpen(false)
-                }}
-              >
-                {option.label}
-              </button>
-            ),
-          )}
-        </div>
-      )}
-    </div>
+      <div className="timeline-picker-options">
+        {options.map((option) => (
+          <button
+            key={option.value}
+            type="button"
+            aria-pressed={option.value === value}
+            data-dropdown-select
+            onClick={() => onChange(option.value)}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
+    </ToolbarDropdown>
   )
 }
 
 function DurationPicker({
   selected = [],
   onChange,
+  controller,
 }) {
-  const [
-    open,
-    setOpen,
-  ] = useState(false)
-
-  const values =
-    new Set(
-      selected.length
-        ? selected
-        : BUCKETS.map(
-            (bucket) =>
-              bucket.key,
-          ),
-    )
+  const values = new Set(
+    selected.length
+      ? selected
+      : BUCKETS.map((bucket) => bucket.key),
+  )
 
   function toggle(key) {
-    const next =
-      new Set(values)
+    const next = new Set(values)
 
-    if (
-      next.has(key)
-    ) {
-      // Keep at least one category selected.
-      if (
-        next.size === 1
-      ) {
-        return
-      }
-
+    if (next.has(key)) {
+      if (next.size === 1) return
       next.delete(key)
     } else {
       next.add(key)
     }
 
     onChange(
-      BUCKETS
-        .map(
-          (bucket) =>
-            bucket.key,
-        )
-        .filter(
-          (value) =>
-            next.has(value),
-        ),
+      BUCKETS.map((bucket) => bucket.key).filter((key) => next.has(key)),
     )
   }
 
   return (
-    <div
-      className="
-        timeline-picker
-        timeline-duration-picker
-      "
-      onBlur={(event) => {
-        if (
-          !event.currentTarget.contains(
-            event.relatedTarget,
-          )
-        ) {
-          setOpen(false)
-        }
-      }}
+    <ToolbarDropdown
+      id="Estimated duration"
+      label="Estimated duration"
+      className="timeline-duration-picker"
+      controller={controller}
+      closeOnSelect={false}
+      trigger={
+        <>
+          <DurationGlyph level={Math.max(1, Math.min(6, values.size))} />
+          <span>{values.size === 6 ? 'All' : `${values.size}/6`}</span>
+          ▾
+        </>
+      }
     >
-      <button
-        type="button"
-        aria-label="Estimated duration"
-        aria-expanded={open}
-        onClick={() =>
-          setOpen(
-            (current) =>
-              !current,
-          )
-        }
-      >
-        <DurationGlyph
-          level={
-            Math.max(
-              1,
-              Math.min(
-                6,
-                values.size,
-              ),
-            )
-          }
-        />
-
-        <span>
-          {
-            values.size === 6
-              ? 'All'
-              : `${values.size}/6`
-          }
-        </span>
-
-        ▾
-      </button>
-
-      {open && (
-        <div
-          className="
-            timeline-popover
-            timeline-duration-matrix
-          "
-          role="group"
-          aria-label="Estimated duration filters"
-        >
-          {BUCKETS.map(
-            (bucket) => (
-              <button
-                key={
-                  bucket.key
-                }
-                type="button"
-                aria-pressed={
-                  values.has(
-                    bucket.key,
-                  )
-                }
-                onClick={() =>
-                  toggle(
-                    bucket.key,
-                  )
-                }
-              >
-                <DurationGlyph
-                  level={
-                    bucket.level
-                  }
-                />
-
-                <span>
-                  {
-                    bucket.shortLabel
-                  }
-                </span>
-              </button>
-            ),
-          )}
-        </div>
-      )}
-    </div>
+      <div className="timeline-duration-matrix">
+        {BUCKETS.map((bucket) => (
+          <button
+            key={bucket.key}
+            type="button"
+            aria-pressed={values.has(bucket.key)}
+            data-dropdown-select
+            onClick={() => toggle(bucket.key)}
+          >
+            <DurationGlyph level={bucket.level} />
+            <span>{bucket.shortLabel}</span>
+          </button>
+        ))}
+      </div>
+    </ToolbarDropdown>
   )
 }
 
-function ZoomPicker({
-  value,
-  onChange,
-}) {
+function ZoomPicker({ value, onChange, controller }) {
   return (
     <HoverPicker
       label="Timeline scale"
       value={value}
       onChange={onChange}
+      controller={controller}
       options={[
-        {
-          value: 'day',
-          label: 'Day',
-        },
-        {
-          value: 'week',
-          label: 'Week',
-        },
-        {
-          value: 'month',
-          label: 'Month',
-        },
+        { value: 'day', label: 'Day' },
+        { value: 'week', label: 'Week' },
+        { value: 'month', label: 'Month' },
       ]}
     />
+  )
+}
+
+function DateCalendar({ anchor, onChoose }) {
+  const initial = /^\d{4}-\d{2}-\d{2}$/.test(anchor || '')
+    ? anchor
+    : new Date().toLocaleDateString('en-CA')
+
+  const [year, month] = initial.split('-').map(Number)
+  const [view, setView] = useState(() => new Date(year, month - 1, 1))
+
+  const firstDay = new Date(view.getFullYear(), view.getMonth(), 1).getDay()
+  const daysInMonth = new Date(
+    view.getFullYear(),
+    view.getMonth() + 1,
+    0,
+  ).getDate()
+
+  function moveMonth(amount) {
+    setView((current) => new Date(
+      current.getFullYear(),
+      current.getMonth() + amount,
+      1,
+    ))
+  }
+
+  function choose(day) {
+    const date = [
+      view.getFullYear(),
+      String(view.getMonth() + 1).padStart(2, '0'),
+      String(day).padStart(2, '0'),
+    ].join('-')
+
+    onChoose(date)
+  }
+
+  return (
+    <div className="timeline-date-calendar">
+      <div className="timeline-calendar-header">
+        <button type="button" aria-label="Previous month"
+          onClick={() => moveMonth(-1)}>
+          <ChevronLeft size={16} />
+        </button>
+        <strong>
+          {view.toLocaleDateString('en-AU', {
+            month: 'long',
+            year: 'numeric',
+          })}
+        </strong>
+        <button type="button" aria-label="Next month"
+          onClick={() => moveMonth(1)}>
+          <ChevronRight size={16} />
+        </button>
+      </div>
+      <div className="timeline-calendar-grid">
+        {['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'].map((day) => (
+          <span key={day} aria-hidden="true">{day}</span>
+        ))}
+        {Array.from({ length: firstDay }, (_, index) => (
+          <span key={'blank-' + index} aria-hidden="true" />
+        ))}
+        {Array.from({ length: daysInMonth }, (_, index) => {
+          const day = index + 1
+          const date = [
+            view.getFullYear(),
+            String(view.getMonth() + 1).padStart(2, '0'),
+            String(day).padStart(2, '0'),
+          ].join('-')
+
+          return (
+            <button
+              key={day}
+              type="button"
+              aria-label={date}
+              aria-pressed={date === anchor}
+              data-dropdown-select
+              onClick={() => choose(day)}
+            >
+              {day}
+            </button>
+          )
+        })}
+      </div>
+    </div>
   )
 }
 
@@ -459,21 +525,16 @@ export default function TimelineToolbar({
   jump,
   options,
   update,
-  settingsOpen,
-  toggleSettings,
-  openSettings,
   anchorNav,
   overloadNav,
   infeasibleNav,
   onEditTimezones,
 }) {
-  const [
-    calendarOpen,
-    setCalendarOpen,
-  ] = useState(false)
+  const dropdown = useToolbarDropdown()
 
   return (
     <div
+      ref={dropdown.rootRef}
       className="timeline-tools"
       role="group"
       aria-label="Timeline tools"
@@ -592,60 +653,28 @@ export default function TimelineToolbar({
         <ChevronRight size={16} />
       </IconButton>
 
-      <div
+      <ToolbarDropdown
+        id="Jump to date"
+        label="Jump to date"
+        trigger={<CalendarDays size={16} />}
+        controller={dropdown}
         className="timeline-calendar"
-        onBlur={(event) => {
-          if (
-            !event.currentTarget.contains(
-              event.relatedTarget,
-            )
-          ) {
-            setCalendarOpen(false)
-          }
-        }}
       >
-        <IconButton
-          label="Jump to date"
-          aria-expanded={
-            calendarOpen
-          }
-          onClick={() =>
-            setCalendarOpen(
-              (current) =>
-                !current,
-            )
-          }
-        >
-          <CalendarDays size={16} />
-        </IconButton>
-
-        {calendarOpen && (
-          <div className="timeline-popover">
-            <input
-              type="date"
-              aria-label="Jump to date"
-              value={anchor}
-              onChange={(event) => {
-                if (
-                  event.target.value
-                ) {
-                  jump(
-                    event.target.value,
-                  )
-                }
-              }}
-            />
-          </div>
-        )}
-      </div>
+        <DateCalendar
+          anchor={anchor}
+          onChoose={(date) => jump(date)}
+        />
+      </ToolbarDropdown>
 
       <ZoomPicker
         value={zoom}
         onChange={setZoom}
+        controller={dropdown}
       />
 
       <HoverPicker
         label="Item type"
+        controller={dropdown}
         value={options.type}
         onChange={(type) =>
           update({ type })
@@ -667,6 +696,7 @@ export default function TimelineToolbar({
       />
 
       <DurationPicker
+        controller={dropdown}
         selected={
           options.durations
         }
@@ -797,18 +827,21 @@ export default function TimelineToolbar({
         />
       </IconButton>
 
-      <IconButton
+      <ToolbarDropdown
+        id="Scheduler settings"
         label="Scheduler settings"
-        onDoubleClick={openSettings}
-        aria-expanded={
-          settingsOpen
-        }
-        onClick={
-          toggleSettings
+        controller={dropdown}
+        className="timeline-scheduler-dropdown-host"
+        trigger={
+          <img
+            src={monkSettingsIcon}
+            alt=""
+            className="timeline-scheduler-mode-icon"
+          />
         }
       >
-        <img src={monkSettingsIcon} alt="" className="timeline-scheduler-mode-icon" />
-      </IconButton>
+        <SchedulerPanel close={dropdown.close} />
+      </ToolbarDropdown>
 
       <IconButton
         label="Undo"

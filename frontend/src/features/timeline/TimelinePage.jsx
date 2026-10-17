@@ -28,7 +28,6 @@ import {
 
 import usePriorityFind from '../planner/hooks/usePriorityFind'
 
-import SchedulerPanel from './SchedulerPanel'
 import AnchorDialog from './AnchorDialog'
 import TimezonePanel from './TimezonePanel'
 import TimelineBoard from './TimelineBoard'
@@ -189,11 +188,6 @@ function TimelineContent({
     () => options.roots.filter((id) => activeRoots.some((root) => root.id === id)),
     [activeRoots, options.roots],
   )
-
-  const [
-    settingsOpen,
-    setSettingsOpen,
-  ] = useState(false)
 
   const [
     timezoneOpen,
@@ -1049,16 +1043,6 @@ function TimelineContent({
         jump={jump}
         options={options}
         update={update}
-        settingsOpen={
-          settingsOpen
-        }
-        openSettings={() => setSettingsOpen(true)}
-        toggleSettings={() =>
-          setSettingsOpen(
-            (value) =>
-              !value,
-          )
-        }
         anchorNav={{
           active:
             anchoredActive,
@@ -1149,20 +1133,6 @@ function TimelineContent({
         >
           {actions.error}
         </p>
-      )}
-
-      {settingsOpen && (
-        <SchedulerPanel
-          runtime={
-            query.data
-              ?.scheduler
-          }
-          close={() =>
-            setSettingsOpen(
-              false,
-            )
-          }
-        />
       )}
 
       {timezoneOpen && (

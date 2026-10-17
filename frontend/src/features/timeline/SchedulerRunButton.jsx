@@ -17,6 +17,7 @@ import activeIcon from '../../assets/icons/locked-in_monk-mode/locked-in-hands-u
 import SchedulerAura from './SchedulerAura'
 import './SchedulerAura.css'
 import useHoverIntent from './useHoverIntent'
+import { useSchedulerSettings } from '../../hooks/useSchedulerSettings'
 
 export default function SchedulerRunButton({
   runtime,
@@ -28,6 +29,8 @@ export default function SchedulerRunButton({
   ] = useState(false)
 
   const [focused, setFocused] = useState(false)
+  const [modeError, setModeError] = useState(null)
+  const settings = useSchedulerSettings()
 
   const hover =
     useHoverIntent({
@@ -60,12 +63,34 @@ export default function SchedulerRunButton({
     )
 
   const flavour =
+    settings.data?.flavour ??
     runtime?.flavour ??
     null
 
   const configured =
-    runtime?.configured ===
-    true
+    flavour != null ||
+    runtime?.configured === true
+
+  async function handleClick(event) {
+    setModeError(null)
+
+    if (event.metaKey) {
+      const nextFlavour =
+        flavour === 'lock-in' ? 'monk' : 'lock-in'
+
+      try {
+        await settings.setFlavour(nextFlavour)
+      } catch (error) {
+        setModeError(
+          error?.message || 'Could not change scheduler mode.',
+        )
+      }
+
+      return
+    }
+
+    actions.run('reschedule').catch(() => {})
+  }
 
   const auraState =
     schedulerBusy
@@ -137,15 +162,7 @@ export default function SchedulerRunButton({
       onBlur={() =>
         setFocused(false)
       }
-      onClick={() =>
-        actions
-          .run(
-            'reschedule',
-          )
-          .catch(
-            () => {},
-          )
-      }
+      onClick={handleClick}
     >
       <span className="scheduler-visual" aria-hidden="true">
         <SchedulerAura
@@ -172,6 +189,11 @@ export default function SchedulerRunButton({
           }
         </span>
       </span>
+      {modeError && (
+        <span role="alert" className="sr-only">
+          {modeError}
+        </span>
+      )}
     </button>
   )
 }

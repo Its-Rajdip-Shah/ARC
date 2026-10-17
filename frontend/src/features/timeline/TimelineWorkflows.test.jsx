@@ -1,5 +1,5 @@
 import React from 'react'
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
 import TimelineCard from './TimelineCard'
 import TimelineBoard from './TimelineBoard'
@@ -351,40 +351,119 @@ it('completed saved roots leave the effective selection and navigator without re
 })
 
 
-it('Monk settings single click toggles and browser double-click sequences always leave both modes accessible', async () => {
+it('Monk dropdown shares toolbar click-to-pin, selection and dismissal', async () => {
   const { default: Toolbar } = await vi.importActual('./TimelineToolbar')
-  const { default: SchedulerPanel } = await import('./SchedulerPanel')
-  const nav = { active: false, count: 0, index: -1, toggle() {}, navigate() {} }
-  function Harness() {
-    const [open, setOpen] = React.useState(false)
-    return <>
-      <Toolbar find={{ ...find, query: '' }} actions={{ history: { data: {} } }} anchor="2026-10-12" zoom="day"
-        options={{ type: 'all', durations: [], grouped: true, completed: false }}
-        anchorNav={nav} overloadNav={nav} infeasibleNav={nav} settingsOpen={open}
-        toggleSettings={() => setOpen((value) => !value)} openSettings={() => setOpen(true)} />
-      {open && <SchedulerPanel close={() => setOpen(false)} />}
-    </>
+  const nav = {
+    active: false,
+    count: 0,
+    index: -1,
+    toggle() {},
+    navigate() {},
   }
-  render(<Harness />)
-  const trigger = screen.getByRole('button', { name: 'Scheduler settings' })
+
+  pageData.setFlavour.mockResolvedValue(undefined)
+
+  render(
+    <Toolbar
+      find={{ ...find, query: '' }}
+      actions={{ history: { data: {} } }}
+      anchor="2026-10-12"
+      zoom="day"
+      options={{
+        type: 'all',
+        durations: [],
+        grouped: true,
+        completed: false,
+      }}
+      anchorNav={nav}
+      overloadNav={nav}
+      infeasibleNav={nav}
+    />,
+  )
+
+  const trigger = screen.getByRole('button', {
+    name: 'Scheduler settings',
+  })
+
   fireEvent.click(trigger)
   expect(trigger.getAttribute('aria-expanded')).toBe('true')
+
+  fireEvent.mouseLeave(trigger.parentElement)
+  expect(trigger.getAttribute('aria-expanded')).toBe('true')
+
   fireEvent.click(trigger)
   expect(trigger.getAttribute('aria-expanded')).toBe('false')
-  for (const startingOpen of [false, true]) {
-    if (startingOpen) fireEvent.click(trigger)
-    // Real browsers emit click(1), click(2), then dblclick.
-    fireEvent.click(trigger, { detail: 1 })
-    fireEvent.click(trigger, { detail: 2 })
-    fireEvent.doubleClick(trigger)
-    expect(trigger.getAttribute('aria-expanded')).toBe('true')
-    fireEvent.click(screen.getByRole('button', { name: /Lock-in.*Push/ }))
-    fireEvent.click(screen.getByRole('button', { name: /Monk.*Prefer/ }))
+
+  fireEvent.click(trigger)
+  fireEvent.click(screen.getByRole('button', { name: 'Locked-in' }))
+
+  await waitFor(() => {
     expect(pageData.setFlavour).toHaveBeenCalledWith('lock-in')
+    expect(trigger.getAttribute('aria-expanded')).toBe('false')
+  })
+
+  fireEvent.click(trigger)
+  fireEvent.click(screen.getByRole('button', { name: 'Monk' }))
+
+  await waitFor(() => {
     expect(pageData.setFlavour).toHaveBeenCalledWith('monk')
-    fireEvent.click(trigger)
-  }
+    expect(trigger.getAttribute('aria-expanded')).toBe('false')
+  })
+
+  fireEvent.click(trigger)
+  fireEvent.keyDown(document, { key: 'Escape' })
+  expect(trigger.getAttribute('aria-expanded')).toBe('false')
+
+  fireEvent.click(trigger)
+  fireEvent.pointerDown(document.body)
+  expect(trigger.getAttribute('aria-expanded')).toBe('false')
 })
+
+it('Monk dropdown remains open if saving fails', async () => {
+  const { default: Toolbar } = await vi.importActual('./TimelineToolbar')
+  const nav = {
+    active: false,
+    count: 0,
+    index: -1,
+    toggle() {},
+    navigate() {},
+  }
+
+  pageData.setFlavour.mockRejectedValueOnce(new Error('Save failed'))
+
+  render(
+    <Toolbar
+      find={{ ...find, query: '' }}
+      actions={{ history: { data: {} } }}
+      anchor="2026-10-12"
+      zoom="day"
+      options={{
+        type: 'all',
+        durations: [],
+        grouped: true,
+        completed: false,
+      }}
+      anchorNav={nav}
+      overloadNav={nav}
+      infeasibleNav={nav}
+    />,
+  )
+
+  const trigger = screen.getByRole('button', {
+    name: 'Scheduler settings',
+  })
+
+  fireEvent.click(trigger)
+  fireEvent.click(screen.getByRole('button', { name: 'Locked-in' }))
+
+  await waitFor(() => {
+    expect(pageData.setFlavour).toHaveBeenCalled()
+  })
+
+  expect(trigger.getAttribute('aria-expanded')).toBe('true')
+  expect(screen.getByRole('button', { name: 'Monk' })).toBeTruthy()
+})
+
 
 it('root positions initialize from visible tasks and explicit independent positions survive async refresh', () => {
   const today = todayKey()
@@ -481,4 +560,247 @@ it('dragging and viewport resizing reserve measured header and tabs plus sixteen
     expect(setPosition).toHaveBeenLastCalledWith({ x: 60, y: 68 })
     expect(panel.style.getPropertyValue('--timeline-navigator-min-height')).toBe('132px')
   } finally { vi.unstubAllGlobals() }
+})
+
+
+it('calendar opens on the Timeline anchor month', async () => {
+  const { default: Toolbar } = await vi.importActual('./TimelineToolbar')
+
+  const nav = {
+    active: false,
+    count: 0,
+    index: -1,
+    toggle() {},
+    navigate() {},
+  }
+
+  const jump = vi.fn()
+
+  render(
+    <Toolbar
+      find={{ ...find, query: '' }}
+      actions={{ busy: false, history: { data: {} } }}
+      anchor="2027-02-15"
+      zoom="day"
+      setZoom={vi.fn()}
+      navigate={vi.fn()}
+      jump={jump}
+      options={{
+        type: 'all',
+        durations: [],
+        grouped: true,
+        completed: false,
+      }}
+      update={vi.fn()}
+      anchorNav={nav}
+      overloadNav={nav}
+      infeasibleNav={nav}
+    />,
+  )
+
+  fireEvent.click(screen.getByRole('button', {
+    name: 'Jump to date',
+  }))
+
+  expect(screen.getByText('February 2027')).toBeTruthy()
+
+  fireEvent.click(screen.getByRole('button', {
+    name: '2027-02-20',
+  }))
+
+  expect(jump).toHaveBeenCalledWith('2027-02-20')
+
+  expect(
+    screen.getByRole('button', {
+      name: 'Jump to date',
+    }).getAttribute('aria-expanded'),
+  ).toBe('false')
+})
+
+
+it('shared toolbar dropdown waits for hover intent and supports pinning', async () => {
+  const { default: Toolbar } = await vi.importActual('./TimelineToolbar')
+
+  vi.useFakeTimers()
+
+  const nav = {
+    active: false,
+    count: 0,
+    index: -1,
+    toggle: vi.fn(),
+    navigate: vi.fn(),
+  }
+
+  render(
+    <Toolbar
+      find={{ ...find, query: '' }}
+      actions={{ busy: false, history: { data: {} } }}
+      anchor="2026-10-17"
+      zoom="day"
+      setZoom={vi.fn()}
+      navigate={vi.fn()}
+      jump={vi.fn()}
+      options={{
+        type: 'all',
+        durations: [],
+        grouped: true,
+        completed: false,
+      }}
+      update={vi.fn()}
+      anchorNav={nav}
+      overloadNav={nav}
+      infeasibleNav={nav}
+    />,
+  )
+
+  const trigger = screen.getByRole('button', { name: 'Item type' })
+  const host = trigger.parentElement
+
+  fireEvent.mouseEnter(host)
+
+  act(() => vi.advanceTimersByTime(219))
+  expect(trigger.getAttribute('aria-expanded')).toBe('false')
+
+  fireEvent.mouseLeave(host)
+  act(() => vi.advanceTimersByTime(500))
+  expect(trigger.getAttribute('aria-expanded')).toBe('false')
+
+  fireEvent.mouseEnter(host)
+  act(() => vi.advanceTimersByTime(220))
+  expect(trigger.getAttribute('aria-expanded')).toBe('true')
+
+  fireEvent.mouseLeave(host)
+  expect(trigger.getAttribute('aria-expanded')).toBe('false')
+
+  fireEvent.click(trigger)
+  expect(trigger.getAttribute('aria-expanded')).toBe('true')
+
+  fireEvent.mouseLeave(host)
+  expect(trigger.getAttribute('aria-expanded')).toBe('true')
+
+  fireEvent.click(trigger)
+  expect(trigger.getAttribute('aria-expanded')).toBe('false')
+
+  fireEvent.click(trigger)
+  fireEvent.keyDown(document, { key: 'Escape' })
+  expect(trigger.getAttribute('aria-expanded')).toBe('false')
+})
+
+it('Estimated Duration supports multiple selections without dismissing', async () => {
+  const { default: Toolbar } = await vi.importActual('./TimelineToolbar')
+
+  const nav = {
+    active: false,
+    count: 0,
+    index: -1,
+    toggle: vi.fn(),
+    navigate: vi.fn(),
+  }
+
+  const update = vi.fn()
+
+  render(
+    <Toolbar
+      find={{ ...find, query: '' }}
+      actions={{ busy: false, history: { data: {} } }}
+      anchor="2026-10-17"
+      zoom="day"
+      setZoom={vi.fn()}
+      navigate={vi.fn()}
+      jump={vi.fn()}
+      options={{
+        type: 'all',
+        durations: [],
+        grouped: true,
+        completed: false,
+      }}
+      update={update}
+      anchorNav={nav}
+      overloadNav={nav}
+      infeasibleNav={nav}
+    />,
+  )
+
+  const trigger = screen.getByRole('button', {
+    name: 'Estimated duration',
+  })
+
+  fireEvent.click(trigger)
+  expect(trigger.getAttribute('aria-expanded')).toBe('true')
+
+  const options = screen.getAllByRole('button', {
+    pressed: true,
+  }).filter((button) => button.hasAttribute('data-dropdown-select'))
+
+  expect(options.length).toBe(6)
+
+  fireEvent.click(options[0])
+  expect(trigger.getAttribute('aria-expanded')).toBe('true')
+  expect(update).toHaveBeenCalledWith({
+    durations: expect.not.arrayContaining(['UNDER_20_MINUTES']),
+  })
+
+  fireEvent.click(options[1])
+  expect(trigger.getAttribute('aria-expanded')).toBe('true')
+  expect(update).toHaveBeenCalledTimes(2)
+
+  fireEvent.pointerDown(document.body)
+  expect(trigger.getAttribute('aria-expanded')).toBe('false')
+})
+
+it('calendar month navigation keeps the dropdown open', async () => {
+  const { default: Toolbar } = await vi.importActual('./TimelineToolbar')
+
+  const nav = {
+    active: false,
+    count: 0,
+    index: -1,
+    toggle: vi.fn(),
+    navigate: vi.fn(),
+  }
+
+  const jump = vi.fn()
+
+  render(
+    <Toolbar
+      find={{ ...find, query: '' }}
+      actions={{ busy: false, history: { data: {} } }}
+      anchor="2026-10-17"
+      zoom="day"
+      setZoom={vi.fn()}
+      navigate={vi.fn()}
+      jump={jump}
+      options={{
+        type: 'all',
+        durations: [],
+        grouped: true,
+        completed: false,
+      }}
+      update={vi.fn()}
+      anchorNav={nav}
+      overloadNav={nav}
+      infeasibleNav={nav}
+    />,
+  )
+
+  const trigger = screen.getByRole('button', {
+    name: 'Jump to date',
+  })
+
+  fireEvent.click(trigger)
+  expect(screen.getByText('October 2026')).toBeTruthy()
+
+  fireEvent.click(screen.getByRole('button', {
+    name: 'Next month',
+  }))
+
+  expect(screen.getByText('November 2026')).toBeTruthy()
+  expect(trigger.getAttribute('aria-expanded')).toBe('true')
+
+  fireEvent.click(screen.getByRole('button', {
+    name: '2026-11-12',
+  }))
+
+  expect(jump).toHaveBeenCalledWith('2026-11-12')
+  expect(trigger.getAttribute('aria-expanded')).toBe('false')
 })

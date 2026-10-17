@@ -117,6 +117,22 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
+it('Planner task list owns scrolling independently of the search toolbar', () => {
+  mount()
+
+  const search = screen.getByRole('searchbox', { name: 'Search tasks' })
+  const taskList = screen.getByRole('region', { name: 'Planner task list' })
+
+  expect(taskList.className).toContain('overflow-y-auto')
+  expect(taskList.className).toContain('min-h-0')
+  expect(taskList.contains(search)).toBe(false)
+  expect(taskList.compareDocumentPosition(search) & Node.DOCUMENT_POSITION_PRECEDING)
+    .toBeTruthy()
+
+  expect(search.closest('.sticky')).toBeNull()
+  expect(screen.getByText('Deadline regression task')).toBeTruthy()
+})
+
 it('HA1 harness: matches overdue classification and mounts actual Planner components', () => {
   const classified = filterOverdueTree(makeItems(), userDateKey())
   expect(classified.items.map((item) => item.overdue_section))

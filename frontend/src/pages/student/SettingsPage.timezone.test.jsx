@@ -22,6 +22,17 @@ vi.mock('../../hooks/useCanvas', () => ({
   useTestCanvasConnection: vi.fn(),
 }))
 
+// Account details are unrelated to timezone mutation behaviour.
+// Keep this test independent of the profile-fetch request.
+vi.mock('../../hooks/useMe', () => ({
+  useMe: () => ({
+    data: null,
+    isPending: false,
+    isError: false,
+    refetch: vi.fn(),
+  }),
+}))
+
 vi.mock('../../hooks/useSchedulerSettings', () => ({
   useSchedulerSettings: () => ({
     data: { flavour: 'monk' },

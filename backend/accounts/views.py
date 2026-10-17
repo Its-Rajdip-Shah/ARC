@@ -103,21 +103,26 @@ class RegisterView(PublicAuthView):
     def post(self, request):
         serializer = RegisterSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        email = serializer.validated_data['email']
+        password = serializer.validated_data['password']
+        flavour = serializer.validated_data['scheduler_flavour']
 
         with transaction.atomic():
-            user = User.objects.create_user(
-                email=serializer.validated_data['email'],
-                password=serializer.validated_data['password'],
-            )
+            user = User.objects.filter(email__iexact=email).first()
+            if user is None:
+                user = User.objects.create_user(email=email, password=password)
+            elif user.mfa_enabled or not user.check_password(password):
+                raise serializers.ValidationError({
+                    'email': 'An account with this email already exists.',
+                })
             SchedulingState.objects.update_or_create(
                 user=user,
-                defaults={
-                    'scheduler_flavour': serializer.validated_data['scheduler_flavour'],
-                },
+                defaults={'scheduler_flavour': flavour},
             )
 
-        # Held in the signed token, not the database, until the user proves
-        # they scanned it. An abandoned registration therefore cannot log in.
+        # The secret stays in the signed token until the authenticator is
+        # confirmed. Submitting the same email and password again replaces
+        # that token, so closing the tab does not burn the address.
         secret = totp.generate_secret()
         enrolment = MFAEnrolmentToken.for_user(user)
         enrolment['secret'] = secret
@@ -217,8 +222,11 @@ class LoginView(PublicAuthView):
                                    code='account_locked')
 
         if not user.mfa_enabled:
-            raise PermissionDenied('Finish setting up multi-factor authentication first.',
-                                   code='mfa_enrolment_required')
+            raise PermissionDenied(
+                'Finish setting up multi-factor authentication first. '
+                'Sign up again with the same email and password.',
+                code='mfa_enrolment_required',
+            )
 
         pending = MFAPendingToken.for_user(user)
         pending['admin_login'] = self.require_admin

@@ -323,7 +323,7 @@ export default function PlannerPage() {
   const [panelMode, setPanelMode] = useState(null)
   const [createParentId, setCreateParentId] = useState(null)
 
-  const { data: planningTree, isLoading, isError } = usePlanningTree()
+  const { data: planningTree, isLoading, isError, refetch } = usePlanningTree()
 
   function handleSelectItem(itemId) {
     // Hover/current task is independent from panel ownership.
@@ -746,8 +746,31 @@ export default function PlannerPage() {
           />
         ) : (
         <div className="flex min-h-0 w-full flex-1 flex-col">
-          {isLoading && <p>Loading planner...</p>}
-          {isError && !planningTree && <p>Could not load planner.</p>}
+          {isLoading && (
+            <p role="status" className="pt-24 text-sm text-arc-text-secondary">
+              Loading planner...
+            </p>
+          )}
+          {isError && !planningTree && (
+            <div role="alert" className="mt-24 rounded-xl border border-arc-danger bg-arc-panel p-5 text-sm">
+              <p>Could not load Planner. Your existing work has not been changed.</p>
+              <button
+                type="button"
+                onClick={() => refetch()}
+                className="mt-3 rounded-lg bg-arc-blue px-4 py-2 font-semibold"
+              >
+                Retry
+              </button>
+            </div>
+          )}
+          {!isLoading && !isError && items.length === 0 && (
+            <div
+              role="status"
+              className="mt-24 rounded-xl border border-[#4a496b] bg-arc-panel p-5 text-sm text-arc-text-secondary"
+            >
+              Your planner is empty. Add a subject using the sidebar, or connect Canvas in Settings to import courses.
+            </div>
+          )}
 
           {!isLoading && (!isError || planningTree) && (
             <>

@@ -6,6 +6,7 @@ turn a rejection test green.
 """
 
 import pytest
+from django.contrib.auth import get_user_model
 
 from accounts.tokens import MFAEnrolmentToken, MFAPendingToken
 from accounts.totp import verify
@@ -127,6 +128,81 @@ def test_register_rejects_a_duplicate_email(api, user):
     response = api.post(REGISTER, {'email': user.email, 'password': PASSWORD}, format='json')
     assert response.status_code == 400
     assert 'email' in fields(response)
+
+
+def test_same_password_resumes_an_unfinished_signup(api):
+    first = api.post(
+        REGISTER,
+        {'email': 'new@example.com', 'password': PASSWORD, 'scheduler_flavour': 'monk'},
+        format='json',
+    )
+    assert first.status_code == 201
+
+    second = api.post(
+        REGISTER,
+        {'email': 'new@example.com', 'password': PASSWORD, 'scheduler_flavour': 'lock-in'},
+        format='json',
+    )
+
+    assert second.status_code == 201
+    assert second.data['user']['id'] == first.data['user']['id']
+    assert second.data['user']['mfa_enabled'] is False
+    assert get_user_model().objects.filter(email__iexact='new@example.com').count() == 1
+    assert SchedulingState.objects.get(user_id=first.data['user']['id']).scheduler_flavour == 'lock-in'
+
+
+def test_resumed_signup_can_finish_enrolment_and_reach_login(api):
+    first = api.post(
+        REGISTER,
+        {'email': 'new@example.com', 'password': PASSWORD, 'scheduler_flavour': 'monk'},
+        format='json',
+    )
+    resumed = api.post(
+        REGISTER,
+        {'email': 'new@example.com', 'password': PASSWORD, 'scheduler_flavour': 'monk'},
+        format='json',
+    )
+    assert resumed.status_code == 201
+
+    enrolled = api.post(
+        ENROL,
+        {
+            'enrolment_token': resumed.data['enrolment_token'],
+            'code': code_for(resumed.data['mfa']['secret']),
+        },
+        format='json',
+    )
+    assert enrolled.status_code == 200
+    assert enrolled.data['user']['mfa_enabled'] is True
+
+    login = api.post(LOGIN, {'email': 'new@example.com', 'password': PASSWORD}, format='json')
+    assert login.status_code == 200
+    assert login.data['mfa_required'] is True
+    assert first.data['mfa']['secret'] != resumed.data['mfa']['secret']
+
+
+def test_a_different_password_cannot_take_over_an_unfinished_signup(api):
+    api.post(
+        REGISTER,
+        {'email': 'new@example.com', 'password': PASSWORD, 'scheduler_flavour': 'monk'},
+        format='json',
+    )
+
+    response = api.post(
+        REGISTER,
+        {
+            'email': 'new@example.com',
+            'password': 'different-horse-battery',
+            'scheduler_flavour': 'lock-in',
+        },
+        format='json',
+    )
+
+    assert response.status_code == 400
+    assert 'email' in fields(response)
+    user = get_user_model().objects.get(email='new@example.com')
+    assert user.mfa_enabled is False
+    assert SchedulingState.objects.get(user=user).scheduler_flavour == 'monk'
 
 
 def test_enrolment_stores_the_secret(api):
@@ -286,6 +362,7 @@ def test_login_refuses_an_account_that_never_finished_enrolment(api, unenrolled)
     response = api.post(LOGIN, {'email': unenrolled.email, 'password': PASSWORD}, format='json')
     assert response.status_code == 403
     assert code(response) == 'mfa_enrolment_required'
+    assert 'same email and password' in response.data['error']['message']
 
 
 # --------------------------------------------------------------------------

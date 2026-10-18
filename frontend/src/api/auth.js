@@ -61,6 +61,14 @@ export function confirmPasswordReset(payload) {
   return apiClient.post('auth/password-reset/confirm/', payload).then((res) => res.data)
 }
 
+export function requestAuthenticatorRecovery(payload) {
+  return apiClient.post('auth/mfa/recover/', payload).then((res) => res.data)
+}
+
+export function confirmAuthenticatorRecovery(payload) {
+  return apiClient.post('auth/mfa/recover/confirm/', payload).then((res) => res.data)
+}
+
 // Share the attempt across StrictMode effects and repeated hydration of the
 // same profile. Failures leave the authenticated session and UTC fallback intact.
 const timeZoneAttempts = new WeakMap()

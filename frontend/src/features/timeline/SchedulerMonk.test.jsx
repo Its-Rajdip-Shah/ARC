@@ -86,7 +86,7 @@ it('keeps idle, delayed hover, keyboard focus and scheduling precedence without 
   expect(state()).toContain('hover')
 })
 
-it('Command-click switches Monk to Lock-in and automatically reschedules', async () => {
+it('Command-click switches Monk to Locked-In and automatically reschedules', async () => {
   const run = vi.fn().mockResolvedValue({})
   render(wrap(<SchedulerRunButton runtime={runtime} actions={{ run }} />))
 
@@ -105,7 +105,7 @@ it('Command-click switches Monk to Lock-in and automatically reschedules', async
   expect(run).not.toHaveBeenCalled()
 })
 
-it('Command-click switches Lock-in back to Monk', async () => {
+it('Command-click switches Locked-In back to Monk', async () => {
   api.settings.mockResolvedValue({ flavour: 'lock-in' })
   api.updateSettings.mockResolvedValue({ flavour: 'monk' })
 
@@ -119,7 +119,7 @@ it('Command-click switches Lock-in back to Monk', async () => {
   ))
 
   fireEvent.click(
-    screen.getByRole('button', { name: 'Reschedule Timeline using Lock-in' }),
+    screen.getByRole('button', { name: 'Reschedule Timeline using Locked-In' }),
     { metaKey: true },
   )
 

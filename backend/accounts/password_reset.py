@@ -56,7 +56,7 @@ def change_password(user, new_password):
     revoke_refresh_tokens(user)
 
 
-def request_reset(email):
+def request_reset(email, purpose='password'):
     now = timezone.now()
     PasswordResetRequest.objects.filter(expires_at__lte=now).delete()
     normalised = User.objects.normalize_email(email)
@@ -71,6 +71,7 @@ def request_reset(email):
         user=user,
         token_digest=_digest(token),
         expires_at=now + RESET_TTL,
+        purpose=purpose,
     )
     return token
 
@@ -107,6 +108,7 @@ def present_request(row):
         'id': str(row.id),
         'email': row.user.email,
         'created_at': row.created_at,
+        'purpose': row.purpose,
         'status': 'approved' if row.approved_at else 'pending',
     }
 
@@ -127,22 +129,39 @@ def approve_reset(request_id, admin):
     return row
 
 
-def confirm_reset(token, new_password):
+def _open_row(token, purpose):
     row = _row_for(token)
     if (
         row is None
         or row.user_id is None
+        or row.purpose != purpose
         or row.approved_at is None
         or row.consumed_at is not None
         or row.expires_at <= timezone.now()
     ):
         raise ResetNotReady()
+    return row
+
+
+def confirm_reset(token, new_password):
+    row = _open_row(token, 'password')
     user = row.user
     try:
         validate_password(new_password, user)
     except DjangoValidationError as exc:
         raise PasswordRejected(exc.messages) from exc
     change_password(user, new_password)
+    row.consumed_at = timezone.now()
+    row.save(update_fields=['consumed_at'])
+    return user
+
+
+def confirm_authenticator_recovery(token):
+    """Drop the stored authenticator secret. The caller issues a new QR."""
+    row = _open_row(token, 'authenticator')
+    user = row.user
+    user.totp_secret_encrypted = ''
+    user.save(update_fields=['totp_secret_encrypted'])
     row.consumed_at = timezone.now()
     row.save(update_fields=['consumed_at'])
     return user

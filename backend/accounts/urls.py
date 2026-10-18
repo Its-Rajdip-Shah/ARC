@@ -10,6 +10,12 @@ app_name = 'accounts'
 urlpatterns = [
     path('register/', views.RegisterView.as_view(), name='register'),
     path('mfa/enroll/confirm/', views.MFAEnrolConfirmView.as_view(), name='mfa-enrol-confirm'),
+    path('mfa/recover/', views.AuthenticatorRecoveryRequestView.as_view(), name='mfa-recover'),
+    path(
+        'mfa/recover/confirm/',
+        views.AuthenticatorRecoveryConfirmView.as_view(),
+        name='mfa-recover-confirm',
+    ),
     path('login/', views.LoginView.as_view(), name='login'),
     path('login/mfa/', views.MFAVerifyView.as_view(), name='login-mfa'),
     path('admin/login/', views.AdminLoginView.as_view(), name='admin-login'),

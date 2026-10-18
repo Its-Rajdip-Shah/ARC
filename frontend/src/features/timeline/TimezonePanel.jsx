@@ -247,12 +247,12 @@ export default function TimezonePanel({
   return (
     <section
       className="timezone-panel"
-      aria-label="Timezone management"
+      aria-label="Date range management"
     >
       <div className="timezone-panel-heading">
         <div>
           <strong>
-            Timezones
+            Date ranges
           </strong>
 
           <p>
@@ -262,7 +262,7 @@ export default function TimezonePanel({
 
         <button
           type="button"
-          aria-label="Close timezone management"
+          aria-label="Close date range management"
           onClick={
             onClose
           }
@@ -297,7 +297,7 @@ export default function TimezonePanel({
 
       <div className="timezone-row timezone-new">
         <input
-          placeholder="New timezone"
+          placeholder="New date range"
           value={
             draft.title
           }

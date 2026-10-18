@@ -31,6 +31,7 @@ from .serializers import (
     PasswordChangeSerializer,
     PasswordResetConfirmSerializer,
     PasswordResetRequestSerializer,
+    AuthenticatorRecoveryConfirmSerializer,
     MFAEnrolConfirmSerializer,
     MFAVerifySerializer,
     RegisterSerializer,
@@ -40,6 +41,21 @@ from .serializers import (
 from .tokens import FULL_ACCESS_SCOPE, MFAEnrolmentToken, MFAPendingToken
 
 User = get_user_model()
+
+
+def _enrolment_body(user):
+    secret = totp.generate_secret()
+    enrolment = MFAEnrolmentToken.for_user(user)
+    enrolment['secret'] = secret
+    uri = totp.provisioning_uri(user.email, secret)
+    return {
+        'enrolment_token': str(enrolment),
+        'mfa': {
+            'secret': secret,
+            'provisioning_uri': uri,
+            'qr_png_base64': totp.qr_png_base64(uri),
+        },
+    }
 
 
 class ResetNotReadyResponse(APIException):
@@ -134,21 +150,8 @@ class RegisterView(PublicAuthView):
         # The secret stays in the signed token until the authenticator is
         # confirmed. Submitting the same email and password again replaces
         # that token, so closing the tab does not burn the address.
-        secret = totp.generate_secret()
-        enrolment = MFAEnrolmentToken.for_user(user)
-        enrolment['secret'] = secret
-        uri = totp.provisioning_uri(user.email, secret)
-
         return Response(
-            {
-                'user': UserSerializer(user).data,
-                'enrolment_token': str(enrolment),
-                'mfa': {
-                    'secret': secret,
-                    'provisioning_uri': uri,
-                    'qr_png_base64': totp.qr_png_base64(uri),
-                },
-            },
+            {'user': UserSerializer(user).data, **_enrolment_body(user)},
             status=status.HTTP_201_CREATED,
         )
 
@@ -376,15 +379,26 @@ class PasswordChangeView(APIView):
 class PasswordResetRequestView(PublicAuthView):
     """POST /api/auth/password-reset/ — ask an administrator to approve a reset."""
 
+    purpose = 'password'
+
     @extend_schema(request=PasswordResetRequestSerializer, responses={200: None})
     def post(self, request):
         serializer = PasswordResetRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        token = password_reset.request_reset(serializer.validated_data['email'])
+        token = password_reset.request_reset(
+            serializer.validated_data['email'],
+            purpose=self.purpose,
+        )
         return Response({
             'detail': password_reset.REQUEST_DETAIL,
             'request_token': token,
         })
+
+
+class AuthenticatorRecoveryRequestView(PasswordResetRequestView):
+    """POST /api/auth/mfa/recover/ — same queue, for a lost authenticator."""
+
+    purpose = 'authenticator'
 
 
 class PasswordResetStatusView(PublicAuthView):
@@ -413,3 +427,19 @@ class PasswordResetConfirmView(PublicAuthView):
         except password_reset.PasswordRejected as exc:
             raise ValidationError({'new_password': exc.messages})
         return Response({'detail': 'Password updated.'})
+
+
+class AuthenticatorRecoveryConfirmView(PublicAuthView):
+    """POST /api/auth/mfa/recover/confirm/ — approved browser receives a new QR."""
+
+    @extend_schema(request=AuthenticatorRecoveryConfirmSerializer, responses={200: None})
+    def post(self, request):
+        serializer = AuthenticatorRecoveryConfirmSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            user = password_reset.confirm_authenticator_recovery(
+                serializer.validated_data['request_token'],
+            )
+        except password_reset.ResetNotReady:
+            raise ResetNotReadyResponse()
+        return Response(_enrolment_body(user))

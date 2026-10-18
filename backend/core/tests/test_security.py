@@ -41,7 +41,22 @@ def test_is_owner_object_permission_uses_view_user_field():
     assert IsOwner().has_object_permission(request, view, obj) is False
 
 
-def test_public_auth_views_are_throttled():
+def test_the_eleventh_login_attempt_in_a_minute_is_throttled(api):
+    for index in range(10):
+        response = api.post(
+            '/api/auth/login/',
+            {'email': f'person{index}@example.com', 'password': 'not-the-password'},
+            format='json',
+        )
+        assert response.status_code == 401
+
+    blocked = api.post(
+        '/api/auth/login/',
+        {'email': 'person10@example.com', 'password': 'not-the-password'},
+        format='json',
+    )
+    assert blocked.status_code == 429
+    assert blocked.data['error']['code'] == 'throttled'
     for view in (RegisterView, LoginView, MFAVerifyView, LogoutView):
         assert ScopedRateThrottle in view.throttle_classes
     assert LoginView.throttle_scope == 'auth_strict'

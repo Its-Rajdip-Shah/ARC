@@ -1,3 +1,1 @@
-from django.shortcuts import render
-
-# Create your views here.
+"""Shared HTTP helpers. App endpoints live in their own apps."""

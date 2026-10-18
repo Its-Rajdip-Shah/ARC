@@ -17,6 +17,14 @@ const defaults = {
   roots: [],
 }
 
+export function defaultTimelinePreferences() {
+  return {
+    ...defaults,
+    durations: [...allDurations],
+    roots: [],
+  }
+}
+
 function normaliseDurations(value) {
   if (
     Array.isArray(value)

@@ -186,6 +186,9 @@ class PlanningItem(OwnedModel, TimestampedModel):
     sibling_order = models.PositiveIntegerField(default=1)
     start_date = models.DateField(null=True, blank=True)
     due_date = models.DateField(null=True, blank=True)
+    # True only when this date follows the direct parent's deadline.  A null
+    # inherited value is meaningful: a later parent deadline must propagate.
+    due_date_inherited = models.BooleanField(default=False)
     # Planned execution date, independent of release/deadline constraints.
     scheduled_date = models.DateField(null=True, blank=True)
     execution_rank = models.PositiveIntegerField(null=True, blank=True)

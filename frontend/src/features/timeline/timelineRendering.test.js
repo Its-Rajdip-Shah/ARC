@@ -806,7 +806,14 @@ test('all rows top-align while selected-date anchor expansion rules stay scoped'
   assert.match(css.match(/\.timeline-row \{([^}]+)\}/)[1], /align-items: start/)
   assert.doesNotMatch(css, /\.timeline-row-selected-date \{ align-items:/)
   assert.match(css, /\.timeline-card-expanded \.timeline-anchor-button,\s*\.timeline-anchor-visible \{/)
-  const scoped = css.slice(css.indexOf('/* Selected-date emphasis'))
+  const selectedDateStart = css.indexOf(
+    '/* Selected-date emphasis and intentional-hover anchor visibility. */',
+  )
+  const selectedDateEnd = css.indexOf('.timeline-root-navigation {', selectedDateStart)
+  assert.ok(selectedDateStart >= 0)
+  assert.ok(selectedDateEnd > selectedDateStart)
+
+  const scoped = css.slice(selectedDateStart, selectedDateEnd)
   assert.doesNotMatch(scoped, /!important|scaleY|translateY|position: absolute/)
   assert.match(scoped, /\.timeline-card-selected-date\.timeline-card-hover-intent/)
   assert.doesNotMatch(scoped, /\.timeline-card-selected-date:hover/)
@@ -880,4 +887,25 @@ test('browser keeps ordinary card tops and popped markers stationary during deta
     await page.setContent(`<style>${css}</style>${renderToStaticMarkup(React.createElement(Navigator, { ...navigatorProps, minimized: true }))}`)
     assert.ok(await page.locator('.timeline-task-navigator').evaluate((node) => node.getBoundingClientRect().height) < 120)
   } finally { await browser.close() }
+})
+
+
+test('deadline-overdue tasks suppress both ordinary and card-attached release/due markers', () => {
+  const scale = makeScale('2026-09-19', 'day')
+  for (const scheduled_date of ['2026-09-21', '2026-09-20']) {
+    const item = { ...base, scheduled_date, deadline_overdue: true }
+    const geometry = taskGeometry(item, scale)
+    assert.ok(geometry?.card)
+    assert.equal(geometry.constraint, null)
+    assert.deepEqual(geometry.markers, [])
+    const html = render(item)
+    assert.doesNotMatch(html, /timeline-constraint-line|timeline-card-marker|timeline-marker /)
+  }
+})
+
+test('anchor-overdue-only tasks preserve canonical release and due markers', () => {
+  const item = { ...base, deadline_overdue: false, active_carried_anchor: true }
+  const geometry = taskGeometry(item, makeScale('2026-09-19', 'day'))
+  assert.ok(geometry.constraint)
+  assert.equal(geometry.markers.length, 2)
 })

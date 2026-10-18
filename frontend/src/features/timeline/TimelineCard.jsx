@@ -77,6 +77,9 @@ export default function TimelineCard({
       item.manual_requested_date,
     )
 
+  const deadlineOverdue = item.deadline_overdue ?? item.overdue
+  const carriedAnchorOverdue = Boolean(item.active_carried_anchor)
+
   const sessionText =
     item.session_count > 1
       ? (
@@ -158,6 +161,11 @@ export default function TimelineCard({
             : ''
         ) +
         (
+          carriedAnchorOverdue
+            ? 'timeline-card-carried-anchor-overdue '
+            : ''
+        ) +
+        (
           expanded ||
           hoverExpanded
             ? 'timeline-card-expanded '
@@ -234,6 +242,9 @@ export default function TimelineCard({
         </button>
       )}
 
+      {deadlineOverdue && (
+        <i className="timeline-deadline-overdue-dot" role="img" aria-label="Deadline overdue" />
+      )}
       <div className="timeline-card-main">
         <input
           type="checkbox"
@@ -346,13 +357,13 @@ export default function TimelineCard({
           }
 
           {
-            item.overdue
+            deadlineOverdue
               ? ' · Overdue'
               : ''
           }
         </p>
 
-        {(item.start_date || item.due_date) && (
+        {!deadlineOverdue && (item.start_date || item.due_date) && (
           <p>
             {
               item.start_date

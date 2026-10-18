@@ -1,5 +1,9 @@
 import { useState } from 'react'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useSearchParams } from 'react-router-dom'
+
+import { updateTimeZone } from '../../api/auth'
+import { useAuthStore } from '../../stores/authStore'
 
 import {
   useCanvasConnection,
@@ -346,6 +350,138 @@ export function IntegrationPanel() {
   )
 }
 
+function TimeZoneSettings() {
+  const user = useAuthStore((state) => state.user)
+  const queryClient = useQueryClient()
+  const [error, setError] = useState(null)
+  const [success, setSuccess] = useState(false)
+
+  const fallbackZones = [
+    'Africa/Johannesburg',
+    'America/Chicago',
+    'America/Los_Angeles',
+    'America/New_York',
+    'America/Toronto',
+    'Asia/Dubai',
+    'Asia/Hong_Kong',
+    'Asia/Kathmandu',
+    'Asia/Kolkata',
+    'Asia/Singapore',
+    'Asia/Tokyo',
+    'Australia/Brisbane',
+    'Australia/Melbourne',
+    'Australia/Perth',
+    'Australia/Sydney',
+    'Europe/Berlin',
+    'Europe/London',
+    'Pacific/Auckland',
+  ]
+
+  const zones =
+    typeof Intl.supportedValuesOf === 'function'
+      ? Intl.supportedValuesOf('timeZone')
+      : fallbackZones
+
+  const currentZone = user?.time_zone || 'UTC'
+  const options = [...new Set(['UTC', currentZone, ...zones])].sort()
+
+  const mutation = useMutation({
+    mutationFn: updateTimeZone,
+    onMutate: () => ({
+      userId: useAuthStore.getState().user?.id,
+      accessToken: useAuthStore.getState().accessToken,
+    }),
+    onSuccess: async (updatedUser, _requestedZone, context) => {
+      const store = useAuthStore.getState()
+
+      // Ignore responses from a previous login or authenticated account.
+      if (
+        !context?.accessToken ||
+        store.accessToken !== context.accessToken ||
+        store.user?.id !== context.userId
+      ) return
+
+      store.setUser(updatedUser)
+      setError(null)
+      setSuccess(true)
+
+      // Timezone changes can affect date-based projections throughout ARC.
+      await queryClient.invalidateQueries()
+    },
+  })
+
+  async function onChange(event) {
+    const nextZone = event.target.value
+    if (nextZone === currentZone) return
+
+    const session = useAuthStore.getState()
+    const originalUserId = session.user?.id
+    const originalAccessToken = session.accessToken
+
+    setError(null)
+    setSuccess(false)
+
+    try {
+      await mutation.mutateAsync(nextZone)
+    } catch (requestError) {
+      const currentSession = useAuthStore.getState()
+
+      // A response from an earlier session must not affect the new one.
+      if (
+        currentSession.user?.id !== originalUserId ||
+        currentSession.accessToken !== originalAccessToken
+      ) return
+
+      setError(errorMessage(requestError) || 'Timezone could not be saved.')
+    }
+  }
+
+  return (
+    <section className="space-y-4 rounded-[15px] border border-[#4a496b] bg-arc-panel p-5">
+      <h2 className="text-lg font-semibold">Timezone</h2>
+
+      <p className="text-sm text-arc-text-secondary">
+        Choose the timezone ARC should use for your account.
+        Changes are saved automatically.
+      </p>
+
+      <label htmlFor="account-timezone" className="block text-sm text-arc-text-secondary">
+        Account timezone
+      </label>
+
+      <select
+        id="account-timezone"
+        value={currentZone}
+        onChange={onChange}
+        disabled={!user || mutation.isPending}
+        className="h-[44px] w-full rounded-[10px] bg-[#1D4074] px-3 text-arc-text outline-none disabled:opacity-60"
+      >
+        {options.map((zone) => (
+          <option key={zone} value={zone}>
+            {zone.replaceAll('_', ' ')}
+          </option>
+        ))}
+      </select>
+
+      {mutation.isPending && (
+        <p className="text-sm text-arc-text-muted">Saving timezone…</p>
+      )}
+
+      {error && (
+        <p role="alert" className="text-sm text-arc-danger-light">
+          {error}
+        </p>
+      )}
+
+      {success && !mutation.isPending && (
+        <p role="status" className="text-sm text-arc-accent">
+          Timezone saved.
+        </p>
+      )}
+    </section>
+  )
+}
+
 function AccountPanel() {
   const profile = useMe()
   const settings = useSchedulerSettings()
@@ -491,7 +627,14 @@ export default function SettingsPage({ embedded = false, initialTab = 'integrati
         ))}
       </div>
 
-      {tab === 'integration' ? <IntegrationPanel /> : <AccountPanel />}
+      {tab === 'integration' ? (
+        <IntegrationPanel />
+      ) : (
+        <div className="space-y-4">
+          <TimeZoneSettings />
+          <AccountPanel />
+        </div>
+      )}
     </div>
   )
 }

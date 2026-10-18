@@ -20,6 +20,10 @@ export function listPrerequisites(id) {
   return apiClient.get(`planning/items/${id}/prerequisites/`).then((res) => res.data)
 }
 
+export function getDependencyGraph(id) {
+  return apiClient.get(`planning/items/${id}/dependency_graph/`).then((res) => res.data)
+}
+
 export function addPrerequisite(id, prerequisiteId) {
   return apiClient.post(`planning/items/${id}/prerequisites/`, { prerequisite_id: prerequisiteId }).then((res) => res.data)
 }

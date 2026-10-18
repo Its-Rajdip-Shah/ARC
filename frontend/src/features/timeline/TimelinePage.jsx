@@ -28,7 +28,6 @@ import {
 
 import usePriorityFind from '../planner/hooks/usePriorityFind'
 
-import SchedulerPanel from './SchedulerPanel'
 import AnchorDialog from './AnchorDialog'
 import TimezonePanel from './TimezonePanel'
 import TimelineBoard from './TimelineBoard'
@@ -36,9 +35,12 @@ import TimelineTaskNavigator from './TimelineTaskNavigator'
 import CreatePlanningItemPanel from '../planner/components/CreatePlanningItemPanel'
 import { buildRootLeafIndex, findInitialVisibleRootLeaf, findTreeItemById, stepRootLeaf } from './timelineRootNavigation'
 import TimelineSidebar from './TimelineSidebar'
+import { classifyTimelineOverdue } from './timelineOverdue'
 import TimelineToolbar from './TimelineToolbar'
 import useTimelineActions from './useTimelineActions'
-import useTimelinePreferences from './useTimelinePreferences'
+import useTimelinePreferences, {
+  defaultTimelinePreferences,
+} from './useTimelinePreferences'
 import useSequenceNavigator from './useSequenceNavigator'
 
 import {
@@ -190,10 +192,16 @@ function TimelineContent({
     [activeRoots, options.roots],
   )
 
-  const [
-    settingsOpen,
-    setSettingsOpen,
-  ] = useState(false)
+  const [overdueActive, setOverdueActive] = useState(false)
+  const [overdueSections, setOverdueSections] = useState([])
+
+  const toggleOverdueSection = useCallback((section) => {
+    setOverdueSections((current) =>
+      current.includes(section)
+        ? current.filter((value) => value !== section)
+        : [...current, section],
+    )
+  }, [])
 
   const [
     timezoneOpen,
@@ -327,6 +335,34 @@ function TimelineContent({
       ],
     )
 
+  const overdueMatches = useMemo(() => {
+    if (!overdueActive) return new Set()
+
+    const today = todayKey()
+    const sections = overdueSections.length
+      ? overdueSections
+      : ['anchor', 'deadline']
+
+    return new Set(
+      allUniverseItems
+        .filter((item) => sections.includes(classifyTimelineOverdue(item, today)))
+        .map((item) => item.id),
+    )
+  }, [allUniverseItems, overdueActive, overdueSections])
+
+  const overdueEntries = useMemo(
+    () => searchUniverseItems
+      .filter((item) => overdueMatches.has(item.id))
+      .map((item) => ({
+        id: item.id,
+        date: timelineTargetDate(item),
+        title: item.title,
+      }))
+      .filter((entry) => entry.date != null)
+      .sort((a, b) => a.date.localeCompare(b.date) || a.id - b.id),
+    [searchUniverseItems, overdueMatches],
+  )
+
   const rootLeafIndex = useMemo(
     () => buildRootLeafIndex(roots, allUniverseItems, options.completed),
     [roots, allUniverseItems, options.completed],
@@ -339,7 +375,24 @@ function TimelineContent({
   const [navigationTarget, setNavigationTarget] = useState(null)
   const [editingTaskId, setEditingTaskId] = useState(null)
   const canonicalTreeItem = findTreeItemById(roots, editingTaskId)
-  const navigatorRoots = activeRoots.filter((root) => selectedRoots.includes(root.id))
+  const navigatorRoots = activeRoots.filter(
+    (root) => selectedRoots.includes(root.id),
+  )
+
+  const globalRootEntries = useMemo(() => {
+    const unique = new Map()
+
+    for (const rootId of selectedRoots) {
+      for (const entry of rootLeafIndex.get(rootId) ?? []) {
+        if (entry.date == null || unique.has(entry.id)) continue
+        unique.set(entry.id, entry)
+      }
+    }
+
+    return [...unique.values()].sort(
+      (a, b) => a.date.localeCompare(b.date) || a.id - b.id,
+    )
+  }, [selectedRoots, rootLeafIndex])
 
   const find =
     usePriorityFind(
@@ -371,6 +424,32 @@ function TimelineContent({
     anchoredActive,
     setAnchoredActive,
   ] = useState(false)
+
+  const overdueSequence = useSequenceNavigator(
+    overdueEntries,
+    (entry) => {
+      if (!entry?.date) return
+      setNavigationTarget({ id: entry.id, date: entry.date })
+      find.changeQuery('')
+      setAnchoredActive(false)
+      jump(entry.date)
+    },
+  )
+
+  useEffect(() => {
+    overdueSequence.reset()
+  }, [overdueActive, overdueSections])
+
+  const globalRootSequence = useSequenceNavigator(
+    globalRootEntries,
+    (entry) => {
+      if (!entry?.date) return
+      setNavigationTarget({ id: entry.id, date: entry.date })
+      find.changeQuery('')
+      setAnchoredActive(false)
+      jump(entry.date, { rootNavigation: true })
+    },
+  )
 
   function selectNavigationTask(entry, rootId) {
     if (!entry?.date) return
@@ -416,7 +495,9 @@ function TimelineContent({
   // Reconcile tree refreshes and completion visibility without retaining stale task objects.
   useEffect(() => {
     if (!selectedRoots.length) setNavigatorVisible(false)
-    if (!selectedRoots.includes(activeNavigatorRootId)) setActiveNavigatorRootId(selectedRoots[0] ?? null)
+    if (!selectedRoots.includes(activeNavigatorRootId)) {
+      setActiveNavigatorRootId(selectedRoots[0] ?? null)
+    }
     if (navigationTarget && !selectedRoots.some((id) =>
       (rootLeafIndex.get(id) ?? []).some((entry) => entry.id === navigationTarget.id && entry.date != null))) {
       setNavigationTarget(null)
@@ -562,6 +643,41 @@ function TimelineContent({
       jump,
     )
 
+  function resetTimelineView() {
+    // Reset user-facing preferences using the existing persistence mechanism.
+    update(defaultTimelinePreferences())
+
+    // Clear search and all temporary navigation modes.
+    find.changeQuery('')
+    setNavigationTarget(null)
+
+    setOverdueActive(false)
+    setOverdueSections([])
+    overdueSequence.reset()
+
+    setAnchoredActive(false)
+    anchoredSequence.reset()
+
+    setOverloadActive(false)
+    overloadSequence.reset()
+
+    setInfeasibleActive(false)
+    infeasibleSequence.reset()
+
+    globalRootSequence.reset()
+
+    // Remove transient root-navigation state.
+    explicitLeafByRoot.current.clear()
+    setCurrentLeafByRoot({})
+    setActiveNavigatorRootId(null)
+    setNavigatorVisible(false)
+    setNavigatorMinimized(false)
+    setNavigatorPosition(null)
+
+    // Restore the default date and scroll position.
+    jump()
+  }
+
   const navigateWindow =
     useCallback(
       (amount) => {
@@ -662,6 +778,8 @@ function TimelineContent({
         allItems
           .filter(
             (item) =>
+              (!overdueActive || overdueMatches.has(item.id)) &&
+              (
               (navigationTarget?.id === item.id && (options.completed || !item.is_completed)) ||
               (find.query.trim()
                 ? find.matchIds.has(
@@ -705,7 +823,8 @@ function TimelineContent({
                       )
                     )
                   )
-                )),
+                ))
+              ),
           )
           .sort(
             (a, b) =>
@@ -736,6 +855,8 @@ function TimelineContent({
         find.matchIds,
         anchoredActive,
         anchoredItems,
+        overdueActive,
+        overdueMatches,
       ],
     )
 
@@ -939,6 +1060,8 @@ function TimelineContent({
           }
         }
 
+        for (const id of overdueMatches) matchIds.add(id)
+
         if (navigationTarget) matchIds.add(navigationTarget.id)
         return {
           ...find,
@@ -951,6 +1074,7 @@ function TimelineContent({
         navigationTarget,
         anchoredActive,
         anchoredItems,
+        overdueMatches,
       ],
     )
 
@@ -1014,10 +1138,28 @@ function TimelineContent({
           tree.refetch()
         }
         toggle={toggleRoot}
+        navigatorVisible={navigatorVisible}
+        toggleNavigatorPanel={() => {
+          if (selectedRoots.length) {
+            setNavigatorVisible((visible) => !visible)
+          }
+        }}
         rootLeafIndex={rootLeafIndex}
         currentLeafByRoot={displayCurrentLeafByRoot}
         navigateRoot={navigateRoot}
         deselectRoots={deselectRoots}
+        overdueActive={overdueActive}
+        overdueSections={overdueSections}
+        toggleOverdue={() => {
+          setOverdueActive((current) => !current)
+          setOverdueSections([])
+        }}
+        toggleOverdueSection={toggleOverdueSection}
+        overdueNavigation={{
+          count: overdueEntries.length,
+          index: overdueSequence.index,
+          navigate: overdueSequence.navigate,
+        }}
         schedulerRuntime={
           query.data?.scheduler
         }
@@ -1030,6 +1172,7 @@ function TimelineContent({
         Timeline
       </h1>
 
+      <div className="timeline-toolbar-stack">
       <TimelineToolbar
         find={find}
         actions={actions}
@@ -1047,18 +1190,9 @@ function TimelineContent({
           navigateWindow
         }
         jump={jump}
+        onReset={resetTimelineView}
         options={options}
         update={update}
-        settingsOpen={
-          settingsOpen
-        }
-        openSettings={() => setSettingsOpen(true)}
-        toggleSettings={() =>
-          setSettingsOpen(
-            (value) =>
-              !value,
-          )
-        }
         anchorNav={{
           active:
             anchoredActive,
@@ -1151,20 +1285,6 @@ function TimelineContent({
         </p>
       )}
 
-      {settingsOpen && (
-        <SchedulerPanel
-          runtime={
-            query.data
-              ?.scheduler
-          }
-          close={() =>
-            setSettingsOpen(
-              false,
-            )
-          }
-        />
-      )}
-
       {timezoneOpen && (
         <TimezonePanel
           onClose={() =>
@@ -1174,6 +1294,7 @@ function TimelineContent({
           }
         />
       )}
+      </div>
 
       {query.isPending ? (
         <p
@@ -1328,7 +1449,13 @@ function TimelineContent({
       {navigatorVisible && navigatorRoots.length > 0 && (
         <TimelineTaskNavigator
           selectedRoots={navigatorRoots} rootLeafIndex={rootLeafIndex}
+          globalNavigation={{
+            count: globalRootEntries.length,
+            index: globalRootSequence.index,
+            navigate: globalRootSequence.navigate,
+          }}
           activeRootId={activeNavigatorRootId} currentLeafByRoot={displayCurrentLeafByRoot}
+          navigateRoot={navigateRoot}
           minimized={navigatorMinimized} onSetMinimized={setNavigatorMinimized}
           onSetActiveRoot={setActiveNavigatorRootId} onSelectTask={selectNavigationTask}
           onClose={() => setNavigatorVisible(false)}

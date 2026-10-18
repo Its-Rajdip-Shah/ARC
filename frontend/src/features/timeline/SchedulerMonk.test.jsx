@@ -11,11 +11,17 @@ import FocusPage from '../focus/FocusPage'
 import PlannerPage from '../planner/PlannerPage'
 import { AURA_PARTICLES, orbitalTravel, particlePosition } from './schedulerAuraMotion'
 
-const api = vi.hoisted(() => ({ reschedule: vi.fn(), settings: vi.fn(), focus: {} }))
+const api = vi.hoisted(() => ({
+  reschedule: vi.fn(),
+  settings: vi.fn(),
+  updateSettings: vi.fn(),
+  focus: {},
+}))
 vi.mock('../../api/planning', async (original) => ({
   ...await original(),
   rescheduleTimeline: (...args) => api.reschedule(...args),
   getSchedulerSettings: (...args) => api.settings(...args),
+  updateSchedulerSettings: (...args) => api.updateSettings(...args),
   getHistoryStatus: async () => ({ can_undo: false, can_redo: false }),
 }))
 vi.mock('../../hooks/useFocus', async (original) => ({
@@ -33,6 +39,7 @@ beforeEach(() => {
   frames = new Map()
   nextFrame = 0
   api.settings.mockResolvedValue({ flavour: 'monk' })
+  api.updateSettings.mockResolvedValue({ flavour: 'lock-in' })
   api.reschedule.mockResolvedValue({ changed_ids: [] })
   vi.stubGlobal('matchMedia', () => ({
     get matches() { return reduced },
@@ -79,6 +86,74 @@ it('keeps idle, delayed hover, keyboard focus and scheduling precedence without 
   expect(state()).toContain('hover')
 })
 
+it('Command-click switches Monk to Lock-in and automatically reschedules', async () => {
+  const run = vi.fn().mockResolvedValue({})
+  render(wrap(<SchedulerRunButton runtime={runtime} actions={{ run }} />))
+
+  fireEvent.click(
+    screen.getByRole('button', { name: 'Reschedule Timeline using Monk' }),
+    { metaKey: true },
+  )
+
+  await waitFor(() => {
+    expect(api.updateSettings).toHaveBeenCalledWith({
+      flavour: 'lock-in',
+    })
+    expect(api.reschedule).toHaveBeenCalledTimes(1)
+  })
+
+  expect(run).not.toHaveBeenCalled()
+})
+
+it('Command-click switches Lock-in back to Monk', async () => {
+  api.settings.mockResolvedValue({ flavour: 'lock-in' })
+  api.updateSettings.mockResolvedValue({ flavour: 'monk' })
+
+  const run = vi.fn().mockResolvedValue({})
+
+  render(wrap(
+    <SchedulerRunButton
+      runtime={{ configured: true, flavour: 'lock-in' }}
+      actions={{ run }}
+    />,
+  ))
+
+  fireEvent.click(
+    screen.getByRole('button', { name: 'Reschedule Timeline using Lock-in' }),
+    { metaKey: true },
+  )
+
+  await waitFor(() => {
+    expect(api.updateSettings).toHaveBeenCalledWith({
+      flavour: 'monk',
+    })
+    expect(api.reschedule).toHaveBeenCalledTimes(1)
+  })
+
+  expect(run).not.toHaveBeenCalled()
+})
+
+it('failed Command-click announces error without rescheduling', async () => {
+  api.updateSettings.mockRejectedValueOnce(
+    new Error('Mode update unavailable'),
+  )
+
+  const run = vi.fn().mockResolvedValue({})
+  render(wrap(<SchedulerRunButton runtime={runtime} actions={{ run }} />))
+
+  fireEvent.click(
+    screen.getByRole('button', { name: 'Reschedule Timeline using Monk' }),
+    { metaKey: true },
+  )
+
+  expect(
+    (await screen.findByRole('alert')).textContent,
+  ).toContain('Mode update unavailable')
+
+  expect(run).not.toHaveBeenCalled()
+  expect(api.reschedule).not.toHaveBeenCalled()
+})
+
 it('retains legacy busy fallback and scheduler-settings mutation detection', async () => {
   const run = vi.fn()
   const { container, rerender } = render(wrap(<SchedulerRunButton runtime={runtime} actions={{ run, busy: true }} />))
@@ -115,11 +190,11 @@ it('breathes 24–29px radially, retains each angle and staggers the field', () 
 
 it('orbits in both directions with radial variation and smooth bounded acceleration', () => {
   const speed = (time) => (orbitalTravel(time + 0.001) - orbitalTravel(time)) / 0.001
-  expect(speed(0)).toBeCloseTo(0.35, 2)
+  expect(speed(0)).toBeCloseTo(0.7, 2)
   expect(speed(1)).toBeGreaterThan(speed(0))
   expect(speed(4)).toBeGreaterThan(speed(1))
-  expect(speed(50)).toBeCloseTo(2.1)
-  expect(speed(50)).toBeLessThanOrEqual(2.10001)
+  expect(speed(50)).toBeCloseTo(5.0)
+  expect(speed(50)).toBeLessThanOrEqual(5.00001)
   expect(new Set(AURA_PARTICLES.map((p) => p.direction)).size).toBe(2)
   for (const p of AURA_PARTICLES) {
     const a = particlePosition(p, 'scheduling', 0), b = particlePosition(p, 'scheduling', 1)

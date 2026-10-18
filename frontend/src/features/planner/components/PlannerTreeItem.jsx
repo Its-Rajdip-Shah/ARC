@@ -53,6 +53,7 @@ export default function PlannerTreeItem({
   onHoverItem,
   onSelectItem,
   onEditItem,
+  onCreateDependency,
   onCreateNested,
   onResidualEstimatePrompt,
   dndEnabled = true,
@@ -417,6 +418,17 @@ export default function PlannerTreeItem({
           paddingLeft: `${indent}px`,
         }}
       >
+        {item.deadline_overdue === true && !item.is_completed && (
+          <i
+            className="pointer-events-none absolute top-1/2 z-20 h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full border border-[#e0b84f] bg-[#e0b84f]"
+            role="img"
+            aria-label="Deadline overdue"
+            data-arc-overdue-marker
+            style={{
+              left: depth === 0 ? '0px' : `${(depth - 1) * 42 + 33}px`,
+            }}
+          />
+        )}
         {isDragging && previewDepth != null && (
           <>
             <span
@@ -695,6 +707,20 @@ export default function PlannerTreeItem({
               "
             >
               <Pencil size={14} strokeWidth={1.8} />
+            </button>
+
+            <button
+              type="button"
+              disabled={provisional}
+              aria-label={`Create dependency for ${item.title}`}
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={(event) => {
+                event.stopPropagation()
+                if (!provisional) onCreateDependency?.(item)
+              }}
+              className="flex h-[18px] w-[18px] items-center justify-center rounded-[5px] text-[#c3d19b] hover:bg-white/10"
+            >
+              <span aria-hidden="true">↔</span>
             </button>
 
             <button

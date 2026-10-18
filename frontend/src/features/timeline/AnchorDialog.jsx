@@ -1,3 +1,4 @@
+import ArcDateField from '../../components/ArcDateField'
 import {
   useState,
 } from 'react'
@@ -213,10 +214,11 @@ export default function AnchorDialog({
           </div>
         </div>
 
-        <label className="timeline-date-field">
+        <div className="timeline-date-field">
           Anchor date
 
-          <input
+          <ArcDateField
+            aria-label="Anchor date"
             type="date"
             value={date}
             onChange={(event) => {
@@ -229,7 +231,7 @@ export default function AnchorDialog({
               )
             }}
           />
-        </label>
+        </div>
 
         {conflicts.length > 0 && (
           <div
@@ -256,6 +258,12 @@ export default function AnchorDialog({
                     <p>
                       {copy.detail}
                     </p>
+
+                    {conflict.original_date && conflict.proposed_date && (
+                      <p>
+                        Canonical date: {conflict.original_date} → proposed {conflict.proposed_date}
+                      </p>
+                    )}
                   </div>
                 )
               },

@@ -1,7 +1,9 @@
 import { useEffect, useRef } from 'react'
+import { ChevronLeft, ChevronRight } from 'lucide-react'
 
 export default function TimelineTaskNavigator({
   selectedRoots, rootLeafIndex, activeRootId, currentLeafByRoot,
+  globalNavigation, navigateRoot,
   minimized, onSetMinimized, onSetActiveRoot, onSelectTask, onClose,
   position, setPosition,
 }) {
@@ -60,13 +62,106 @@ export default function TimelineTaskNavigator({
         }}
         onPointerUp={finishDrag} onPointerCancel={finishDrag} onLostPointerCapture={() => { drag.current = null }}>
         <strong>Root tasks</strong>
+        <div
+          role="group"
+          aria-label="Global root task navigation"
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 2,
+            flexShrink: 0,
+          }}
+        >
+          <button
+            type="button"
+            aria-label="Previous global root task"
+            disabled={!globalNavigation?.count}
+            onClick={() => globalNavigation?.navigate(-1)}
+            style={{ display: 'grid', placeItems: 'center', padding: 4 }}
+          >
+            <ChevronLeft size={15} />
+          </button>
+          <span
+            aria-live="polite"
+            style={{
+              fontSize: 12,
+              minWidth: '4.5ch',
+              textAlign: 'center',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {globalNavigation?.count
+              ? `${Math.max(1, globalNavigation.index + 1)}/${globalNavigation.count}`
+              : '0/0'}
+          </span>
+          <button
+            type="button"
+            aria-label="Next global root task"
+            disabled={!globalNavigation?.count}
+            onClick={() => globalNavigation?.navigate(1)}
+            style={{ display: 'grid', placeItems: 'center', padding: 4 }}
+          >
+            <ChevronRight size={15} />
+          </button>
+        </div>
         <button type="button" aria-label={minimized ? 'Maximize task navigator' : 'Minimize task navigator'} onClick={() => onSetMinimized(!minimized)}>{minimized ? '+' : '−'}</button>
         <button type="button" aria-label="Close task navigator" onClick={onClose}>×</button>
       </header>
       <div className="timeline-task-navigator-tabs" role="group" aria-label="Selected roots">
-        {selectedRoots.map((item) => (
-          <button type="button" key={item.id} aria-pressed={item.id === root?.id} onClick={() => onSetActiveRoot(item.id)}>{item.title}</button>
-        ))}
+        {selectedRoots.map((item) => {
+          const rootEntries = rootLeafIndex.get(item.id) ?? []
+          const navigable = rootEntries.filter((entry) => entry.date != null)
+          const currentIndex = navigable.findIndex(
+            (entry) => entry.id === currentLeafByRoot[item.id],
+          )
+          const position = navigable.length ? Math.max(1, currentIndex + 1) : 0
+          const missing = rootEntries.length - navigable.length
+
+          return (
+            <div className="timeline-task-navigator-root" key={item.id}>
+              <button
+                type="button"
+                aria-pressed={item.id === root?.id}
+                onClick={() => onSetActiveRoot(item.id)}
+                title={item.title}
+              >
+                {item.title}
+              </button>
+              <div
+                className="timeline-root-navigation"
+                role="group"
+                aria-label={`Tasks in ${item.title}`}
+              >
+                <button
+                  type="button"
+                  className="timeline-root-navigation-arrow"
+                  disabled={!navigable.length}
+                  aria-label={`Previous task in ${item.title}`}
+                  onClick={() => navigateRoot(item.id, -1)}
+                >
+                  <ChevronLeft size={14} />
+                </button>
+                <span className="timeline-root-navigation-count">
+                  {position}/{navigable.length}
+                </span>
+                <button
+                  type="button"
+                  className="timeline-root-navigation-arrow"
+                  disabled={!navigable.length}
+                  aria-label={`Next task in ${item.title}`}
+                  onClick={() => navigateRoot(item.id, 1)}
+                >
+                  <ChevronRight size={14} />
+                </button>
+              </div>
+              {missing > 0 && (
+                <small className="timeline-root-navigation-missing">
+                  {missing} schedule unavailable
+                </small>
+              )}
+            </div>
+          )
+        })}
       </div>
       {!minimized && (
         <div className="timeline-task-navigator-list">

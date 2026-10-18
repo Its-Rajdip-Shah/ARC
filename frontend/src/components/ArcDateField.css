@@ -1,0 +1,186 @@
+.arc-date-field {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  flex: 1 1 auto;
+  min-width: 0;
+  width: 100%;
+}
+
+.arc-date-field > input {
+  width: 100%;
+  min-width: 0;
+  padding-right: 36px;
+  color-scheme: dark;
+}
+
+.arc-date-field > input::-webkit-calendar-picker-indicator {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.arc-date-field-trigger {
+  position: absolute;
+  right: 5px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  color: #a9a4cf;
+  background: transparent;
+  cursor: pointer;
+}
+
+.arc-date-field-trigger:hover,
+.arc-date-field-trigger:focus-visible {
+  color: white;
+  background: #ffffff25;
+}
+
+.arc-date-field-popup {
+  position: fixed;
+  z-index: 10000;
+  width: 280px;
+  max-width: calc(100vw - 16px);
+  padding: 4px;
+  border: 1px solid #8fa8e860;
+  border-radius: 9px;
+  background: #171d3b;
+  box-shadow: 0 12px 30px #0008;
+}
+
+/* Match Timeline's Jump to date calendar exactly. */
+.arc-date-field-popup .timeline-date-calendar {
+  width: 258px;
+  padding: 7px;
+  color: white;
+}
+
+.arc-date-field-popup .timeline-calendar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.arc-date-field-popup .timeline-calendar-header strong {
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.arc-date-field-popup .timeline-calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 2px;
+  text-align: center;
+}
+
+.arc-date-field-popup .timeline-calendar-grid > span,
+.arc-date-field-popup .timeline-calendar-grid > button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 30px;
+  font-size: 12px;
+}
+
+.arc-date-field-popup .timeline-calendar-grid > span {
+  color: #aeb9d5;
+}
+
+.arc-date-field-popup .timeline-calendar-grid > button:hover,
+.arc-date-field-popup .timeline-calendar-grid > button:focus-visible {
+  background: #ffffff25;
+}
+
+.arc-date-field-popup .timeline-calendar-grid > button[aria-pressed="true"] {
+  background: #ffffff30;
+  outline: 1px solid #ffffff60;
+}
+
+/* The field opens ARC's calendar, never the browser-native picker. */
+.arc-date-field > .arc-date-field-display {
+  cursor: pointer;
+  caret-color: transparent;
+}
+
+.arc-date-field > .arc-date-field-display:disabled {
+  cursor: not-allowed;
+}
+
+/* Keep the controlled ISO date input for forms and tests,
+   but never expose its browser-native date picker. */
+.arc-date-field > .arc-date-field-native {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.arc-date-field > .arc-date-field-value {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  padding-right: 66px;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.arc-date-field > .arc-date-field-value:disabled {
+  cursor: not-allowed;
+}
+
+.arc-date-field-clear {
+  position: absolute;
+  right: 35px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: #a9a4cf;
+  cursor: pointer;
+}
+
+.arc-date-field-clear:hover,
+.arc-date-field-clear:focus-visible {
+  background: #ffffff25;
+  color: white;
+}
+
+
+/* ARC date field: fixed layout for both empty and selected dates. */
+.arc-date-field {
+  min-height: 38px;
+  align-self: stretch;
+}
+
+.arc-date-field > input.arc-date-field-native {
+  display: none !important;
+}
+
+.arc-date-field > .arc-date-field-value {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  min-height: 38px;
+  height: 100%;
+  line-height: 1.4;
+}

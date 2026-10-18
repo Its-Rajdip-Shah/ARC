@@ -1,5 +1,5 @@
 import React from 'react'
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
 import TimelineCard from './TimelineCard'
 import TimelineBoard from './TimelineBoard'
@@ -7,6 +7,7 @@ import TimelineSidebar from './TimelineSidebar'
 import TimelineTaskNavigator from './TimelineTaskNavigator'
 import { addDays, todayKey, makeScale } from './timelineDates'
 import TimelinePage from './TimelinePage'
+import AnchorDialog from './AnchorDialog'
 
 const pageData = vi.hoisted(() => ({ roots: [], universe: [], groups: [], editor: vi.fn(), run: vi.fn(), windows: [], setFlavour: vi.fn() }))
 vi.mock('../../stores/authStore', () => ({ useAuthStore: Object.assign((selector) => selector({ user: { id: 77 } }), { getState: () => ({ user: { id: 77 } }) }) }))
@@ -22,9 +23,10 @@ vi.mock('../planner/components/CreatePlanningItemPanel', () => ({ default: (prop
   pageData.editor(props)
   return <aside aria-label="Canonical editor"><button onClick={props.onClose}>Close editor</button></aside>
 } }))
-vi.mock('./TimelineToolbar', () => ({ default: ({ find, options, update, navigate }) => <div>
+vi.mock('./TimelineToolbar', () => ({ default: ({ find, options, update, navigate, onReset }) => <div>
   <input aria-label="Timeline search" value={find.query} onChange={(event) => find.changeQuery(event.target.value)} />
   <button onClick={() => navigate(1)}>Next date window</button>
+  <button onClick={onReset}>Reset filters</button>
   <button onClick={() => update({ completed: !options.completed })}>Show completed</button>
 </div> }))
 vi.mock('./SchedulerRunButton', () => ({ default: () => <button>Run scheduler</button> }))
@@ -37,17 +39,37 @@ const find = { matchIds: new Set(), registerCard() {} }
 const roots = [1, 2, 3].map((id) => ({ id, title: `Root ${id}` }))
 const index = new Map([[1, [{ id: 42, title: task.title, date: task.scheduled_date }, { id: 43, title: 'Missing task', date: null, missingSchedule: true }]], [2, [{ id: 44, title: 'Other task', date: '2026-10-20', isCompleted: true }]]])
 
-it('root arrows are sibling buttons and navigate without toggling selection', () => {
-  const toggle = vi.fn(), navigateRoot = vi.fn()
-  const { container } = render(<TimelineSidebar roots={roots} selected={[1]} toggle={toggle} rootLeafIndex={index} navigateRoot={navigateRoot} />)
+it('root arrows live beneath panel tabs and never toggle sidebar selection', () => {
+  const toggle = vi.fn()
+  const navigateRoot = vi.fn()
+  const { container } = render(
+    <>
+      <TimelineSidebar roots={roots} selected={[1]} toggle={toggle} />
+      <TimelineTaskNavigator
+        selectedRoots={[roots[0]]}
+        rootLeafIndex={index}
+        activeRootId={1}
+        currentLeafByRoot={{ 1: 42 }}
+        navigateRoot={navigateRoot}
+        onSetActiveRoot={vi.fn()}
+        onSelectTask={vi.fn()}
+        onClose={vi.fn()}
+      />
+    </>,
+  )
+
   expect(container.querySelector('button button')).toBeNull()
+  const sidebar = screen.getByLabelText('Timeline root filters')
+  expect(sidebar.querySelector('[aria-label="Next task in Root 1"]')).toBeNull()
+
   fireEvent.click(screen.getByRole('button', { name: 'Next task in Root 1' }))
   fireEvent.click(screen.getByRole('button', { name: 'Previous task in Root 1' }))
   expect(navigateRoot.mock.calls).toEqual([[1, 1], [1, -1]])
   expect(toggle).not.toHaveBeenCalled()
   expect(screen.getByText('1/1')).toBeTruthy()
   expect(screen.getByText('1 schedule unavailable')).toBeTruthy()
-  fireEvent.click(screen.getByRole('button', { name: 'Root 1' }))
+
+  fireEvent.click(sidebar.querySelector('button[aria-label="Root 1"]'))
   expect(toggle).toHaveBeenCalledWith(1)
 })
 
@@ -72,6 +94,27 @@ it('task double-click uses canonical ID and ignores checkbox, anchor and read-on
   fireEvent.doubleClick(screen.getByText(task.title))
   expect(onEdit).toHaveBeenCalledTimes(1)
   expect(container.querySelector('[data-timeline-task-id]')).toBeNull()
+})
+
+it('deadline overdue hides canonical date blobs and renders its red duration dot', () => {
+  const { container } = render(<TimelineCard item={{ ...task, deadline_overdue: true, start_date: '2026-10-01', due_date: '2026-10-02' }} find={find} expanded />)
+  expect(container.querySelector('.timeline-deadline-overdue-dot')).toBeTruthy()
+  expect(screen.queryByText(/Release 2026-10-01/)).toBeNull()
+  expect(screen.queryByText(/Due 2026-10-02/)).toBeNull()
+})
+
+it('carried-anchor conflicts show canonical original and proposed values before confirmation', async () => {
+  const actions = {
+    busy: false,
+    run: vi.fn().mockRejectedValue({ response: { status: 409, data: {
+      conflicts: [{ code: 'after_deadline', original_date: '2026-10-12', proposed_date: '2026-10-15' }],
+      decisions: [{ code: 'change_deadline' }],
+    } } }),
+  }
+  render(<AnchorDialog request={{ item: task, date: '2026-10-15' }} actions={actions} onClose={vi.fn()} />)
+  fireEvent.click(screen.getByRole('button', { name: 'Anchor to this date' }))
+  await screen.findByText(/Canonical date: 2026-10-12 → proposed 2026-10-15/)
+  expect(actions.run).toHaveBeenCalledWith('anchor', expect.objectContaining({ item_id: 42, date: '2026-10-15' }))
 })
 
 it('navigator selection, tabs, minimize, restore and close remain presentation actions', () => {
@@ -113,6 +156,17 @@ it.each(['default', 'selected-date'])('%s expansion preserves the 155ms intentio
   fireEvent.mouseLeave(card)
   expect(card.classList.contains('timeline-card-hover-intent')).toBe(false)
   expect(card.classList.contains('timeline-card-expanded')).toBe(expansionVariant === 'selected-date')
+})
+
+it('today cards remain collapsed until hovered or focused', () => {
+  const { container } = render(<TimelineCard item={{ ...task, scheduled_date: todayKey() }} find={find} />)
+  const card = container.querySelector('article')
+  expect(card.classList.contains('timeline-today')).toBe(true)
+  expect(card.classList.contains('timeline-card-expanded')).toBe(false)
+  fireEvent.focus(card)
+  expect(card.classList.contains('timeline-card-expanded')).toBe(true)
+  fireEvent.blur(card)
+  expect(card.classList.contains('timeline-card-expanded')).toBe(false)
 })
 
 it('selected-date modifiers follow persistent concentration and disappear during temporary preview', () => {
@@ -329,40 +383,119 @@ it('completed saved roots leave the effective selection and navigator without re
 })
 
 
-it('Monk settings single click toggles and browser double-click sequences always leave both modes accessible', async () => {
+it('Monk dropdown shares toolbar click-to-pin, selection and dismissal', async () => {
   const { default: Toolbar } = await vi.importActual('./TimelineToolbar')
-  const { default: SchedulerPanel } = await import('./SchedulerPanel')
-  const nav = { active: false, count: 0, index: -1, toggle() {}, navigate() {} }
-  function Harness() {
-    const [open, setOpen] = React.useState(false)
-    return <>
-      <Toolbar find={{ ...find, query: '' }} actions={{ history: { data: {} } }} anchor="2026-10-12" zoom="day"
-        options={{ type: 'all', durations: [], grouped: true, completed: false }}
-        anchorNav={nav} overloadNav={nav} infeasibleNav={nav} settingsOpen={open}
-        toggleSettings={() => setOpen((value) => !value)} openSettings={() => setOpen(true)} />
-      {open && <SchedulerPanel close={() => setOpen(false)} />}
-    </>
+  const nav = {
+    active: false,
+    count: 0,
+    index: -1,
+    toggle() {},
+    navigate() {},
   }
-  render(<Harness />)
-  const trigger = screen.getByRole('button', { name: 'Scheduler settings' })
+
+  pageData.setFlavour.mockResolvedValue(undefined)
+
+  render(
+    <Toolbar
+      find={{ ...find, query: '' }}
+      actions={{ history: { data: {} } }}
+      anchor="2026-10-12"
+      zoom="day"
+      options={{
+        type: 'all',
+        durations: [],
+        grouped: true,
+        completed: false,
+      }}
+      anchorNav={nav}
+      overloadNav={nav}
+      infeasibleNav={nav}
+    />,
+  )
+
+  const trigger = screen.getByRole('button', {
+    name: 'Scheduler settings',
+  })
+
   fireEvent.click(trigger)
   expect(trigger.getAttribute('aria-expanded')).toBe('true')
+
+  fireEvent.mouseLeave(trigger.parentElement)
+  expect(trigger.getAttribute('aria-expanded')).toBe('true')
+
   fireEvent.click(trigger)
   expect(trigger.getAttribute('aria-expanded')).toBe('false')
-  for (const startingOpen of [false, true]) {
-    if (startingOpen) fireEvent.click(trigger)
-    // Real browsers emit click(1), click(2), then dblclick.
-    fireEvent.click(trigger, { detail: 1 })
-    fireEvent.click(trigger, { detail: 2 })
-    fireEvent.doubleClick(trigger)
-    expect(trigger.getAttribute('aria-expanded')).toBe('true')
-    fireEvent.click(screen.getByRole('button', { name: /Lock-in.*Push/ }))
-    fireEvent.click(screen.getByRole('button', { name: /Monk.*Prefer/ }))
+
+  fireEvent.click(trigger)
+  fireEvent.click(screen.getByRole('button', { name: 'Locked-in' }))
+
+  await waitFor(() => {
     expect(pageData.setFlavour).toHaveBeenCalledWith('lock-in')
+    expect(trigger.getAttribute('aria-expanded')).toBe('false')
+  })
+
+  fireEvent.click(trigger)
+  fireEvent.click(screen.getByRole('button', { name: 'Monk' }))
+
+  await waitFor(() => {
     expect(pageData.setFlavour).toHaveBeenCalledWith('monk')
-    fireEvent.click(trigger)
-  }
+    expect(trigger.getAttribute('aria-expanded')).toBe('false')
+  })
+
+  fireEvent.click(trigger)
+  fireEvent.keyDown(document, { key: 'Escape' })
+  expect(trigger.getAttribute('aria-expanded')).toBe('false')
+
+  fireEvent.click(trigger)
+  fireEvent.pointerDown(document.body)
+  expect(trigger.getAttribute('aria-expanded')).toBe('false')
 })
+
+it('Monk dropdown remains open if saving fails', async () => {
+  const { default: Toolbar } = await vi.importActual('./TimelineToolbar')
+  const nav = {
+    active: false,
+    count: 0,
+    index: -1,
+    toggle() {},
+    navigate() {},
+  }
+
+  pageData.setFlavour.mockRejectedValueOnce(new Error('Save failed'))
+
+  render(
+    <Toolbar
+      find={{ ...find, query: '' }}
+      actions={{ history: { data: {} } }}
+      anchor="2026-10-12"
+      zoom="day"
+      options={{
+        type: 'all',
+        durations: [],
+        grouped: true,
+        completed: false,
+      }}
+      anchorNav={nav}
+      overloadNav={nav}
+      infeasibleNav={nav}
+    />,
+  )
+
+  const trigger = screen.getByRole('button', {
+    name: 'Scheduler settings',
+  })
+
+  fireEvent.click(trigger)
+  fireEvent.click(screen.getByRole('button', { name: 'Locked-in' }))
+
+  await waitFor(() => {
+    expect(pageData.setFlavour).toHaveBeenCalled()
+  })
+
+  expect(trigger.getAttribute('aria-expanded')).toBe('true')
+  expect(screen.getByRole('button', { name: 'Monk' })).toBeTruthy()
+})
+
 
 it('root positions initialize from visible tasks and explicit independent positions survive async refresh', () => {
   const today = todayKey()
@@ -459,4 +592,394 @@ it('dragging and viewport resizing reserve measured header and tabs plus sixteen
     expect(setPosition).toHaveBeenLastCalledWith({ x: 60, y: 68 })
     expect(panel.style.getPropertyValue('--timeline-navigator-min-height')).toBe('132px')
   } finally { vi.unstubAllGlobals() }
+})
+
+
+it('calendar opens on the Timeline anchor month', async () => {
+  const { default: Toolbar } = await vi.importActual('./TimelineToolbar')
+
+  const nav = {
+    active: false,
+    count: 0,
+    index: -1,
+    toggle() {},
+    navigate() {},
+  }
+
+  const jump = vi.fn()
+
+  render(
+    <Toolbar
+      find={{ ...find, query: '' }}
+      actions={{ busy: false, history: { data: {} } }}
+      anchor="2027-02-15"
+      zoom="day"
+      setZoom={vi.fn()}
+      navigate={vi.fn()}
+      jump={jump}
+      options={{
+        type: 'all',
+        durations: [],
+        grouped: true,
+        completed: false,
+      }}
+      update={vi.fn()}
+      anchorNav={nav}
+      overloadNav={nav}
+      infeasibleNav={nav}
+    />,
+  )
+
+  fireEvent.click(screen.getByRole('button', {
+    name: 'Jump to date',
+  }))
+
+  expect(
+    screen.getByRole('button', { name: 'Choose month' }).textContent
+  ).toBe('February')
+  expect(
+    screen.getByRole('button', { name: 'Edit calendar year' }).textContent
+  ).toBe('2027')
+
+  fireEvent.click(screen.getByRole('button', {
+    name: '2027-02-20',
+  }))
+
+  expect(jump).toHaveBeenCalledWith('2027-02-20')
+
+  expect(
+    screen.getByRole('button', {
+      name: 'Jump to date',
+    }).getAttribute('aria-expanded'),
+  ).toBe('false')
+})
+
+
+it('shared toolbar dropdown waits for hover intent and supports pinning', async () => {
+  const { default: Toolbar } = await vi.importActual('./TimelineToolbar')
+
+  vi.useFakeTimers()
+
+  const nav = {
+    active: false,
+    count: 0,
+    index: -1,
+    toggle: vi.fn(),
+    navigate: vi.fn(),
+  }
+
+  render(
+    <Toolbar
+      find={{ ...find, query: '' }}
+      actions={{ busy: false, history: { data: {} } }}
+      anchor="2026-10-17"
+      zoom="day"
+      setZoom={vi.fn()}
+      navigate={vi.fn()}
+      jump={vi.fn()}
+      options={{
+        type: 'all',
+        durations: [],
+        grouped: true,
+        completed: false,
+      }}
+      update={vi.fn()}
+      anchorNav={nav}
+      overloadNav={nav}
+      infeasibleNav={nav}
+    />,
+  )
+
+  const trigger = screen.getByRole('button', { name: 'Item type' })
+  const host = trigger.parentElement
+
+  fireEvent.mouseEnter(host)
+
+  act(() => vi.advanceTimersByTime(219))
+  expect(trigger.getAttribute('aria-expanded')).toBe('false')
+
+  fireEvent.mouseLeave(host)
+  act(() => vi.advanceTimersByTime(500))
+  expect(trigger.getAttribute('aria-expanded')).toBe('false')
+
+  fireEvent.mouseEnter(host)
+  act(() => vi.advanceTimersByTime(220))
+  expect(trigger.getAttribute('aria-expanded')).toBe('true')
+
+  fireEvent.mouseLeave(host)
+  expect(trigger.getAttribute('aria-expanded')).toBe('false')
+
+  fireEvent.click(trigger)
+  expect(trigger.getAttribute('aria-expanded')).toBe('true')
+
+  fireEvent.mouseLeave(host)
+  expect(trigger.getAttribute('aria-expanded')).toBe('true')
+
+  fireEvent.click(trigger)
+  expect(trigger.getAttribute('aria-expanded')).toBe('false')
+
+  fireEvent.click(trigger)
+  fireEvent.keyDown(document, { key: 'Escape' })
+  expect(trigger.getAttribute('aria-expanded')).toBe('false')
+})
+
+it('Estimated Duration supports multiple selections without dismissing', async () => {
+  const { default: Toolbar } = await vi.importActual('./TimelineToolbar')
+
+  const nav = {
+    active: false,
+    count: 0,
+    index: -1,
+    toggle: vi.fn(),
+    navigate: vi.fn(),
+  }
+
+  const update = vi.fn()
+
+  render(
+    <Toolbar
+      find={{ ...find, query: '' }}
+      actions={{ busy: false, history: { data: {} } }}
+      anchor="2026-10-17"
+      zoom="day"
+      setZoom={vi.fn()}
+      navigate={vi.fn()}
+      jump={vi.fn()}
+      options={{
+        type: 'all',
+        durations: [],
+        grouped: true,
+        completed: false,
+      }}
+      update={update}
+      anchorNav={nav}
+      overloadNav={nav}
+      infeasibleNav={nav}
+    />,
+  )
+
+  const trigger = screen.getByRole('button', {
+    name: 'Estimated duration',
+  })
+
+  fireEvent.click(trigger)
+  expect(trigger.getAttribute('aria-expanded')).toBe('true')
+
+  const options = screen.getAllByRole('button', {
+    pressed: true,
+  }).filter((button) => button.hasAttribute('data-dropdown-select'))
+
+  expect(options.length).toBe(6)
+
+  fireEvent.click(options[0])
+  expect(trigger.getAttribute('aria-expanded')).toBe('true')
+  expect(update).toHaveBeenCalledWith({
+    durations: expect.not.arrayContaining(['UNDER_20_MINUTES']),
+  })
+
+  fireEvent.click(options[1])
+  expect(trigger.getAttribute('aria-expanded')).toBe('true')
+  expect(update).toHaveBeenCalledTimes(2)
+
+  fireEvent.pointerDown(document.body)
+  expect(trigger.getAttribute('aria-expanded')).toBe('false')
+})
+
+it('calendar month navigation keeps the dropdown open', async () => {
+  const { default: Toolbar } = await vi.importActual('./TimelineToolbar')
+
+  const nav = {
+    active: false,
+    count: 0,
+    index: -1,
+    toggle: vi.fn(),
+    navigate: vi.fn(),
+  }
+
+  const jump = vi.fn()
+
+  render(
+    <Toolbar
+      find={{ ...find, query: '' }}
+      actions={{ busy: false, history: { data: {} } }}
+      anchor="2026-10-17"
+      zoom="day"
+      setZoom={vi.fn()}
+      navigate={vi.fn()}
+      jump={jump}
+      options={{
+        type: 'all',
+        durations: [],
+        grouped: true,
+        completed: false,
+      }}
+      update={vi.fn()}
+      anchorNav={nav}
+      overloadNav={nav}
+      infeasibleNav={nav}
+    />,
+  )
+
+  const trigger = screen.getByRole('button', {
+    name: 'Jump to date',
+  })
+
+  fireEvent.click(trigger)
+  expect(screen.getByRole('button', { name: 'Choose month' }).textContent.includes('October')).toBeTruthy()
+
+  fireEvent.click(screen.getByRole('button', {
+    name: 'Next month',
+  }))
+
+  expect(screen.getByRole('button', { name: 'Choose month' }).textContent.includes('November')).toBeTruthy()
+  expect(trigger.getAttribute('aria-expanded')).toBe('true')
+
+  fireEvent.click(screen.getByRole('button', {
+    name: '2026-11-12',
+  }))
+
+  expect(jump).toHaveBeenCalledWith('2026-11-12')
+  expect(trigger.getAttribute('aria-expanded')).toBe('false')
+})
+
+
+
+it('Roots heading eye toggles the whole panel without changing selection', () => {
+  const toggle = vi.fn()
+  const togglePanel = vi.fn()
+  const deselectRoots = vi.fn()
+
+  const props = {
+    roots,
+    selected: [1],
+    toggle,
+    toggleNavigatorPanel: togglePanel,
+    deselectRoots,
+  }
+
+  const { rerender } = render(
+    <TimelineSidebar {...props} navigatorVisible />,
+  )
+
+  fireEvent.click(screen.getByRole('button', {
+    name: 'Hide Root Tasks panel',
+  }))
+
+  expect(togglePanel).toHaveBeenCalledTimes(1)
+  expect(toggle).not.toHaveBeenCalled()
+  expect(deselectRoots).not.toHaveBeenCalled()
+
+  expect(screen.queryByRole('button', {
+    name: 'Hide Root 1 in Root Tasks panel',
+  })).toBeNull()
+
+  rerender(
+    <TimelineSidebar {...props} navigatorVisible={false} />,
+  )
+
+  fireEvent.click(screen.getByRole('button', {
+    name: 'Show Root Tasks panel',
+  }))
+
+  expect(togglePanel).toHaveBeenCalledTimes(2)
+  expect(toggle).not.toHaveBeenCalled()
+
+  rerender(
+    <TimelineSidebar
+      {...props}
+      selected={[]}
+      navigatorVisible={false}
+    />,
+  )
+
+  expect(screen.queryByRole('button', {
+    name: 'Show Root Tasks panel',
+  })).toBeNull()
+})
+
+
+it('date headers and timezone lanes share one sticky stack above task rows', () => {
+  const { container } = render(
+    <TimelineBoard
+      scale={makeScale('2026-10-12', 'day')}
+      items={[task]}
+      data={{ timezones: [] }}
+      grouped={false}
+      find={find}
+      scrollRef={{ current: null }}
+    />,
+  )
+
+  const board = container.querySelector('.timeline-board')
+  const header = board.querySelector('.timeline-sticky-header')
+  const axis = board.querySelector('.timeline-axis')
+  const week = board.querySelector('.timeline-current-week-strip')
+  const zones = board.querySelector('.timeline-zone-shell')
+  const guides = board.querySelector('.timeline-status-guides')
+  const row = board.querySelector('.timeline-row')
+
+  expect(header).toBeTruthy()
+  expect(header.contains(axis)).toBe(true)
+  expect(header.contains(week)).toBe(true)
+  expect(header.contains(zones)).toBe(true)
+  expect(header.contains(guides)).toBe(false)
+  expect(header.contains(row)).toBe(false)
+
+  expect(
+    header.compareDocumentPosition(row) & Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy()
+})
+
+
+it('Reset filters restores persisted Timeline defaults without changing task data', async () => {
+  const { defaultTimelinePreferences } = await import('./useTimelinePreferences')
+
+  // TimelineBoard observes its dimensions in browsers; jsdom lacks ResizeObserver.
+  vi.stubGlobal('ResizeObserver', class {
+    observe() {}
+    disconnect() {}
+  })
+
+  // jsdom does not implement scrolling on HTML elements.
+  const scrollTo = vi.fn()
+  vi.spyOn(HTMLElement.prototype, 'scrollTo', 'get').mockReturnValue(scrollTo)
+
+  localStorage.setItem(
+    'arc.timeline.v1.77',
+    JSON.stringify({
+      zoom: 'month',
+      type: 'tasks',
+      durations: ['UNDER_1_HOUR'],
+      grouped: false,
+      completed: true,
+      roots: [1],
+    }),
+  )
+
+  pageData.roots = roots
+  pageData.universe = []
+  pageData.groups = []
+  pageData.run.mockClear()
+
+  const { unmount } = render(<TimelinePage />)
+
+  fireEvent.change(
+    screen.getByRole('textbox', { name: 'Timeline search' }),
+    { target: { value: 'something' } },
+  )
+
+  fireEvent.click(screen.getByRole('button', { name: 'Reset filters' }))
+
+  expect(
+    screen.getByRole('textbox', { name: 'Timeline search' }).value,
+  ).toBe('')
+
+  expect(
+    JSON.parse(localStorage.getItem('arc.timeline.v1.77')),
+  ).toEqual(defaultTimelinePreferences())
+
+  expect(pageData.run).not.toHaveBeenCalled()
+
+  unmount()
+  localStorage.removeItem('arc.timeline.v1.77')
 })

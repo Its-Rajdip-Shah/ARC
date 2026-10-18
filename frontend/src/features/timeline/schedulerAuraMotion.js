@@ -15,10 +15,11 @@ export const AURA_PARTICLES = Array.from({ length: 56 }, (_, index) => ({
   foreground: (index * 13) % 56 < 22,
 }))
 
-// Integral of a bounded speed ramp: 0.35 -> 2.1 radians/sec.
+// Integral of a bounded speed ramp: 0.7 -> 5.0 radians/sec.
+// Accelerates quickly during active scheduling without affecting idle/hover.
 // This is elapsed animation time, unrelated to scheduler completion.
 export function orbitalTravel(seconds) {
-  return 2.1 * seconds - 1.75 * 2 * (1 - Math.exp(-seconds / 2))
+  return 5.0 * seconds - 4.3 * 0.65 * (1 - Math.exp(-seconds / 0.65))
 }
 
 export function particlePosition(particle, state, seconds) {

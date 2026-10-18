@@ -1,142 +1,70 @@
 import { useSchedulerSettings } from '../../hooks/useSchedulerSettings'
 
 const MODES = [
-  {
-    value: 'lock-in',
-    title: 'Lock-in',
-    description: 'Push harder toward deadlines and use available time more aggressively.',
-  },
-  {
-    value: 'monk',
-    title: 'Monk',
-    description: 'Prefer a calmer schedule with lower daily intensity where deadlines allow it.',
-  },
+  { value: 'monk', title: 'Monk' },
+  { value: 'lock-in', title: 'Locked-in' },
 ]
 
-function RuntimeSummary({ runtime }) {
-  if (!runtime?.configured) {
-    return (
-      <div className="scheduler-runtime-summary">
-        <strong>Scheduler inactive</strong>
-        <p>Choose a mode to activate the production scheduler.</p>
-      </div>
-    )
-  }
-
-  return (
-    <div className="scheduler-runtime-summary">
-      <div>
-        <span>Engine</span>
-        <strong>{runtime.engine_version ?? '—'}</strong>
-      </div>
-      <div>
-        <span>Iterations</span>
-        <strong>{runtime.iterations ?? '—'}</strong>
-      </div>
-      <div>
-        <span>Evaluations</span>
-        <strong>{runtime.evaluations ?? '—'}</strong>
-      </div>
-      <div>
-        <span>Sessions</span>
-        <strong>{runtime.allocations?.length ?? runtime.allocation_count ?? 0}</strong>
-      </div>
-    </div>
-  )
-}
-
-export default function SchedulerPanel({ runtime, close }) {
+export default function SchedulerPanel({ close }) {
   const settings = useSchedulerSettings()
-
-  const selected =
-    settings.data?.flavour ??
-    null
+  const selected = settings.data?.flavour ?? null
 
   async function choose(flavour) {
-    if (
-      flavour ===
-      selected
-    ) {
+    if (settings.saving) return
+
+    if (flavour === selected) {
+      close()
       return
     }
 
     try {
-      await settings.setFlavour(
-        flavour,
-      )
+      await settings.setFlavour(flavour)
+      close()
     } catch {
-      // Mutation error is rendered below.
+      // Keep the dropdown open so the save error remains visible.
     }
   }
 
   return (
     <section
-      className="timeline-settings scheduler-settings"
+      className="timeline-settings scheduler-settings scheduler-mode-dropdown"
       aria-label="Scheduler settings"
     >
-      <div className="scheduler-settings-heading">
-        <div>
-          <strong>Scheduler</strong>
-          <p>
-            Choose how ARC should distribute your work. No mode is selected
-            automatically.
-          </p>
-        </div>
-        <button type="button" onClick={close}>
-          Close
-        </button>
-      </div>
-
       {settings.isPending ? (
-        <p role="status">Loading scheduler settings…</p>
+        <p role="status">Loading…</p>
       ) : settings.isError ? (
-        <p className="timeline-error" role="alert">
-          Scheduler settings could not load.
-          {' '}
+        <p role="alert" className="timeline-error">
+          Could not load modes.
           <button type="button" onClick={() => settings.refetch()}>
             Retry
           </button>
         </p>
       ) : (
         <>
-          <div className="scheduler-mode-options">
-            {MODES.map((mode) => (
-              <button
-                key={mode.value}
-                type="button"
-                className={
-                  'scheduler-mode-option ' +
-                  (selected === mode.value ? 'scheduler-mode-selected' : '')
-                }
-                aria-pressed={selected === mode.value}
-                disabled={settings.saving}
-                onClick={() => choose(mode.value)}
-              >
-                <span>
-                  <strong>{mode.title}</strong>
-                  {selected === mode.value && <em>Selected</em>}
-                </span>
-                <small>{mode.description}</small>
-              </button>
-            ))}
-          </div>
-
-          <button
-            type="button"
-            className="scheduler-clear-button"
-            disabled={settings.saving || selected == null}
-            onClick={() => choose(null)}
-          >
-            {settings.saving ? 'Saving…' : 'Turn scheduler off'}
-          </button>
+          {MODES.map((mode) => (
+            <button
+              key={mode.value}
+              type="button"
+              className={
+                'scheduler-dropdown-option' +
+                (selected === mode.value ? ' is-selected' : '')
+              }
+              aria-pressed={selected === mode.value}
+              disabled={settings.saving}
+              onClick={() => choose(mode.value)}
+            >
+              <span className="scheduler-dropdown-check" aria-hidden="true">
+                {selected === mode.value ? '✓' : ''}
+              </span>
+              <span>{mode.title}</span>
+            </button>
+          ))}
 
           {settings.saveError && (
-            <p className="timeline-error" role="alert">
-              Scheduler preference could not be saved.
+            <p role="alert" className="timeline-error">
+              Could not save scheduler mode.
             </p>
           )}
-
-          <RuntimeSummary runtime={runtime} />
         </>
       )}
     </section>

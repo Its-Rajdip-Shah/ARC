@@ -1375,11 +1375,13 @@ def move_to_date(user, item_id, day, *, allow_overload=False, today=None):
     # scheduled_date from this anchor, but cannot silently erase the intent.
     item.manual_requested_date = day
     item.manual_anchor_origin_date = day
+    item.expired_manual_requested_date = None
     item.scheduled_date = day
     item.save(
         update_fields=[
             'manual_requested_date',
             'manual_anchor_origin_date',
+            'expired_manual_requested_date',
             'scheduled_date',
         ]
     )
@@ -1407,8 +1409,14 @@ def replace(user, replacement_id, displaced_id, *, allow_overload=False, today=N
     # scheduler candidate can legitimately have no current priority position.
     replacement.manual_requested_date = day
     replacement.manual_anchor_origin_date = day
+    replacement.expired_manual_requested_date = None
     replacement.scheduled_date = day
-    replacement.save(update_fields=['manual_requested_date', 'manual_anchor_origin_date', 'scheduled_date'])
+    replacement.save(update_fields=[
+        'manual_requested_date',
+        'manual_anchor_origin_date',
+        'expired_manual_requested_date',
+        'scheduled_date',
+    ])
     displaced.manual_requested_date = day if allow_overload else None
     displaced.manual_anchor_origin_date = day if allow_overload else None
     if not allow_overload:
@@ -1498,6 +1506,7 @@ def _apply_anchor_intent(
     item.manual_requested_date = day
     if not order_only:
         item.manual_anchor_origin_date = day
+        item.expired_manual_requested_date = None
     item.manual_requested_order = order
 
     fields = [
@@ -1505,6 +1514,8 @@ def _apply_anchor_intent(
         "manual_requested_date",
         "manual_requested_order",
     ]
+    if not order_only:
+        fields.append("expired_manual_requested_date")
 
     if change_deadline:
         fields.append(

@@ -35,6 +35,7 @@ from planning.models import (
     AssignmentDetail,
     DurationCategory,
     ItemType,
+    PlanningDependency,
     PlanningItem,
     SchedulerAllocation,
     SchedulingOverload,
@@ -168,6 +169,89 @@ class PlanningItemViewSet(UserScopedMixin, viewsets.ModelViewSet):
     filter_backends = [SearchFilter]
     search_fields = ['title', 'description', 'tags__name']
 
+    @action(detail=True, methods=['get'])
+    def dependency_graph(self, request, pk=None):
+        """Return the visible dependency component containing this item.
+
+        Dependency edges are deliberately traversed independently of the
+        planning hierarchy.  The two bulk queries avoid a request/query per
+        graph hop and the user filters are a second isolation boundary beyond
+        ``get_object``'s scoped queryset.
+        """
+        item = self.get_object()
+        edges = list(
+            PlanningDependency.objects.filter(
+                prerequisite__user=request.user,
+                dependent__user=request.user,
+                prerequisite__is_deleted=False,
+                dependent__is_deleted=False,
+            ).values_list('prerequisite_id', 'dependent_id')
+        )
+        neighbours = {}
+        for prerequisite_id, dependent_id in edges:
+            neighbours.setdefault(prerequisite_id, set()).add(dependent_id)
+            neighbours.setdefault(dependent_id, set()).add(prerequisite_id)
+
+        component = {item.pk}
+        frontier = [item.pk]
+        while frontier:
+            current = frontier.pop()
+            for neighbour in neighbours.get(current, ()):
+                if neighbour not in component:
+                    component.add(neighbour)
+                    frontier.append(neighbour)
+
+        component_edges = [
+            {'prerequisite_id': prerequisite_id, 'dependent_id': dependent_id}
+            for prerequisite_id, dependent_id in edges
+            if prerequisite_id in component and dependent_id in component
+        ]
+        # Fetch the user's visible hierarchy once. The graph stays a
+        # dependency component; this map supplies real parent ancestry with
+        # no query per ancestor.
+        item_rows = list(
+            PlanningItem.objects.visible().filter(user=request.user).values(
+                'id', 'parent_id', 'title', 'description', 'item_type'
+            )
+        )
+        items_by_id = {row['id']: row for row in item_rows}
+
+        def ancestry_for(item_id):
+            ancestry = []
+            seen = {item_id}
+            parent_id = items_by_id.get(item_id, {}).get('parent_id')
+            while parent_id and parent_id not in seen:
+                seen.add(parent_id)
+                parent = items_by_id.get(parent_id)
+                # Deleted or inaccessible parents must not leak through this endpoint.
+                if parent is None:
+                    break
+                ancestry.append({'id': parent['id'], 'title': parent['title']})
+                parent_id = parent['parent_id']
+            return list(reversed(ancestry))
+
+        nodes = [
+            {
+                'id': row['id'],
+                'title': row['title'],
+                # The persisted field is nullable for legacy items, whereas
+                # the graph's presentation contract is always text.
+                'description': row['description'] or '',
+                'item_type': row['item_type'],
+                'ancestry': ancestry_for(row['id']),
+            }
+            for row in item_rows
+            if row['id'] in component
+        ]
+        return Response({
+            'task_id': item.pk,
+            'nodes': nodes,
+            'edges': sorted(
+                component_edges,
+                key=lambda edge: (edge['prerequisite_id'], edge['dependent_id']),
+            ),
+        })
+
     @action(detail=True, methods=['get', 'post', 'delete'])
     @transaction.atomic
     def prerequisites(self, request, pk=None):
@@ -207,7 +291,10 @@ class PlanningItemViewSet(UserScopedMixin, viewsets.ModelViewSet):
             super()
             .get_queryset()
             .visible()
-            .select_related('assignment_detail', 'parent')
+            # IsOwner reads ``item.user`` after get_object(). Loading the
+            # owner with the detail row preserves that isolation backstop
+            # without issuing a separate query for every detail action.
+            .select_related('assignment_detail', 'parent', 'user')
             .prefetch_related('tags')
         )
         params = self.request.query_params
@@ -1240,23 +1327,23 @@ class TimelineView(APIView):
 
 
 class OverdueView(APIView):
-    """FR-12: GET /api/planning/overdue/"""
+    """GET /api/planning/overdue/: derived deadline and anchor misses."""
 
     @extend_schema(
         responses=inline_serializer(
             'OverdueResponse',
             {
-                'recent': OverdueEntrySerializer(many=True),
-                'backlog': OverdueEntrySerializer(many=True),
+                'deadline_overdue': OverdueEntrySerializer(many=True),
+                'anchor_overdue': OverdueEntrySerializer(many=True),
             },
         ),
-        description='Missed fixed deadlines, split into Recent (within 7 days) and Backlog.',
+        description='Incomplete deadline misses and missed manual-anchor commitments.',
     )
     def get(self, request):
-        buckets = overdue.classify(request.user, user_local_date(request.user))
+        buckets = overdue.classify_v3(request.user, user_local_date(request.user))
         return Response({
-            'recent': OverdueEntrySerializer(buckets['recent'], many=True).data,
-            'backlog': OverdueEntrySerializer(buckets['backlog'], many=True).data,
+            'deadline_overdue': OverdueEntrySerializer(buckets['deadline_overdue'], many=True).data,
+            'anchor_overdue': OverdueEntrySerializer(buckets['anchor_overdue'], many=True).data,
         })
 
 
@@ -1538,6 +1625,8 @@ def _schedule_anchor_response(user, data):
                 item.pk,
             'code':
                 'after_deadline',
+            'original_date': item.due_date,
+            'proposed_date': day,
         })
 
         decisions.append({
@@ -1562,6 +1651,8 @@ def _schedule_anchor_response(user, data):
                 item.pk,
             'code':
                 'before_release',
+            'original_date': item.start_date,
+            'proposed_date': day,
         })
 
         decisions.append({

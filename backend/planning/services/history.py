@@ -40,6 +40,7 @@ def serialize_item(item):
         "sibling_order": item.sibling_order,
         "start_date": item.start_date.isoformat() if item.start_date else None,
         "due_date": item.due_date.isoformat() if item.due_date else None,
+        "due_date_inherited": item.due_date_inherited,
         "scheduled_date": (
             item.scheduled_date.isoformat()
             if item.scheduled_date else None
@@ -356,6 +357,7 @@ def _restore_item_states(user, states):
             "sibling_order": state["sibling_order"],
             "start_date": state["start_date"],
             "due_date": state["due_date"],
+            "due_date_inherited": state.get("due_date_inherited", False),
             "scheduled_date": state["scheduled_date"],
             "completed_display_date": state.get(
                 "completed_display_date"

@@ -29,7 +29,7 @@ function mount(count, props = {}) {
   )
 }
 
-test.each([2, 60])('keeps logo, Subjects controls and Monk outside the root scroller (%s roots)', (count) => {
+test.each([2, 60])('keeps logo, Roots controls and Monk outside the root scroller (%s roots)', (count) => {
   const navigate = vi.fn()
   const { container } = mount(count, { onNavigateToRoot: navigate })
   const list = container.querySelector('#planner-subjects')
@@ -43,7 +43,7 @@ test.each([2, 60])('keeps logo, Subjects controls and Monk outside the root scro
 
 test('retains mobile collapse and add-root expansion', () => {
   const { container } = mount(2)
-  const toggle = screen.getByRole('button', { name: 'Subjects' })
+  const toggle = screen.getByRole('button', { name: 'Roots' })
   const list = container.querySelector('#planner-subjects')
   expect(toggle.getAttribute('aria-expanded')).toBe('false')
   expect(list.classList.contains('hidden')).toBe(true)
@@ -72,7 +72,7 @@ test.runIf(process.env.SIDEBAR_BROWSER_TESTS === '1')('browser: only roots scrol
     for (const width of [1024, 390]) {
       for (const count of [2, 60]) {
         const { container } = mount(count)
-        fireEvent.click(screen.getByRole('button', { name: 'Subjects' }))
+        fireEvent.click(screen.getByRole('button', { name: 'Roots' }))
         const sidebar = container.querySelector('aside').cloneNode(true)
         sidebar.querySelector('img').src = logo
         const candidates = [...sidebar.querySelectorAll('[class]'), sidebar].flatMap((node) => [...node.classList])
@@ -133,3 +133,19 @@ test.runIf(process.env.SIDEBAR_BROWSER_TESTS === '1')('browser: only roots scrol
     await browser.close()
   }
 }, 30000)
+
+
+test('Overdue child links select the requested section accessibly', () => {
+  const navigate = vi.fn()
+  mount(1, {
+    showOverdue: true,
+    activeOverdueSection: 'deadline',
+    onNavigateToOverdueSection: navigate,
+  })
+  const deadline = screen.getByRole('button', { name: 'Deadline' })
+  const anchor = screen.getByRole('button', { name: 'Anchor' })
+  expect(deadline.getAttribute('aria-current')).toBe('location')
+  expect(anchor.hasAttribute('aria-current')).toBe(false)
+  fireEvent.click(anchor)
+  expect(navigate).toHaveBeenCalledWith('anchor')
+})

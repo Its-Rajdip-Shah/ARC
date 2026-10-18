@@ -1,7 +1,7 @@
+import { useState } from 'react'
 import {
   Anchor,
   Check,
-  ChevronDown,
   Target,
 } from 'lucide-react'
 
@@ -45,12 +45,12 @@ export default function FocusTaskRow({
   onAutomatic,
   currentBusy,
   completionBusy,
-  planningBusy,
   matched = false,
   currentMatch = false,
   registerCard = null,
-  detailControl = 'card',
 }) {
+  const [descriptionExpanded, setDescriptionExpanded] = useState(false)
+
   const ancestors =
     ancestorLabel(
       candidate,
@@ -226,9 +226,27 @@ export default function FocusTaskRow({
         ].join(' ')}
       >
         {descriptionText && (
-          <p className="focus-description">
-            {descriptionText}
-          </p>
+          <div className="focus-description-block">
+            <p className="focus-description">
+              {descriptionExpanded || descriptionText.length <= 180
+                ? descriptionText
+                : `${descriptionText.slice(0, 180).trimEnd()}…`}
+            </p>
+
+            {descriptionText.length > 180 && (
+              <button
+                type="button"
+                className="focus-description-toggle"
+                aria-expanded={descriptionExpanded}
+                onClick={(event) => {
+                  event.stopPropagation()
+                  setDescriptionExpanded((expanded) => !expanded)
+                }}
+              >
+                {descriptionExpanded ? 'Show less' : 'Show more'}
+              </button>
+            )}
+          </div>
         )}
 
         <div className="focus-detail-grid">

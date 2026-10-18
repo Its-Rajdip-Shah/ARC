@@ -40,8 +40,8 @@
     "AGENTS.md": {
       "area": "documentation",
       "role_hint": "ARC (Goals Tracker) Project Rules",
-      "sha256": "36709a800ae0ddea83b5de67f5544f38f9a4503fdab9ca260023bec7d8da4a17",
-      "bytes": 2530,
+      "sha256": "37beb70a09c305595ada41138fffd803d6bdd3017d9c04a611fcf2a8a932553d",
+      "bytes": 2651,
       "imports": [],
       "local_imports": [],
       "top_level_symbols": [],
@@ -51,8 +51,8 @@
     "ARCHITECTURE.md": {
       "area": "documentation",
       "role_hint": "ARC architecture",
-      "sha256": "421ff90bac466244b6d34888fc3fc192a3d218d8d7630d9db7a079b563f04f62",
-      "bytes": 21145,
+      "sha256": "53f249bfb7b6eba519689c2cdf88d45f32f847d8645c01e9a2c5180731a7f85f",
+      "bytes": 21221,
       "imports": [],
       "local_imports": [],
       "top_level_symbols": [],
@@ -84,8 +84,8 @@
     "README.md": {
       "area": "documentation",
       "role_hint": "ARC",
-      "sha256": "47ecb7aed5e14b47d43b03e524ff752bf5221e27a6087e38f1a1307c1673c06b",
-      "bytes": 12423,
+      "sha256": "6a119dd0328402fd00069141921c3e871e64766684a6f775183d26a73193ef2a",
+      "bytes": 12575,
       "imports": [],
       "local_imports": [],
       "top_level_symbols": [],
@@ -249,21 +249,23 @@
     "backend/accounts/models.py": {
       "area": "backend:accounts",
       "role_hint": "\"\"\"ARC user accounts (FR-01, FR-02, FR-03, FR-15, FR-16).\"\"\"",
-      "sha256": "a700023417f7f270d856e4a6c5e6082f1ad7e810c138536edd78776b9961fb88",
-      "bytes": 4473,
+      "sha256": "38a52b18053cd68f0513cf0fe5ec1a3866cfc84680dbb7e74c56c0dea0b029dc",
+      "bytes": 5811,
       "imports": [
         "core.fields",
         "datetime",
         "django.contrib.auth.base_user",
         "django.db",
         "django.db.models.functions",
-        "django.utils"
+        "django.utils",
+        "uuid"
       ],
       "local_imports": [],
       "top_level_symbols": [
         "UserQuerySet",
         "UserManager",
         "User",
+        "PasswordResetRequest",
         "LoginAttempt"
       ],
       "is_test": false,
@@ -272,8 +274,8 @@
     "backend/accounts/serializers.py": {
       "area": "backend:accounts",
       "role_hint": "\"\"\"Request and response shapes for the authentication endpoints.\"\"\"",
-      "sha256": "f890888372ec09fe45eef34c12e68003a1a1a0f301b0c2cd97a2cef6779709b3",
-      "bytes": 2917,
+      "sha256": "d8da44c6236b6e6a6546d884b5586cad04cf5b33211143ce6f80821e03c67c4b",
+      "bytes": 4392,
       "imports": [
         "django.contrib.auth",
         "django.contrib.auth.password_validation",
@@ -289,7 +291,10 @@
         "MFAEnrolConfirmSerializer",
         "LoginSerializer",
         "MFAVerifySerializer",
-        "LogoutSerializer"
+        "LogoutSerializer",
+        "PasswordChangeSerializer",
+        "PasswordResetRequestSerializer",
+        "PasswordResetConfirmSerializer"
       ],
       "is_test": false,
       "imported_by": []
@@ -466,8 +471,8 @@
     "backend/accounts/urls.py": {
       "area": "backend:accounts",
       "role_hint": "\"\"\"Authentication routes, mounted at /api/auth/.\"\"\"",
-      "sha256": "de57fb5f7a3d324d5aebf7853a9a978b8ea26111be00e4f92b9f46f52ab10e5c",
-      "bytes": 867,
+      "sha256": "074d4d4927a691a5d169accd4f9073baa41930ee6968db7736a33e2437a56230",
+      "bytes": 1374,
       "imports": [
         ".",
         "django.urls",
@@ -481,8 +486,8 @@
     "backend/accounts/views.py": {
       "area": "backend:accounts",
       "role_hint": "\"\"\"The two-step authentication flow (FR-01, FR-02, FR-03, FR-15).",
-      "sha256": "4db71c3d2cc5c6a3a5a3c249782fd1fa69feec864e50f56d3c7258d5099b62b6",
-      "bytes": 12418,
+      "sha256": "7199adb8d840b336c140a10cb0c37b2d1ae82902f139f7bcfc96f73aa519d12d",
+      "bytes": 15982,
       "imports": [
         ".",
         ".login_protection",
@@ -504,6 +509,7 @@
       ],
       "local_imports": [],
       "top_level_symbols": [
+        "ResetNotReadyResponse",
         "_issue_token_pair",
         "_parse",
         "PublicAuthView",
@@ -514,7 +520,11 @@
         "MFAVerifyView",
         "AdminMFAVerifyView",
         "LogoutView",
-        "MeView"
+        "MeView",
+        "PasswordChangeView",
+        "PasswordResetRequestView",
+        "PasswordResetStatusView",
+        "PasswordResetConfirmView"
       ],
       "is_test": false,
       "imported_by": []
@@ -671,8 +681,8 @@
     "backend/analytics/urls.py": {
       "area": "backend:analytics",
       "role_hint": "\"\"\"Routes for the admin API, mounted at /api/admin/ (FR-15, FR-16).\"\"\"",
-      "sha256": "5d7143e1c11c2b44029d77bac230a1b1abcd11b7f3bc0df2e64be1ee628c438c",
-      "bytes": 416,
+      "sha256": "85d442441022699ac411271923f0e1e296ac304f2d74ad57e789ea56beb70d67",
+      "bytes": 690,
       "imports": [
         "analytics",
         "django.urls",
@@ -686,9 +696,10 @@
     "backend/analytics/views.py": {
       "area": "backend:analytics",
       "role_hint": "\"\"\"The admin API (FR-15, FR-16).",
-      "sha256": "e76f20b840d39ac0fb474167e0afa964eabc4b5922908a15549e1615e68f565e",
-      "bytes": 5099,
+      "sha256": "7838279484745ccfefad035e3b93ad8b1d2d4de893e3cf8c48ddf6b90d6f0e75",
+      "bytes": 6051,
       "imports": [
+        "accounts.password_reset",
         "analytics.serializers",
         "canvas_integration.models",
         "core.permissions",
@@ -707,7 +718,9 @@
       "local_imports": [],
       "top_level_symbols": [
         "AdminUserViewSet",
-        "PlatformStatsView"
+        "PlatformStatsView",
+        "PasswordResetQueueView",
+        "PasswordResetApproveView"
       ],
       "is_test": false,
       "imported_by": []
@@ -740,8 +753,8 @@
     "backend/arc_backend/settings.py": {
       "area": "backend:arc_backend",
       "role_hint": "\"\"\"",
-      "sha256": "420892ed87f8e45dc2844e72155483b034f494e54539e2f424f1a22adc713ac8",
-      "bytes": 9193,
+      "sha256": "f3049683070cf27a93b626a5c3abb36db1d8f69b28c569cb64bf5e618ccd6ac6",
+      "bytes": 8162,
       "imports": [
         "datetime",
         "environ",
@@ -1801,9 +1814,13 @@
       "role_hint": "Generated by Django 6.1.1 on 2026-10-17",
       "sha256": "4a9d212b63f2482959d0ed5aca08373df53d2d398683de1ff17d075f26f7946c",
       "bytes": 420,
-      "imports": ["django.db"],
+      "imports": [
+        "django.db"
+      ],
       "local_imports": [],
-      "top_level_symbols": ["Migration"],
+      "top_level_symbols": [
+        "Migration"
+      ],
       "is_test": false,
       "imported_by": []
     },
@@ -1821,8 +1838,8 @@
     "backend/planning/models.py": {
       "area": "backend:planning",
       "role_hint": "\"\"\"The planning hierarchy, tags, assignment detail and contextual timezones.",
-      "sha256": "07a23ccc14d86279967c81ddc73f2fe3f31c23b2dd474a6754a4ff6a7f5163f7",
-      "bytes": 22744,
+      "sha256": "c001d0b3e19dcbbd7fbfa08881f4b36bd560847ce57b64f31aff3e98f62cb31c",
+      "bytes": 23403,
       "imports": [
         "core.models",
         "datetime",
@@ -1879,8 +1896,8 @@
     "backend/planning/serializers.py": {
       "area": "backend:planning",
       "role_hint": "\"\"\"Payload shapes for the planning API.",
-      "sha256": "852d07b3d65341c9cf2db6280fad88ccd2d1df2ed73454761cd1d17fca857f25",
-      "bytes": 27584,
+      "sha256": "4e7052e69e13d72b9dc13e617349891ecf1b6856d8bf5378fef74008815565dc",
+      "bytes": 26411,
       "imports": [
         "core.serializers",
         "django.core.exceptions",
@@ -1889,6 +1906,7 @@
         "planning.models",
         "planning.services",
         "planning.services.calendar_dates",
+        "planning.services.overdue",
         "planning.services.scheduler_v1",
         "rest_framework"
       ],
@@ -1928,7 +1946,12 @@
         "SchedulerEngineAllocationSerializer",
         "SchedulerEstimateSerializer",
         "SchedulerDayLoadSerializer",
-        "SchedulerPeriodLoadSerializer"
+        "SchedulerPeriodLoadSerializer",
+        "SchedulerDiagnosticSerializer",
+        "SchedulerRuntimeSerializer",
+        "ScheduleResultSerializer",
+        "SchedulerSettingsSerializer",
+        "SchedulerSettingsUpdateSerializer"
       ],
       "is_test": false,
       "imported_by": []
@@ -2191,30 +2214,6 @@
       "is_test": false,
       "imported_by": []
     },
-    "backend/planning/services/llm.py": {
-      "area": "backend:planning",
-      "role_hint": "\"\"\"Server-only client for OpenAI-compatible chat completions.",
-      "sha256": "0b74e62bb2e6245301ccc0ad0274e3b5d63e19d814672c8302cb49c316b5382e",
-      "bytes": 5900,
-      "imports": [
-        "django.conf",
-        "json",
-        "requests",
-        "time"
-      ],
-      "local_imports": [],
-      "top_level_symbols": [
-        "LLMError",
-        "LLMClient",
-        "FailoverLLMClient",
-        "providers_from_settings",
-        "client_from_settings",
-        "_reject_error",
-        "_parse_plan"
-      ],
-      "is_test": false,
-      "imported_by": []
-    },
     "backend/planning/services/overdue.py": {
       "area": "backend:planning",
       "role_hint": "\"\"\"Recent and Backlog classification for missed deadlines (FR-12).",
@@ -2383,45 +2382,6 @@
         "configure",
         "_apply_anchor_intent",
         "set_anchor"
-      ],
-      "is_test": false,
-      "imported_by": []
-    },
-    "backend/planning/services/study_plan.py": {
-      "area": "backend:planning",
-      "role_hint": "\"\"\"Build, flag, and store a study plan for one user.",
-      "sha256": "e68bcdeb6392d4d3aaac2fc04c6981325c473e3e597065adf9e9902a88a876fa",
-      "bytes": 10821,
-      "imports": [
-        "datetime",
-        "django.utils",
-        "json",
-        "planning.models",
-        "planning.services.calendar_dates",
-        "planning.services.llm"
-      ],
-      "local_imports": [],
-      "top_level_symbols": [
-        "_clock",
-        "_on_date",
-        "_covers",
-        "flag_conflicts",
-        "load_plan",
-        "present",
-        "request_plan",
-        "save_edited_plan",
-        "_local_plan",
-        "_place_locally",
-        "_local_slot",
-        "_local_minutes",
-        "_open_items",
-        "_messages",
-        "_item_payload",
-        "_clean_sessions",
-        "_store",
-        "_preferences",
-        "_with_due_dates",
-        "_fallback"
       ],
       "is_test": false,
       "imported_by": []
@@ -3239,8 +3199,8 @@
     "backend/planning/tests/test_api.py": {
       "area": "backend:planning",
       "role_hint": "\"\"\"Smoke tests for the planning API.",
-      "sha256": "9a5a67e337df4486ecab58a7b5b429ee51a129ed62b83662de0dc860103f3662",
-      "bytes": 38904,
+      "sha256": "a33bf1faa7f0eb070d43a5d8ef861097e28800a088e55d4f31d8df46531e4337",
+      "bytes": 40336,
       "imports": [
         "accounts.tests.conftest",
         "datetime",
@@ -3287,7 +3247,43 @@
         "test_reorder_moves_a_task_and_returns_the_whole_order",
         "test_reorder_clamps_a_position_past_the_end",
         "test_reorder_refuses_an_unpositioned_item",
-        "test_reorder_refuses_another_users_task"
+        "test_reorder_refuses_another_users_task",
+        "test_the_timeline_groups_dated_items_under_their_root",
+        "test_the_timeline_separates_execution_dates_and_deadlines",
+        "test_the_timeline_honours_an_explicit_range",
+        "test_the_timeline_refuses_a_backwards_range",
+        "test_the_timeline_refuses_an_unparseable_date",
+        "test_the_timeline_includes_overlapping_timezones",
+        "test_reading_the_timeline_rolls_neglected_adaptive_tasks_forward",
+        "test_the_timeline_never_includes_another_users_items",
+        "test_overdue_returns_one_deadline_section",
+        "test_overdue_reports_the_hierarchy_path",
+        "test_adaptive_and_completed_items_are_never_overdue",
+        "test_overdue_never_includes_another_users_items",
+        "test_marks_group_by_subject_and_total_only_what_is_marked",
+        "test_marks_separate_one_subject_from_another",
+        "test_an_assignment_without_detail_still_appears",
+        "test_marks_are_empty_without_assignments",
+        "test_marks_reorder_renumbers_the_group",
+        "test_marks_reorder_refuses_another_users_assessment",
+        "test_a_mark_can_be_recorded_through_the_detail_endpoint",
+        "test_another_users_assignment_detail_is_a_404",
+        "test_a_duplicate_tag_name_is_a_400_not_a_500",
+        "test_two_users_may_hold_the_same_tag_name",
+        "test_a_tag_id_from_another_user_is_refused",
+        "test_a_timezone_cannot_end_before_it_starts",
+        "test_overlapping_timezones_are_allowed",
+        "test_every_planning_endpoint_refuses_an_anonymous_request",
+        "test_study_plan_endpoint_is_gone",
+        "test_the_item_list_shows_only_your_own_items",
+        "test_another_users_item_is_a_404",
+        "test_a_real_bearer_token_reaches_the_planning_api",
+        "test_compound_move_can_adopt_following_branch_in_one_history_action",
+        "_planner_drag_root_child_titles",
+        "test_planner_drag_integration_root_sibling_move_persists_exact_slot",
+        "test_planner_drag_integration_nested_sibling_move_persists_exact_slot",
+        "test_planner_drag_integration_nested_item_outdents_to_exact_root_slot",
+        "test_planner_drag_integration_parent_subtree_reorder_keeps_subtree"
       ],
       "is_test": true,
       "imported_by": []
@@ -3528,36 +3524,6 @@
         "test_leaf_crosses_recursive_container_boundary",
         "test_leaf_between_interleaved_container_boundaries",
         "test_planner_reparent_runs_scheduler_once"
-      ],
-      "is_test": true,
-      "imported_by": []
-    },
-    "backend/planning/tests/test_llm_client.py": {
-      "area": "backend:planning",
-      "role_hint": "\"\"\"Fake-session coverage for the study-plan model client.\"\"\"",
-      "sha256": "f07f679d22cf70c630b78b49a36c8d9d5908018e29bb4b250e43cc47baddee7d",
-      "bytes": 4472,
-      "imports": [
-        "json",
-        "planning.services.llm",
-        "pytest",
-        "requests"
-      ],
-      "local_imports": [],
-      "top_level_symbols": [
-        "_Response",
-        "_Session",
-        "_completion",
-        "_client",
-        "test_happy_path_returns_the_parsed_plan",
-        "test_malformed_payload_raises_without_the_api_key",
-        "test_body_without_sessions_is_malformed",
-        "test_timeout_raises_without_the_api_key",
-        "test_missing_api_key_does_not_call_the_network",
-        "test_busy_provider_is_named_as_temporary",
-        "test_failover_uses_the_second_provider_when_the_first_is_busy",
-        "test_failover_with_no_keys_is_not_configured",
-        "test_failover_stops_when_the_shared_budget_is_spent"
       ],
       "is_test": true,
       "imported_by": []
@@ -4003,61 +3969,6 @@
       "is_test": true,
       "imported_by": []
     },
-    "backend/planning/tests/test_study_plan_api.py": {
-      "area": "backend:planning",
-      "role_hint": "\"\"\"Study-plan API: suggestion, fallback, edit, and tenant isolation.\"\"\"",
-      "sha256": "617c89f018eed20dcffbd3e23c96cd86b08fd4f1250f2b57e62ae415b8ec8bf7",
-      "bytes": 12411,
-      "imports": [
-        "datetime",
-        "planning.models",
-        "planning.services.llm",
-        "pytest"
-      ],
-      "local_imports": [],
-      "top_level_symbols": [
-        "_Client",
-        "_install",
-        "_item",
-        "test_authenticated_post_returns_order_time_and_duration",
-        "test_conflicts_are_flagged_on_the_suggestion",
-        "test_anonymous_post_is_rejected",
-        "test_timeout_returns_the_cached_plan_and_leaves_workload_alone",
-        "test_malformed_plan_without_a_cache_falls_back_to_local_order",
-        "test_busy_provider_without_a_cache_falls_back_to_local_order",
-        "test_edit_saves_sessions_without_calling_the_model",
-        "test_another_user_cannot_read_the_saved_plan",
-        "test_blank_days_and_equal_times_still_return_a_plan",
-        "test_get_returns_saved_availability_and_due_date",
-        "test_missing_key_keeps_the_saved_plan",
-        "test_missing_key_without_a_cache_uses_local_order",
-        "test_patch_drops_another_users_item",
-        "test_invalid_availability_does_not_clear_the_saved_plan"
-      ],
-      "is_test": true,
-      "imported_by": []
-    },
-    "backend/planning/tests/test_study_plan_conflicts.py": {
-      "area": "backend:planning",
-      "role_hint": "\"\"\"Conflict flags for a suggested study plan.\"\"\"",
-      "sha256": "523509d7a6426a884faaa41648993f27a5c3b8481ba511f05bf917af78f32e2d",
-      "bytes": 1733,
-      "imports": [
-        "datetime",
-        "planning.services.study_plan"
-      ],
-      "local_imports": [],
-      "top_level_symbols": [
-        "_session",
-        "test_session_inside_the_window_and_before_the_deadline_is_clear",
-        "test_session_outside_every_window_for_its_weekday_is_flagged",
-        "test_session_after_the_due_date_is_flagged",
-        "test_missing_due_date_does_not_flag_after_deadline",
-        "test_session_that_crosses_midnight_is_outside_a_same_day_window"
-      ],
-      "is_test": true,
-      "imported_by": []
-    },
     "backend/planning/tests/test_task_editor.py": {
       "area": "backend:planning",
       "role_hint": "\"\"\"B2 task editor API regressions.\"\"\"",
@@ -4251,8 +4162,8 @@
     "backend/planning/urls.py": {
       "area": "backend:planning",
       "role_hint": "\"\"\"Routes for the planning API, mounted at /api/planning/.",
-      "sha256": "e3357a896aef454f5c3ec00cb5a94ab49611b37c8bc6058cf33fcca4c162e013",
-      "bytes": 2549,
+      "sha256": "efa478eb49f268f6f235668703743ba70f1c50353f7ef8a5e1d30a6e5b400207",
+      "bytes": 2522,
       "imports": [
         "django.urls",
         "planning",
@@ -4266,8 +4177,8 @@
     "backend/planning/views.py": {
       "area": "backend:planning",
       "role_hint": "\"\"\"The planning API: Text View, Priority View, Timeline, Overdue and Marks.",
-      "sha256": "15d3a3604bf34eba435b1ad085c2e42f552553bbf3a87a9032a189552250103f",
-      "bytes": 67585,
+      "sha256": "df7636b8b8e6149b4bc19a9cff58d532b0be7721748dd6f6ba6feed8789a87e0",
+      "bytes": 68409,
       "imports": [
         "collections",
         "core.mixins",
@@ -4285,7 +4196,6 @@
         "planning.services",
         "planning.services.calendar_dates",
         "planning.services.focus_buckets",
-        "planning.services.study_plan",
         "rest_framework",
         "rest_framework.decorators",
         "rest_framework.exceptions",
@@ -4315,7 +4225,6 @@
         "OverdueView",
         "MarksView",
         "MarksReorderView",
-        "StudyPlanView",
         "SchedulerSettingsView",
         "_schedule_anchor_response",
         "ScheduleAnchorView",
@@ -4401,8 +4310,8 @@
     "docs/FRONTEND_ARCHITECTURE.md": {
       "area": "documentation",
       "role_hint": "Figma source of truth",
-      "sha256": "c66142a4a0b34e9ff1b35cc840d9f3dd609c9699c5a98b27bda40a7b08568978",
-      "bytes": 4315,
+      "sha256": "5ac5168c16d7a2dd73a8b60820d0f85417807335b0471d7228055715688929fe",
+      "bytes": 4251,
       "imports": [],
       "local_imports": [],
       "top_level_symbols": [],
@@ -4423,8 +4332,8 @@
     "docs/developer_setup_guide.md": {
       "area": "documentation",
       "role_hint": "ARC Developer Setup Guide",
-      "sha256": "8587bbc1201e8d92a02c92e634454e9b56b5078edc2dc7dd2dd7dc88009c72a6",
-      "bytes": 14963,
+      "sha256": "e6b5031eac7199b7b675e827628efbb223fbc8837736a6cbc951980cb8c563c4",
+      "bytes": 15349,
       "imports": [],
       "local_imports": [],
       "top_level_symbols": [],
@@ -4456,8 +4365,8 @@
     "docs/production_setup_guide.md": {
       "area": "documentation",
       "role_hint": "ARC Production-Style Live Test Guide",
-      "sha256": "d326870d22e5eddab96aa4df24da9de629e22c0aefaedb85330bd3f7cbf8594e",
-      "bytes": 14485,
+      "sha256": "ca965b31aa9955a24d275b97e3914881235e5da8c60c414b4b922e32cf9c85a7",
+      "bytes": 14859,
       "imports": [],
       "local_imports": [],
       "top_level_symbols": [],
@@ -4617,8 +4526,8 @@
     "frontend/package.json": {
       "area": "configuration",
       "role_hint": "package",
-      "sha256": "37878ea7981d84360d34937145988d1a745bff00963e9db6fa20b11b068f8a45",
-      "bytes": 1781,
+      "sha256": "082ebb6a24f13dfcbcbe30e7aac506d4914af7dc94bc8f13e0738ce3e47edef7",
+      "bytes": 1771,
       "imports": [],
       "local_imports": [],
       "top_level_symbols": [],
@@ -4657,21 +4566,24 @@
     "frontend/src/App.jsx": {
       "area": "frontend:App.jsx",
       "role_hint": "App",
-      "sha256": "525effe4dd265b303a204f062511a146cd4112e36c529fb29f5425bcb1d3e3fb",
-      "bytes": 2216,
+      "sha256": "74445c483c69033145862c3ccd2bb45a9cf185514450e242aa2653cf02da7227",
+      "bytes": 2805,
       "imports": [
         "./components/AdminRoute",
         "./components/SessionHydrator",
         "./components/StudentRoute",
         "./components/admin/AdminLayout",
+        "./components/student/MarksPanel",
         "./components/student/StudentLayout",
         "./features/focus/FocusPage",
         "./features/planner/PlannerPage",
         "./features/timeline/TimelinePage",
         "./pages/ConnectionStatus",
+        "./pages/NotFoundPage",
         "./pages/admin/AdminDashboardPage",
         "./pages/admin/AdminLoginPage",
         "./pages/admin/AdminUsersPage",
+        "./pages/student/ForgotPasswordPage",
         "./pages/student/SettingsPage",
         "./pages/student/StudentLoginPage",
         "./pages/student/StudentRegisterPage",
@@ -4683,16 +4595,19 @@
         "frontend/src/components/StudentRoute.jsx",
         "frontend/src/components/admin/AdminLayout.jsx",
         "frontend/src/components/student/StudentLayout.jsx",
-        "frontend/src/features/focus/FocusPage.jsx",
-        "frontend/src/features/planner/PlannerPage.jsx",
-        "frontend/src/features/timeline/TimelinePage.jsx",
         "frontend/src/pages/ConnectionStatus.jsx",
         "frontend/src/pages/admin/AdminDashboardPage.jsx",
         "frontend/src/pages/admin/AdminLoginPage.jsx",
-        "frontend/src/pages/admin/AdminUsersPage.jsx",
-        "frontend/src/pages/student/SettingsPage.jsx",
+        "frontend/src/pages/student/ForgotPasswordPage.jsx",
         "frontend/src/pages/student/StudentLoginPage.jsx",
-        "frontend/src/pages/student/StudentRegisterPage.jsx"
+        "frontend/src/pages/student/StudentRegisterPage.jsx",
+        "frontend/src/pages/admin/AdminUsersPage.jsx",
+        "frontend/src/features/planner/PlannerPage.jsx",
+        "frontend/src/features/timeline/TimelinePage.jsx",
+        "frontend/src/features/focus/FocusPage.jsx",
+        "frontend/src/pages/student/SettingsPage.jsx",
+        "frontend/src/components/student/MarksPanel.jsx",
+        "frontend/src/pages/NotFoundPage.jsx"
       ],
       "top_level_symbols": [
         "App"
@@ -4706,8 +4621,8 @@
     "frontend/src/api/admin.js": {
       "area": "frontend:api",
       "role_hint": "admin",
-      "sha256": "6dd8fe77c85146b480e325fdfe14e8841c28752d115a9c1e9f5057f8fd83dc0b",
-      "bytes": 593,
+      "sha256": "d7e1879c88ee5fee1baaee1b8171cd02bf20290964f9ea21edc5cc80a48372e4",
+      "bytes": 871,
       "imports": [
         "../lib/apiClient"
       ],
@@ -4719,7 +4634,9 @@
         "listAdminUsers",
         "getAdminUser",
         "lockUser",
-        "unlockUser"
+        "unlockUser",
+        "listPasswordResets",
+        "approvePasswordReset"
       ],
       "is_test": false,
       "imported_by": [
@@ -4729,8 +4646,8 @@
     "frontend/src/api/auth.js": {
       "area": "frontend:api",
       "role_hint": "auth",
-      "sha256": "985e515142d3fb8a0d4bdcf74e90748ee58e421c448c008ed153b2ef2fc7624e",
-      "bytes": 2095,
+      "sha256": "4296bc86659ad9a42942e215fab4bc6889942363c8f0b824e8099613c22b263b",
+      "bytes": 2733,
       "imports": [
         "../lib/apiClient"
       ],
@@ -4749,13 +4666,16 @@
         "logout",
         "getMe",
         "updateTimeZone",
-        "timeZoneAttempts",
-        "initializeTimeZone",
-        "attempt",
-        "zone"
+        "changePassword",
+        "requestPasswordReset",
+        "passwordResetStatus",
+        "confirmPasswordReset",
+        "initializeTimeZone"
       ],
       "is_test": false,
       "imported_by": [
+        "frontend/src/components/PasswordChangeForm.jsx",
+        "frontend/src/components/PasswordChangeForm.test.jsx",
         "frontend/src/components/SessionHydrator.jsx",
         "frontend/src/components/admin/AdminLayout.jsx",
         "frontend/src/components/student/NavigationDrawer.jsx",
@@ -4763,6 +4683,8 @@
         "frontend/src/hooks/useMe.js",
         "frontend/src/pages/ConnectionStatus.jsx",
         "frontend/src/pages/admin/AdminLoginPage.jsx",
+        "frontend/src/pages/student/ForgotPasswordPage.jsx",
+        "frontend/src/pages/student/ForgotPasswordPage.test.jsx",
         "frontend/src/pages/student/SettingsPage.jsx",
         "frontend/src/pages/student/StudentLoginPage.jsx",
         "frontend/src/pages/student/StudentRegisterPage.jsx"
@@ -4798,8 +4720,8 @@
     "frontend/src/api/planning.js": {
       "area": "frontend:api",
       "role_hint": "planning",
-      "sha256": "206d6de0089b5ebe6171326145b3bee76db42adb209422013751980d9b26226d",
-      "bytes": 5946,
+      "sha256": "d247ad30a1553b5f0f1eeb6892f20336fafa6a12b3545f81c95a3fc7950ed663",
+      "bytes": 5778,
       "imports": [
         "../lib/apiClient"
       ],
@@ -4812,6 +4734,7 @@
         "createItem",
         "updateItem",
         "listPrerequisites",
+        "getDependencyGraph",
         "addPrerequisite",
         "removePrerequisite",
         "deleteItem",
@@ -4836,7 +4759,19 @@
         "doTodayFocus",
         "returnFocusToAutomatic",
         "anchorFocusBatch",
-        "reprioritiseFocus"
+        "reprioritiseFocus",
+        "getOverdue",
+        "getMarks",
+        "reorderMarks",
+        "getHistoryStatus",
+        "undoPlanningAction",
+        "redoPlanningAction",
+        "getSchedulerSettings",
+        "updateSchedulerSettings",
+        "getTimelineNavigation",
+        "anchorTimelineItem",
+        "updateTimelineOverload",
+        "rescheduleTimeline"
       ],
       "is_test": false,
       "imported_by": [
@@ -4858,7 +4793,6 @@
         "frontend/src/hooks/usePlanningTree.js",
         "frontend/src/hooks/usePriorityOrder.js",
         "frontend/src/hooks/useSchedulerSettings.js",
-        "frontend/src/hooks/useStudyPlan.js",
         "frontend/src/hooks/useTimeline.js",
         "frontend/src/hooks/useTimelineUniverse.js"
       ]
@@ -6229,65 +6163,39 @@
     "frontend/src/features/planner/PlannerPage.jsx": {
       "area": "frontend:planner",
       "role_hint": "PlannerPage",
-      "sha256": "de48ab1b5c49e722fcdbcdf4d6220f485b187545b2d0f452dd172fcc038561e3",
-      "bytes": 35269,
+      "sha256": "4db2c8a10652ea0c043b8c8ee331f94d4aa0073a8de4a7cf202ab9d5fe4b0bbe",
+      "bytes": 36662,
       "imports": [
         "../../api/planning",
         "../../hooks/usePlanningTree",
         "../../lib/planningOptimistic",
         "../focus/FocusSchedulerMascot",
         "./components/CreatePlanningItemPanel",
+        "./components/DependencyDialog",
         "./components/PlannerSidebar",
         "./components/PlannerTree",
         "./components/PriorityPanel",
-        "./components/StudyPlanModal",
         "@tanstack/react-query",
         "lucide-react",
         "react",
         "react-router-dom"
       ],
       "local_imports": [
-        "frontend/src/api/planning.js",
-        "frontend/src/features/focus/FocusSchedulerMascot.jsx",
-        "frontend/src/features/planner/components/CreatePlanningItemPanel.jsx",
         "frontend/src/features/planner/components/PlannerSidebar.jsx",
+        "frontend/src/features/focus/FocusSchedulerMascot.jsx",
         "frontend/src/features/planner/components/PlannerTree.jsx",
         "frontend/src/features/planner/components/PriorityPanel.jsx",
-        "frontend/src/features/planner/components/StudyPlanModal.jsx",
+        "frontend/src/features/planner/components/CreatePlanningItemPanel.jsx",
+        "frontend/src/features/planner/components/DependencyDialog.jsx",
         "frontend/src/hooks/usePlanningTree.js",
+        "frontend/src/api/planning.js",
         "frontend/src/lib/planningOptimistic.js"
       ],
       "top_level_symbols": [
         "findItemById",
-        "item",
-        "childMatch",
-        "TOOLBAR_STORAGE_KEY",
+        "shouldReorderPriority",
         "loadToolbarPreferences",
-        "defaults",
-        "stored",
-        "parsed",
-        "PlannerPage",
-        "pathname",
-        "isPriority",
-        "navigate",
-        "queryClient",
-        "panelGeneration",
-        "pendingCreates",
-        "pendingEdits",
-        "pendingEditIds",
-        "editLock",
-        "saveStatusTimers",
-        "clearSaveStatusTimer",
-        "timer",
-        "setSaveStatus",
-        "next",
-        "removeSaveStatus",
-        "setRecoveryDrafts",
-        "mounted",
-        "priorityReordering",
-        "historyQuery",
-        "undoMutation",
-        "redoMutation"
+        "PlannerPage"
       ],
       "is_test": false,
       "imported_by": [
@@ -6437,61 +6345,37 @@
     "frontend/src/features/planner/components/CreatePlanningItemPanel.test.jsx": {
       "area": "frontend:planner",
       "role_hint": "CreatePlanningItemPanel.test",
-      "sha256": "56e9c03ea9133caedf64e3ab5cfedd221cf16d3b303bc578971fefbf44d3400a",
-      "bytes": 59537,
+      "sha256": "bda1432bb2348e158fecc4c4df5d36e9b9736373a6940b66aca439745f01a5bc",
+      "bytes": 60579,
       "imports": [
         "../../../lib/calendarDates.js",
         "../../../stores/authStore.js",
         "../PlannerPage",
         "./CreatePlanningItemPanel",
+        "./DependencyGraphModal",
         "./TaskPrerequisites",
-        "@playwright/test",
         "@tanstack/react-query",
         "@testing-library/react",
-        "node:fs",
-        "node:path",
         "react",
         "react-router-dom",
         "vitest"
       ],
       "local_imports": [
-        "frontend/src/features/planner/PlannerPage.jsx",
-        "frontend/src/features/planner/components/CreatePlanningItemPanel.jsx",
-        "frontend/src/features/planner/components/TaskPrerequisites.jsx",
         "frontend/src/lib/calendarDates.js",
-        "frontend/src/stores/authStore.js"
+        "frontend/src/stores/authStore.js",
+        "frontend/src/features/planner/components/CreatePlanningItemPanel.jsx",
+        "frontend/src/features/planner/components/DependencyGraphModal.jsx",
+        "frontend/src/features/planner/components/TaskPrerequisites.jsx",
+        "frontend/src/features/planner/PlannerPage.jsx"
       ],
       "top_level_symbols": [
-        "api",
-        "actual",
-        "saveSubmission",
-        "item",
         "mount",
-        "cache",
-        "parent",
-        "due",
-        "start",
-        "error",
-        "create",
-        "save",
-        "previousUser",
-        "onSave",
-        "invalidate",
-        "estimates",
-        "feedback",
-        "estimate",
-        "selector",
-        "button",
-        "assets",
-        "css",
-        "html",
-        "browser",
-        "page",
-        "geometry",
-        "panel",
-        "grid",
-        "buttons",
-        "rect"
+        "deferred",
+        "mountPage",
+        "fillCreate",
+        "openNestedCreate",
+        "rowFor",
+        "expectPendingBadge"
       ],
       "is_test": true,
       "imported_by": []
@@ -6871,56 +6755,6 @@
         "frontend/src/features/planner/components/PriorityPanel.jsx"
       ]
     },
-    "frontend/src/features/planner/components/StudyPlanModal.jsx": {
-      "area": "frontend:planner",
-      "role_hint": "StudyPlanModal",
-      "sha256": "3cf9dc9f7cd9889ed300771aa7dcb5c7b0d42c69de23276af3c3de048a3f4898",
-      "bytes": 11685,
-      "imports": [
-        "../../../components/ArcDateField",
-        "../../../hooks/useStudyPlan",
-        "../../../lib/errors",
-        "../studyPlanConflicts",
-        "lucide-react",
-        "react"
-      ],
-      "local_imports": [
-        "frontend/src/components/ArcDateField.jsx",
-        "frontend/src/features/planner/studyPlanConflicts.js",
-        "frontend/src/hooks/useStudyPlan.js",
-        "frontend/src/lib/errors.js"
-      ],
-      "top_level_symbols": [
-        "DAYS",
-        "inputClass",
-        "CONFLICT_LABELS",
-        "firstFieldMessage",
-        "item",
-        "found",
-        "value",
-        "windowsFromAvailability",
-        "rows",
-        "window",
-        "notice",
-        "data",
-        "StudyPlanModal",
-        "preferences",
-        "preferenceKey",
-        "generatedAt",
-        "sessions",
-        "onKey",
-        "banner",
-        "availability",
-        "onGenerate",
-        "onSave",
-        "editSession",
-        "conflicts"
-      ],
-      "is_test": false,
-      "imported_by": [
-        "frontend/src/features/planner/PlannerPage.jsx"
-      ]
-    },
     "frontend/src/features/planner/components/TaskPrerequisites.jsx": {
       "area": "frontend:planner",
       "role_hint": "TaskPrerequisites",
@@ -7015,52 +6849,6 @@
         "parent",
         "before",
         "after"
-      ],
-      "is_test": true,
-      "imported_by": []
-    },
-    "frontend/src/features/planner/studyPlanConflicts.js": {
-      "area": "frontend:planner",
-      "role_hint": "Live conflict labels. Weekday 0 is Monday, matching the study-plan API.",
-      "sha256": "78acaf27b195662d8c4438eebfa37e5d590e4047fcab7de0a5d2f7b917351b5e",
-      "bytes": 1386,
-      "imports": [],
-      "local_imports": [],
-      "top_level_symbols": [
-        "minutes",
-        "weekdayMonday",
-        "match",
-        "day",
-        "insideAvailability",
-        "start",
-        "duration",
-        "weekday",
-        "end",
-        "sessionConflicts",
-        "flags"
-      ],
-      "is_test": false,
-      "imported_by": [
-        "frontend/src/features/planner/components/StudyPlanModal.jsx",
-        "frontend/src/features/planner/studyPlanConflicts.test.js"
-      ]
-    },
-    "frontend/src/features/planner/studyPlanConflicts.test.js": {
-      "area": "frontend:planner",
-      "role_hint": "studyPlanConflicts.test",
-      "sha256": "021e3e7260ece04cdea1cebdf770bbc981fcd99f639dda2c89fb2a5cf9bd484c",
-      "bytes": 1172,
-      "imports": [
-        "./studyPlanConflicts.js",
-        "node:assert/strict",
-        "node:test"
-      ],
-      "local_imports": [
-        "frontend/src/features/planner/studyPlanConflicts.js"
-      ],
-      "top_level_symbols": [
-        "WINDOW",
-        "session"
       ],
       "is_test": true,
       "imported_by": []
@@ -8092,8 +7880,8 @@
     "frontend/src/hooks/useAdmin.js": {
       "area": "frontend:hooks",
       "role_hint": "useAdmin",
-      "sha256": "944b86c8e844074c47c8b79a8dd3e645960081e63d47634588f856bddc6d8ee9",
-      "bytes": 880,
+      "sha256": "1e545d6f14a48e443e04a36d888d0f40087c783196030c0bb792e7911cf29b36",
+      "bytes": 1408,
       "imports": [
         "../api/admin",
         "@tanstack/react-query"
@@ -8105,8 +7893,9 @@
         "useAdminStats",
         "useAdminUsers",
         "useLockUser",
-        "queryClient",
-        "useUnlockUser"
+        "useUnlockUser",
+        "usePasswordResets",
+        "useApprovePasswordReset"
       ],
       "is_test": false,
       "imported_by": [
@@ -8275,7 +8064,8 @@
       ],
       "is_test": false,
       "imported_by": [
-        "frontend/src/pages/ConnectionStatus.jsx"
+        "frontend/src/pages/ConnectionStatus.jsx",
+        "frontend/src/pages/student/SettingsPage.jsx"
       ]
     },
     "frontend/src/hooks/useOverdue.js": {
@@ -8439,32 +8229,6 @@
         "frontend/src/pages/student/SettingsPage.jsx"
       ]
     },
-    "frontend/src/hooks/useStudyPlan.js": {
-      "area": "frontend:hooks",
-      "role_hint": "useStudyPlan",
-      "sha256": "096107d14ab67666b1256f18ba1e1ed6e29be07c7623b662435c8b2fcd209089",
-      "bytes": 735,
-      "imports": [
-        "../api/planning",
-        "@tanstack/react-query"
-      ],
-      "local_imports": [
-        "frontend/src/api/planning.js"
-      ],
-      "top_level_symbols": [
-        "STUDY_PLAN_KEY",
-        "useStudyPlan",
-        "client",
-        "query",
-        "remember",
-        "generate",
-        "save"
-      ],
-      "is_test": false,
-      "imported_by": [
-        "frontend/src/features/planner/components/StudyPlanModal.jsx"
-      ]
-    },
     "frontend/src/hooks/useTimeline.js": {
       "area": "frontend:hooks",
       "role_hint": "useTimeline",
@@ -8625,11 +8389,12 @@
       ],
       "is_test": false,
       "imported_by": [
-        "frontend/src/features/planner/components/StudyPlanModal.jsx",
+        "frontend/src/components/PasswordChangeForm.jsx",
         "frontend/src/pages/ConnectionStatus.jsx",
         "frontend/src/pages/admin/AdminDashboardPage.jsx",
         "frontend/src/pages/admin/AdminLoginPage.jsx",
         "frontend/src/pages/admin/AdminUsersPage.jsx",
+        "frontend/src/pages/student/ForgotPasswordPage.jsx",
         "frontend/src/pages/student/SettingsPage.jsx",
         "frontend/src/pages/student/StudentLoginPage.jsx",
         "frontend/src/pages/student/StudentRegisterPage.jsx"
@@ -8990,38 +8755,35 @@
     "frontend/src/pages/admin/AdminDashboardPage.jsx": {
       "area": "frontend:pages",
       "role_hint": "AdminDashboardPage",
-      "sha256": "1065ec8847d5d963877496cd79618d6747b7a2422d323a1cb87edfac572ce8cc",
-      "bytes": 6365,
+      "sha256": "6e312d81df9f98e41a60d8ca70a6a9b5552d01e37e956cdc7bdedcbb4af9f7cb",
+      "bytes": 9413,
       "imports": [
+        "../../components/PasswordChangeForm",
         "../../hooks/useAdmin",
         "../../lib/errors",
+        "react",
         "react-router-dom"
       ],
       "local_imports": [
+        "frontend/src/components/PasswordChangeForm.jsx",
         "frontend/src/hooks/useAdmin.js",
         "frontend/src/lib/errors.js"
       ],
       "top_level_symbols": [
         "StatCard",
-        "valueClass",
-        "AdminDashboardPage",
-        "stats",
-        "users",
-        "data",
-        "accounts",
-        "locked",
-        "missingMfa"
+        "AdminDashboardPage"
       ],
       "is_test": false,
       "imported_by": [
-        "frontend/src/App.jsx"
+        "frontend/src/App.jsx",
+        "frontend/src/pages/admin/AdminDashboardPage.test.jsx"
       ]
     },
     "frontend/src/pages/admin/AdminLoginPage.jsx": {
       "area": "frontend:pages",
       "role_hint": "AdminLoginPage",
-      "sha256": "6d29a8bca4a5bac063a8e4be0146b39d3ca53b853e9ed7fd3eff4fb24eec212c",
-      "bytes": 6401,
+      "sha256": "9b3a4a6cd215bf0a884cf76007b5a64daf12974218c0d2621ca7a19533c29ca5",
+      "bytes": 6789,
       "imports": [
         "../../api/auth",
         "../../lib/errors",
@@ -9037,13 +8799,7 @@
         "frontend/src/stores/authStore.js"
       ],
       "top_level_symbols": [
-        "AdminLoginPage",
-        "user",
-        "accessToken",
-        "submitCredentials",
-        "pending",
-        "submitTotp",
-        "session"
+        "AdminLoginPage"
       ],
       "is_test": false,
       "imported_by": [
@@ -9088,11 +8844,13 @@
     "frontend/src/pages/student/SettingsPage.jsx": {
       "area": "frontend:pages",
       "role_hint": "SettingsPage with account timezone persistence",
-      "sha256": "c3fc478fc8b83b3473a8dac44a097d0b719d944769a3e159aef5eb5f613fd754",
-      "bytes": 17696,
+      "sha256": "78dd2210571fed6aac0d0f17bab997d6dc8af122cb4258db544c1afbe82288df",
+      "bytes": 21764,
       "imports": [
         "../../api/auth",
+        "../../components/PasswordChangeForm",
         "../../hooks/useCanvas",
+        "../../hooks/useMe",
         "../../hooks/useSchedulerSettings",
         "../../lib/errors",
         "../../stores/authStore",
@@ -9102,69 +8860,20 @@
       ],
       "local_imports": [
         "frontend/src/api/auth.js",
+        "frontend/src/components/PasswordChangeForm.jsx",
+        "frontend/src/stores/authStore.js",
         "frontend/src/hooks/useCanvas.js",
         "frontend/src/hooks/useSchedulerSettings.js",
-        "frontend/src/lib/errors.js",
-        "frontend/src/stores/authStore.js"
+        "frontend/src/hooks/useMe.js",
+        "frontend/src/lib/errors.js"
       ],
       "top_level_symbols": [
-        "FLAVOURS",
-        "TABS",
         "selectedTab",
-        "value",
         "canvasMessage",
-        "data",
         "IntegrationPanel",
-        "connection",
-        "saveConnection",
-        "testConnection",
-        "sync",
-        "disconnect",
-        "saveCourses",
-        "connected",
-        "courses",
-        "lastLog",
-        "lastError",
-        "onSave",
-        "onTest",
-        "result",
-        "selectedIds",
-        "isChecked",
-        "toggleCourse",
-        "next",
-        "persistSelection",
-        "onSaveSelection",
-        "onSync",
-        "log",
-        "created",
-        "updated",
         "TimeZoneSettings",
-        "user",
-        "queryClient",
-        "error",
-        "success",
-        "fallbackZones",
-        "zones",
-        "currentZone",
-        "options",
-        "mutation",
-        "onChange",
-        "nextZone",
-        "session",
-        "originalUserId",
-        "originalAccessToken",
-        "requestError",
-        "currentSession",
         "AccountPanel",
-        "settings",
-        "selected",
-        "banner",
-        "choose",
-        "flavour",
-        "SettingsPage",
-        "searchParams",
-        "setSearchParams",
-        "tab"
+        "SettingsPage"
       ],
       "is_test": false,
       "imported_by": [
@@ -9207,8 +8916,8 @@
     "frontend/src/pages/student/StudentLoginPage.jsx": {
       "area": "frontend:pages",
       "role_hint": "StudentLoginPage",
-      "sha256": "f48a29b821c4b1aefd859475ac74576ff81820de69957b2688b510f7c5459491",
-      "bytes": 5693,
+      "sha256": "f8c0fb3a70c8cb893686837dc41e824e2633386a2c367200f71539e1cc4e58d6",
+      "bytes": 6919,
       "imports": [
         "../../api/auth",
         "../../assets/auth/login-background.png",
@@ -9219,23 +8928,11 @@
       ],
       "local_imports": [
         "frontend/src/api/auth.js",
-        "frontend/src/lib/errors.js",
-        "frontend/src/stores/authStore.js"
+        "frontend/src/stores/authStore.js",
+        "frontend/src/lib/errors.js"
       ],
       "top_level_symbols": [
-        "StudentLoginPage",
-        "navigate",
-        "setSession",
-        "codeRefs",
-        "submitCredentials",
-        "data",
-        "submitTotp",
-        "totp",
-        "session",
-        "updateCode",
-        "digit",
-        "next",
-        "handleCodeKeyDown"
+        "StudentLoginPage"
       ],
       "is_test": false,
       "imported_by": [
@@ -9379,6 +9076,8 @@
       "is_test": false,
       "imported_by": [
         "frontend/src/components/AdminRoute.jsx",
+        "frontend/src/components/PasswordChangeForm.jsx",
+        "frontend/src/components/PasswordChangeForm.test.jsx",
         "frontend/src/components/SessionHydrator.jsx",
         "frontend/src/components/SessionHydrator.test.jsx",
         "frontend/src/components/StudentRoute.jsx",
@@ -9429,8 +9128,8 @@
     "frontend/vitest.config.js": {
       "area": "configuration",
       "role_hint": "vitest.config",
-      "sha256": "746253538d26474cee45026daea3114043a8636e83b930f0a78bb01e3d12f754",
-      "bytes": 1586,
+      "sha256": "cc4e7325a1ca5b3c4f3dc4b4c6dbfaf9d605ede3f84901d2df1b10ac8490aadb",
+      "bytes": 2104,
       "imports": [
         "@vitejs/plugin-react",
         "vitest/config"
@@ -9650,7 +9349,6 @@
       "is_test": false,
       "imported_by": [
         "frontend/src/features/planner/components/CreatePlanningItemPanel.jsx",
-        "frontend/src/features/planner/components/StudyPlanModal.jsx",
         "frontend/src/features/timeline/AnchorDialog.jsx",
         "frontend/src/features/timeline/TimezonePanel.jsx"
       ]
@@ -9687,17 +9385,47 @@
       "imported_by": []
     },
     "frontend/src/features/planner/components/DependencyDialog.jsx": {
-      "area": "frontend:planner", "role_hint": "Planner dependency creation dialog.",
-      "sha256": "59aed3cbcc3aba8e15030cceed6a7d31952c0bc29197d9122fdbf80514729754", "bytes": 7873,
-      "imports": ["../../../api/planning", "@tanstack/react-query", "lucide-react", "react"],
-      "local_imports": ["frontend/src/api/planning.js"], "top_level_symbols": ["DependencyDialog"], "is_test": false,
-      "imported_by": ["frontend/src/features/planner/PlannerPage.jsx", "frontend/src/features/planner/components/DependencyDialog.test.jsx"]
+      "area": "frontend:planner",
+      "role_hint": "Planner dependency creation dialog.",
+      "sha256": "59aed3cbcc3aba8e15030cceed6a7d31952c0bc29197d9122fdbf80514729754",
+      "bytes": 7873,
+      "imports": [
+        "../../../api/planning",
+        "@tanstack/react-query",
+        "lucide-react",
+        "react"
+      ],
+      "local_imports": [
+        "frontend/src/api/planning.js"
+      ],
+      "top_level_symbols": [
+        "DependencyDialog"
+      ],
+      "is_test": false,
+      "imported_by": [
+        "frontend/src/features/planner/PlannerPage.jsx",
+        "frontend/src/features/planner/components/DependencyDialog.test.jsx"
+      ]
     },
     "frontend/src/features/planner/components/DependencyDialog.test.jsx": {
-      "area": "frontend:planner", "role_hint": "Planner dependency dialog interaction tests.",
-      "sha256": "5e160a841c5d88ce9bf223cd489554dbb6be0c105094ec5e92e1eada94590512", "bytes": 6098,
-      "imports": ["../../../api/planning", "./DependencyDialog", "@tanstack/react-query", "@testing-library/react", "react", "vitest"],
-      "local_imports": ["frontend/src/api/planning.js", "frontend/src/features/planner/components/DependencyDialog.jsx"], "top_level_symbols": [], "is_test": true,
+      "area": "frontend:planner",
+      "role_hint": "Planner dependency dialog interaction tests.",
+      "sha256": "5e160a841c5d88ce9bf223cd489554dbb6be0c105094ec5e92e1eada94590512",
+      "bytes": 6098,
+      "imports": [
+        "../../../api/planning",
+        "./DependencyDialog",
+        "@tanstack/react-query",
+        "@testing-library/react",
+        "react",
+        "vitest"
+      ],
+      "local_imports": [
+        "frontend/src/api/planning.js",
+        "frontend/src/features/planner/components/DependencyDialog.jsx"
+      ],
+      "top_level_symbols": [],
+      "is_test": true,
       "imported_by": []
     },
     "frontend/src/features/planner/components/DependencyGraphModal.jsx": {
@@ -9705,20 +9433,55 @@
       "role_hint": "Portaled, viewport-centered, resizable read-only dependency DAG viewer with compact layered layout, explicit tangent-aligned SVG polygon arrowheads, hierarchy cards, below-card hover/focus descriptions, scroll and drag panning.",
       "sha256": "60b9e62b2569728bc61cdcfd75c4653b6d52419960c6791a8a0179aec4b8648a",
       "bytes": 14517,
-      "imports": ["../../../api/planning", "@tanstack/react-query", "lucide-react", "react", "react-dom"],
-      "local_imports": ["frontend/src/api/planning.js"],
-      "top_level_symbols": ["availableSize", "clampSize", "initialSize", "persistSize", "graphLayout", "edgeGeometry", "edgePath", "DependencyGraphModal"],
+      "imports": [
+        "../../../api/planning",
+        "@tanstack/react-query",
+        "lucide-react",
+        "react",
+        "react-dom"
+      ],
+      "local_imports": [
+        "frontend/src/api/planning.js"
+      ],
+      "top_level_symbols": [
+        "availableSize",
+        "clampSize",
+        "initialSize",
+        "persistSize",
+        "graphLayout",
+        "edgeGeometry",
+        "edgePath",
+        "DependencyGraphModal"
+      ],
       "is_test": false,
-      "imported_by": ["frontend/src/features/planner/components/CreatePlanningItemPanel.jsx", "frontend/src/features/planner/components/CreatePlanningItemPanel.test.jsx", "frontend/src/features/planner/components/DependencyGraphModal.test.jsx"]
+      "imported_by": [
+        "frontend/src/features/planner/components/CreatePlanningItemPanel.jsx",
+        "frontend/src/features/planner/components/CreatePlanningItemPanel.test.jsx",
+        "frontend/src/features/planner/components/DependencyGraphModal.test.jsx"
+      ]
     },
     "frontend/src/features/planner/components/DependencyGraphModal.test.jsx": {
       "area": "frontend:planner",
       "role_hint": "Dependency graph modal compact layout, explicit arrowhead endpoint geometry, below-card descriptions, portal, resize persistence, viewport constraint, interaction, and state regression tests.",
       "sha256": "67a8ceaf2781fc64794b4caeb35edc799a291f611c9e82eee6f7f0476312441e",
       "bytes": 11299,
-      "imports": ["../../../api/planning", "./DependencyGraphModal", "@tanstack/react-query", "@testing-library/react", "react", "vitest"],
-      "local_imports": ["frontend/src/api/planning.js", "frontend/src/features/planner/components/DependencyGraphModal.jsx"],
-      "top_level_symbols": ["task", "graph", "mount"],
+      "imports": [
+        "../../../api/planning",
+        "./DependencyGraphModal",
+        "@tanstack/react-query",
+        "@testing-library/react",
+        "react",
+        "vitest"
+      ],
+      "local_imports": [
+        "frontend/src/api/planning.js",
+        "frontend/src/features/planner/components/DependencyGraphModal.jsx"
+      ],
+      "top_level_symbols": [
+        "task",
+        "graph",
+        "mount"
+      ],
       "is_test": true,
       "imported_by": []
     },
@@ -9742,6 +9505,213 @@
       "local_imports": [],
       "top_level_symbols": [],
       "is_test": false,
+      "imported_by": []
+    },
+    "backend/accounts/password_reset.py": {
+      "area": "backend:accounts",
+      "role_hint": "Desk reset for a locked-out account, and a signed-in password change.",
+      "sha256": "ecbf31d034163cd5d5076a6c4cdee7d399f38e9eb91a590c7a5fd252e98b96f9",
+      "bytes": 4526,
+      "imports": [
+        "accounts.models",
+        "datetime",
+        "django.contrib.auth",
+        "django.contrib.auth.password_validation",
+        "django.core.exceptions",
+        "django.utils",
+        "hashlib",
+        "rest_framework_simplejwt.token_blacklist.models",
+        "secrets"
+      ],
+      "local_imports": [],
+      "top_level_symbols": [
+        "ResetNotReady",
+        "PasswordRejected",
+        "_digest",
+        "revoke_refresh_tokens",
+        "change_password",
+        "request_reset",
+        "_row_for",
+        "status_for",
+        "open_requests",
+        "present_request",
+        "approve_reset",
+        "confirm_reset"
+      ],
+      "is_test": false,
+      "imported_by": []
+    },
+    "backend/accounts/migrations/0004_passwordresetrequest.py": {
+      "area": "backend:accounts",
+      "role_hint": "from django.db import migrations, models",
+      "sha256": "5c48acaf21ecf4122f1545c7aa1009873037a044e06e0a6d51c63921b3e46bac",
+      "bytes": 1364,
+      "imports": [
+        "django.db",
+        "django.db.models.deletion",
+        "uuid"
+      ],
+      "local_imports": [],
+      "top_level_symbols": [
+        "Migration"
+      ],
+      "is_test": false,
+      "imported_by": []
+    },
+    "backend/accounts/tests/test_password_reset.py": {
+      "area": "backend:accounts",
+      "role_hint": "Signed-in password change and admin-approved reset.",
+      "sha256": "dbe323579319de80ba08794c5d057298bb8d8bc7bead92a973f09ebe5debbc07",
+      "bytes": 6686,
+      "imports": [
+        ".conftest",
+        "accounts.models",
+        "datetime",
+        "django.contrib.auth",
+        "django.utils",
+        "pytest",
+        "rest_framework.test"
+      ],
+      "local_imports": [],
+      "top_level_symbols": [
+        "code",
+        "status_url",
+        "signed_in",
+        "second_admin",
+        "test_signed_in_change_replaces_the_password_and_kills_the_old_refresh",
+        "test_wrong_current_password_does_not_change_it",
+        "test_anonymous_password_change_is_rejected",
+        "test_known_and_unknown_emails_get_the_same_reset_response",
+        "test_every_admin_sees_the_same_queue",
+        "test_a_student_cannot_open_the_reset_queue",
+        "test_confirm_before_approval_keeps_the_password",
+        "test_approval_lets_the_same_token_set_a_new_password",
+        "test_a_second_request_consumes_the_first_token",
+        "test_an_expired_request_cannot_be_approved"
+      ],
+      "is_test": true,
+      "imported_by": []
+    },
+    "docs/ideas/password-reset-and-study-plan-removal.md": {
+      "area": "docs",
+      "role_hint": "How might a student who cannot sign in get back into ARC, and how might staff do that for them, without weakening TOTP o",
+      "sha256": "66335b64612b77dd5fa1f8031c52262131d93e7add305604fff246533cfe7139",
+      "bytes": 2942,
+      "imports": [],
+      "local_imports": [],
+      "top_level_symbols": [],
+      "is_test": false,
+      "imported_by": []
+    },
+    "frontend/src/components/PasswordChangeForm.jsx": {
+      "area": "frontend:components",
+      "role_hint": "import { useState } from 'react",
+      "sha256": "0593f95142d49cdfeb356486fa0d9d9582a9be382e294c945356cb5447a797d5",
+      "bytes": 3598,
+      "imports": [
+        "../api/auth",
+        "../lib/errors",
+        "../stores/authStore",
+        "react"
+      ],
+      "local_imports": [
+        "frontend/src/api/auth.js",
+        "frontend/src/lib/errors.js",
+        "frontend/src/stores/authStore.js"
+      ],
+      "top_level_symbols": [
+        "PasswordChangeForm"
+      ],
+      "is_test": false,
+      "imported_by": [
+        "frontend/src/components/PasswordChangeForm.test.jsx",
+        "frontend/src/pages/admin/AdminDashboardPage.jsx",
+        "frontend/src/pages/student/SettingsPage.jsx"
+      ]
+    },
+    "frontend/src/components/PasswordChangeForm.test.jsx": {
+      "area": "frontend:components",
+      "role_hint": "import { fireEvent, render, screen } from '@testing-library/react",
+      "sha256": "bac0e6ff96fe1874f988c7098ca78ba317dc33a91af20f28cde77e704293e936",
+      "bytes": 2344,
+      "imports": [
+        "../api/auth",
+        "../stores/authStore",
+        "./PasswordChangeForm",
+        "@testing-library/react",
+        "vitest"
+      ],
+      "local_imports": [
+        "frontend/src/api/auth.js",
+        "frontend/src/stores/authStore.js",
+        "frontend/src/components/PasswordChangeForm.jsx"
+      ],
+      "top_level_symbols": [],
+      "is_test": true,
+      "imported_by": []
+    },
+    "frontend/src/pages/admin/AdminDashboardPage.test.jsx": {
+      "area": "frontend:pages",
+      "role_hint": "import { fireEvent, render, screen } from '@testing-library/react",
+      "sha256": "b0c99cb5808cc42a2ec34be502c7fc9371197276c7f4dc477a6f6acd36e17a4d",
+      "bytes": 1774,
+      "imports": [
+        "./AdminDashboardPage",
+        "@testing-library/react",
+        "react-router-dom",
+        "vitest"
+      ],
+      "local_imports": [
+        "frontend/src/pages/admin/AdminDashboardPage.jsx"
+      ],
+      "top_level_symbols": [],
+      "is_test": true,
+      "imported_by": []
+    },
+    "frontend/src/pages/student/ForgotPasswordPage.jsx": {
+      "area": "frontend:pages",
+      "role_hint": "import { useEffect, useState } from 'react",
+      "sha256": "087973ee9b7273e4dcbddafd4996a3892ff5d4352a15daddfd314b62d8eab5ee",
+      "bytes": 6907,
+      "imports": [
+        "../../api/auth",
+        "../../assets/auth/login-background.png",
+        "../../lib/errors",
+        "react",
+        "react-router-dom"
+      ],
+      "local_imports": [
+        "frontend/src/api/auth.js",
+        "frontend/src/lib/errors.js"
+      ],
+      "top_level_symbols": [
+        "storedToken",
+        "ForgotPasswordPage"
+      ],
+      "is_test": false,
+      "imported_by": [
+        "frontend/src/App.jsx",
+        "frontend/src/pages/student/ForgotPasswordPage.test.jsx"
+      ]
+    },
+    "frontend/src/pages/student/ForgotPasswordPage.test.jsx": {
+      "area": "frontend:pages",
+      "role_hint": "import { fireEvent, render, screen, waitFor } from '@testing-library/react",
+      "sha256": "066f66064c196da59aed30593c022e63cde614d6cf12a2ae982431379cfd2ac8",
+      "bytes": 2836,
+      "imports": [
+        "../../api/auth",
+        "./ForgotPasswordPage",
+        "@testing-library/react",
+        "react-router-dom",
+        "vitest"
+      ],
+      "local_imports": [
+        "frontend/src/api/auth.js",
+        "frontend/src/pages/student/ForgotPasswordPage.jsx"
+      ],
+      "top_level_symbols": [],
+      "is_test": true,
       "imported_by": []
     }
   }

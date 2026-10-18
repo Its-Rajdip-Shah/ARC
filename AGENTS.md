@@ -15,7 +15,7 @@
 - Ensure strict data isolation (users can only access their own data).
 - Use `core` apps for shared mixins and permissions.
 - Do not invent missing Canvas API data; handle nulls gracefully.
-- Study-plan model calls stay in Django. The browser only uses `/api/planning/study-plans/`.
+- Password changes and reset approval stay in Django. The browser uses `/api/auth/password/change/`, `/api/auth/password-reset/`, and `/api/admin/password-resets/`.
 
 <!-- ARC_KNOWLEDGE_WORKFLOW_V1_START -->
 ## Persistent Repository Intelligence — Mandatory

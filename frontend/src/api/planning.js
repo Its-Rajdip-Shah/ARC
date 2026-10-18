@@ -196,15 +196,3 @@ export function updateTimelineOverload(payload) {
 export function rescheduleTimeline() {
   return apiClient.post('planning/timeline/reschedule/').then((res) => res.data)
 }
-
-export function getStudyPlan() {
-  return apiClient.get('planning/study-plans/').then((res) => res.data)
-}
-
-export function requestStudyPlan(payload) {
-  return apiClient.post('planning/study-plans/', payload).then((res) => res.data)
-}
-
-export function updateStudyPlan(payload) {
-  return apiClient.patch('planning/study-plans/', payload).then((res) => res.data)
-}

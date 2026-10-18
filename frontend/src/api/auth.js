@@ -45,6 +45,22 @@ export function updateTimeZone(time_zone) {
   return apiClient.patch('auth/me/', { time_zone }, { timeout: 10000 }).then((res) => res.data)
 }
 
+export function changePassword(payload) {
+  return apiClient.post('auth/password/change/', payload).then((res) => res.data)
+}
+
+export function requestPasswordReset(payload) {
+  return apiClient.post('auth/password-reset/', payload).then((res) => res.data)
+}
+
+export function passwordResetStatus(token) {
+  return apiClient.get(`auth/password-reset/status/${encodeURIComponent(token)}/`).then((res) => res.data)
+}
+
+export function confirmPasswordReset(payload) {
+  return apiClient.post('auth/password-reset/confirm/', payload).then((res) => res.data)
+}
+
 // Share the attempt across StrictMode effects and repeated hydration of the
 // same profile. Failures leave the authenticated session and UTC fallback intact.
 const timeZoneAttempts = new WeakMap()

@@ -19,3 +19,11 @@ export function lockUser(id) {
 export function unlockUser(id) {
   return apiClient.post(`admin/users/${id}/unlock/`).then((res) => res.data)
 }
+
+export function listPasswordResets() {
+  return apiClient.get('admin/password-resets/').then((res) => res.data)
+}
+
+export function approvePasswordReset(id) {
+  return apiClient.post(`admin/password-resets/${id}/approve/`).then((res) => res.data)
+}

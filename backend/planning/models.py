@@ -631,8 +631,8 @@ class SchedulingState(OwnedModel):
         default=0,
     )
 
-    # Last successful study-plan suggestion. Kept off scheduler_runtime
-    # because a flavour change wipes that field, and planner undo restores it.
+    # Retained so existing databases keep the column. Nothing reads or writes it
+    # now that the study-plan API is gone. A flavour change still must not wipe it.
     study_plan = models.JSONField(default=dict, blank=True)
     study_preferences = models.JSONField(default=dict, blank=True)
 

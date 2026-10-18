@@ -14,7 +14,7 @@ Generated from 358 source/config/docs files; not a test run. Read exact source b
 - `ARCHITECTURE.md` and `FR_TRACEABILITY.md` explain established decisions and assignment requirements.
 - Django/DRF/Postgres backend is authoritative for domain invariants, isolation, and scheduling.
 - React SPA uses TanStack Query, Zustand auth, API wrappers and hooks.
-- Canvas imports must not invent missing data; study-plan model calls remain in Django.
+- Canvas imports must not invent missing data. Password change and reset approval stay in Django.
 - Scheduler is an external commit-pinned package; inspect its contract before changing adapter.
 
 ## Entry points and cross-cutting flows
@@ -39,6 +39,11 @@ Generated from 358 source/config/docs files; not a test run. Read exact source b
 - Planner deadline markers are filled gold indicators positioned on each overdue task's own indentation rail, including nested rows.
 - Timeline Today-card detail visibility is hover/focus driven like every other date. Planner uses its existing derived `deadline_overdue` fact for a non-interactive card marker.
 - `StudentLayout` owns the multi-origin radial page background; its fixed header is transparent so the navbar retains background continuity.
+
+## Incremental update — password reset, study plan removed (2026-10-18)
+
+- Signed-in password change: `POST /api/auth/password/change/`. Locked-out reset is requested, approved on `GET /api/admin/password-resets/`, then confirmed by the same browser. The admin payload does not include the student token.
+- Study-plan UI, API, service, and model client are removed. `SchedulingState.study_plan` stays unused.
 
 ## Incremental update — PR freeze verification (2026-10-18)
 
@@ -373,7 +378,7 @@ Run `.arc-knowledge/validate_index.py` after each Codex task. Changed file hashe
 - `frontend/src/components/ArcDateCalendar.jsx`: shared date grid, month selector,
   editable year, Today navigation and current-date highlighting.
 - `frontend/src/components/ArcDateField.jsx` and `.css`: reusable form date field
-  and popup, used by task, timezone, anchor and study-plan forms.
+  and popup, used by task, timezone and anchor forms.
 - `frontend/src/components/ArcDateCalendar.test.jsx`: four interaction tests.
 - `frontend/src/features/timeline/TimelineToolbar.jsx`: uses the shared calendar.
 - `frontend/src/features/timeline/TimelineWorkflows.test.jsx`: updated heading assertions.

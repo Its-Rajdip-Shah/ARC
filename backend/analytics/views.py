@@ -11,11 +11,12 @@ from django.utils import timezone
 from drf_spectacular.utils import extend_schema
 from rest_framework import mixins, viewsets
 from rest_framework.decorators import action
-from rest_framework.exceptions import PermissionDenied
+from rest_framework.exceptions import NotFound, PermissionDenied
 from rest_framework.filters import SearchFilter
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from accounts.password_reset import approve_reset, open_requests, present_request
 from analytics.serializers import (
     AdminUserSerializer,
     LockSerializer,
@@ -133,3 +134,24 @@ class PlatformStatsView(APIView):
             'generated_at': now,
         }
         return Response(PlatformStatsSerializer(stats).data)
+
+
+class PasswordResetQueueView(APIView):
+    """GET /api/admin/password-resets/ — every admin sees the same open requests."""
+
+    permission_classes = [IsAdminAccount]
+
+    def get(self, request):
+        return Response([present_request(row) for row in open_requests()])
+
+
+class PasswordResetApproveView(APIView):
+    """POST /api/admin/password-resets/<id>/approve/ — staff approve, they do not choose the password."""
+
+    permission_classes = [IsAdminAccount]
+
+    def post(self, request, request_id):
+        row = approve_reset(request_id, request.user)
+        if row is None:
+            raise NotFound('That reset request is no longer open.')
+        return Response(present_request(row))

@@ -5,7 +5,6 @@ import FocusSchedulerMascot from '../focus/FocusSchedulerMascot'
 import PlannerTree from './components/PlannerTree'
 import PriorityPanel from './components/PriorityPanel'
 import CreatePlanningItemPanel from './components/CreatePlanningItemPanel'
-import StudyPlanModal from './components/StudyPlanModal'
 import DependencyDialog from './components/DependencyDialog'
 import { usePlanningTree } from '../../hooks/usePlanningTree'
 import { useIsMutating, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -258,7 +257,6 @@ export default function PlannerPage() {
     && !historyUnsafe
 
 
-  const [studyPlanOpen, setStudyPlanOpen] = useState(false)
   const [dependencyFixedTask, setDependencyFixedTask] = useState(null)
   const [selectedItemId, setSelectedItemId] = useState(null)
   const [toolbarPreferences] = useState(
@@ -915,18 +913,6 @@ export default function PlannerPage() {
               >
                 <Redo2 size={18} strokeWidth={1.8} />
               </button>
-
-              <button
-                type="button"
-                onClick={() => { panelGeneration.current += 1; setStudyPlanOpen(true) }}
-                className="
-                  h-[28px] shrink-0 rounded-[6px] px-2
-                  text-[12px] text-[#9db6e8]
-                  hover:bg-white/10 hover:text-white
-                "
-              >
-                Study plan
-              </button>
             </div>
 
             {recoveryDrafts.map((draft, index) => (
@@ -1096,10 +1082,6 @@ export default function PlannerPage() {
             </div>
           </section>
         </div>
-      )}
-
-      {!isPriority && studyPlanOpen && (
-        <StudyPlanModal onClose={() => setStudyPlanOpen(false)} />
       )}
     </div>
   )

@@ -118,7 +118,6 @@ Fill in `backend/.env` (never commit this file):
 | `ARC_FIELD_ENCRYPTION_KEY` | Fernet key for TOTP secrets and Canvas tokens. Generate with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. Changing it later makes existing encrypted rows unreadable. |
 | `CORS_ALLOWED_ORIGINS` | `http://localhost:5173,http://127.0.0.1:5173` |
 | `CANVAS_BASE_URL` | Institution Canvas host, no trailing `/api/v1` |
-| `LLM_API_KEY` … `LLM_API_KEY_5` | Optional study-plan providers, tried in order. Leave empty to use a local deadline order. See `backend/.env.example`. The browser never receives these keys. |
 
 Create the Postgres database if needed (`CREATE DATABASE arc_db;`), then:
 

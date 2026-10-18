@@ -11,7 +11,8 @@ The planning scheduler adapter (`backend/planning/services/scheduler_v1.py`) bri
 ## Feature ownership
 
 - Authentication/MFA and tenant ownership: `backend/accounts/`, `backend/core/`, `frontend/src/stores/authStore.js`, `frontend/src/components/*Route.jsx`, `frontend/src/pages/student/*`.
-- Planning hierarchy, lifecycle, priority, dependencies, progress, deletion, study plans, overdue, focus, scheduling: `backend/planning/`, `frontend/src/features/planner/`, `frontend/src/features/focus/`, `frontend/src/features/timeline/`, and corresponding hooks/DnD modules.
+- Planning hierarchy, lifecycle, priority, dependencies, progress, deletion, overdue, focus, scheduling: `backend/planning/`, `frontend/src/features/planner/`, `frontend/src/features/focus/`, `frontend/src/features/timeline/`, and corresponding hooks/DnD modules.
+- Password change and admin-approved reset: `backend/accounts/password_reset.py`, `frontend/src/pages/student/ForgotPasswordPage.jsx`, and the staff Overview queue.
 - Canvas import: `backend/canvas_integration/`, `frontend/src/api/canvas.js`, `frontend/src/hooks/useCanvas.js`.
 - Admin/analytics: `backend/analytics/`, `frontend/src/pages/admin/`, `frontend/src/components/admin/`.
 

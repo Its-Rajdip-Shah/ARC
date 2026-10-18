@@ -158,6 +158,11 @@ export default function AdminLoginPage() {
         </div>
 
         <p className="text-center text-sm text-slate-500">
+          <Link to="/forgot-password" className="text-emerald-400 hover:text-emerald-300">
+            Forgot your password?
+          </Link>
+        </p>
+        <p className="text-center text-sm text-slate-500">
           <Link to="/" className="text-emerald-400 hover:text-emerald-300">
             Back to the student app
           </Link>

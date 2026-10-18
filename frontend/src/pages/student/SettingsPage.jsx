@@ -3,6 +3,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useSearchParams } from 'react-router-dom'
 
 import { updateTimeZone } from '../../api/auth'
+import PasswordChangeForm from '../../components/PasswordChangeForm'
 import { useAuthStore } from '../../stores/authStore'
 
 import {
@@ -529,9 +530,11 @@ function AccountPanel() {
             </div>
           </dl>
         )}
+        <h3 className="text-sm font-semibold">Password</h3>
         <p className="text-xs text-arc-text-muted">
-          Password changes are not available in the current API. This page does not pretend a change was saved.
+          Enter your current password to choose a new one. A forgotten password needs an administrator to approve a reset.
         </p>
+        <PasswordChangeForm />
       </section>
       <section className="space-y-4 rounded-[15px] border border-[#4a496b] bg-arc-panel p-5">
       <h2 className="text-lg font-semibold">Scheduler intensity</h2>

@@ -761,9 +761,13 @@ def test_every_planning_endpoint_refuses_an_anonymous_request(db, api):
         '/api/planning/timeline/',
         '/api/planning/overdue/',
         '/api/planning/marks/',
-        '/api/planning/study-plans/',
     ):
         assert api.get(path).status_code == 401, path
+
+
+def test_study_plan_endpoint_is_gone(db, api):
+    """The study-plan suggestion is no longer part of the product."""
+    assert api.get('/api/planning/study-plans/').status_code == 404
 
 
 def test_the_item_list_shows_only_your_own_items(client, user, other_user, make_item):

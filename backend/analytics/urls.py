@@ -10,5 +10,11 @@ router.register('users', views.AdminUserViewSet, basename='admin-user')
 
 urlpatterns = [
     path('stats/', views.PlatformStatsView.as_view(), name='admin-stats'),
+    path('password-resets/', views.PasswordResetQueueView.as_view(), name='password-resets'),
+    path(
+        'password-resets/<uuid:request_id>/approve/',
+        views.PasswordResetApproveView.as_view(),
+        name='password-reset-approve',
+    ),
     path('', include(router.urls)),
 ]

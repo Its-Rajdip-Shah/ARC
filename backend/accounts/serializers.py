@@ -86,3 +86,33 @@ class MFAVerifySerializer(serializers.Serializer):
 
 class LogoutSerializer(serializers.Serializer):
     refresh = serializers.CharField()
+
+
+class PasswordChangeSerializer(serializers.Serializer):
+    current_password = serializers.CharField(write_only=True, style={'input_type': 'password'})
+    new_password = serializers.CharField(write_only=True, style={'input_type': 'password'})
+
+    def validate_new_password(self, value):
+        validate_password(value, self.context['request'].user)
+        return value
+
+    def validate(self, data):
+        user = self.context['request'].user
+        if not user.check_password(data['current_password']):
+            raise serializers.ValidationError({
+                'current_password': 'The current password is incorrect.',
+            })
+        if data['current_password'] == data['new_password']:
+            raise serializers.ValidationError({
+                'new_password': 'Choose a different password.',
+            })
+        return data
+
+
+class PasswordResetRequestSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+
+
+class PasswordResetConfirmSerializer(serializers.Serializer):
+    request_token = serializers.CharField()
+    new_password = serializers.CharField(write_only=True, style={'input_type': 'password'})

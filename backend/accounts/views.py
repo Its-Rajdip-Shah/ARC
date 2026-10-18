@@ -10,7 +10,7 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.signals import user_logged_in
 from drf_spectacular.utils import extend_schema, inline_serializer
 from rest_framework import serializers, status
-from rest_framework.exceptions import AuthenticationFailed, PermissionDenied
+from rest_framework.exceptions import APIException, AuthenticationFailed, PermissionDenied, ValidationError
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
@@ -19,7 +19,7 @@ from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.tokens import RefreshToken
 from planning.models import SchedulingState
 
-from . import totp
+from . import password_reset, totp
 from .login_protection import (
     check_login_cooldown,
     record_failed_login,
@@ -28,6 +28,9 @@ from .login_protection import (
 from .serializers import (
     LoginSerializer,
     LogoutSerializer,
+    PasswordChangeSerializer,
+    PasswordResetConfirmSerializer,
+    PasswordResetRequestSerializer,
     MFAEnrolConfirmSerializer,
     MFAVerifySerializer,
     RegisterSerializer,
@@ -37,6 +40,14 @@ from .serializers import (
 from .tokens import FULL_ACCESS_SCOPE, MFAEnrolmentToken, MFAPendingToken
 
 User = get_user_model()
+
+
+class ResetNotReadyResponse(APIException):
+    status_code = 400
+    default_detail = (
+        'This reset is not ready. Ask an administrator to approve it, or start again.'
+    )
+    default_code = 'reset_not_ready'
 
 
 def _issue_token_pair(user):
@@ -344,3 +355,61 @@ class MeView(APIView):
         request.user.time_zone = serializer.validated_data['time_zone']
         request.user.save(update_fields=['time_zone'])
         return Response(UserSerializer(request.user).data)
+
+
+class PasswordChangeView(APIView):
+    """POST /api/auth/password/change/ — the signed-in account's own password."""
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(request=PasswordChangeSerializer, responses={200: None})
+    def post(self, request):
+        serializer = PasswordChangeSerializer(data=request.data, context={'request': request})
+        serializer.is_valid(raise_exception=True)
+        password_reset.change_password(request.user, serializer.validated_data['new_password'])
+        return Response({
+            'detail': 'Password updated.',
+            **_issue_token_pair(request.user),
+        })
+
+
+class PasswordResetRequestView(PublicAuthView):
+    """POST /api/auth/password-reset/ — ask an administrator to approve a reset."""
+
+    @extend_schema(request=PasswordResetRequestSerializer, responses={200: None})
+    def post(self, request):
+        serializer = PasswordResetRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        token = password_reset.request_reset(serializer.validated_data['email'])
+        return Response({
+            'detail': password_reset.REQUEST_DETAIL,
+            'request_token': token,
+        })
+
+
+class PasswordResetStatusView(PublicAuthView):
+    """GET /api/auth/password-reset/status/<token>/ — pending, approved, or finished."""
+
+    throttle_scope = 'password_reset'
+
+    def get(self, request, token):
+        return Response({'status': password_reset.status_for(token)})
+
+
+class PasswordResetConfirmView(PublicAuthView):
+    """POST /api/auth/password-reset/confirm/ — the approved browser sets the password."""
+
+    @extend_schema(request=PasswordResetConfirmSerializer, responses={200: None})
+    def post(self, request):
+        serializer = PasswordResetConfirmSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            password_reset.confirm_reset(
+                serializer.validated_data['request_token'],
+                serializer.validated_data['new_password'],
+            )
+        except password_reset.ResetNotReady:
+            raise ResetNotReadyResponse()
+        except password_reset.PasswordRejected as exc:
+            raise ValidationError({'new_password': exc.messages})
+        return Response({'detail': 'Password updated.'})

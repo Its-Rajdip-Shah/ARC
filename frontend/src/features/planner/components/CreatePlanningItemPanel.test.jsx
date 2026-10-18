@@ -517,7 +517,6 @@ import { MemoryRouter } from 'react-router-dom'
 import PlannerPage from '../PlannerPage'
 vi.mock('./PlannerSidebar', () => ({ default: () => null }))
 vi.mock('../../focus/FocusSchedulerMascot', () => ({ default: () => null }))
-vi.mock('./StudyPlanModal', () => ({ default: () => null }))
 vi.mock('./PriorityPanel', () => ({ default: () => null }))
 
 function deferred() {

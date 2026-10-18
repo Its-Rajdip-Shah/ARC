@@ -186,12 +186,19 @@ export default function StudentLoginPage() {
         )}
 
         {!mfaToken && (
-          <p className="mt-3 text-center text-lg text-[#D8CDF8]">
-            New to ARC?{' '}
-            <Link to="/register" className="underline">
-              Create an account
-            </Link>
-          </p>
+          <>
+            <p className="mt-3 text-center text-sm text-[#D8CDF8]">
+              <Link to="/forgot-password" className="underline">
+                Forgot your password?
+              </Link>
+            </p>
+            <p className="mt-3 text-center text-lg text-[#D8CDF8]">
+              New to ARC?{' '}
+              <Link to="/register" className="underline">
+                Create an account
+              </Link>
+            </p>
+          </>
         )}
       </section>
     </main>

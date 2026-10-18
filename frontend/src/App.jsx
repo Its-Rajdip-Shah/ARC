@@ -7,6 +7,7 @@ import StudentLayout from './components/student/StudentLayout'
 import ConnectionStatus from './pages/ConnectionStatus'
 import AdminDashboardPage from './pages/admin/AdminDashboardPage'
 import AdminLoginPage from './pages/admin/AdminLoginPage'
+import ForgotPasswordPage from './pages/student/ForgotPasswordPage'
 import StudentLoginPage from './pages/student/StudentLoginPage'
 import StudentRegisterPage from './pages/student/StudentRegisterPage'
 import AdminUsersPage from './pages/admin/AdminUsersPage'
@@ -25,6 +26,7 @@ export default function App() {
           <Route path="/" element={<Navigate to="/login" replace />} />
 
           <Route path="/login" element={<StudentLoginPage />} />
+          <Route path="/forgot-password" element={<ForgotPasswordPage />} />
           <Route path="/register" element={<StudentRegisterPage />} />
 
           <Route element={<StudentRoute />}>

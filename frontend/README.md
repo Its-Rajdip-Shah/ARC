@@ -2,8 +2,9 @@
 
 React/Vite frontend for ARC.
 
-For full project setup and architecture documentation, start with the
-repository root `README.md` and the files under `docs/`.
+For full project setup, start with the repository root `README.md`.
+The documentation map is `../docs/README.md`. Day-to-day setup is
+`../docs/setup/developer.md`.
 
 ## Requirements
 
@@ -58,7 +59,7 @@ The source code must not assume a machine-specific browser path.
 
 ## Timeline / scheduler documentation
 
-- `../docs/timelineview.md`
-- `../docs/timeline_contract.md`
-- `../docs/scheduler.md`
-- `../docs/scheduler_contract.md`
+- `../docs/guides/timeline.md`
+- `../docs/contracts/timeline.md`
+- `../docs/guides/scheduler.md`
+- `../docs/contracts/scheduler.md`

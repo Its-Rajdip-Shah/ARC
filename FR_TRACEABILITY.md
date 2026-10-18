@@ -171,6 +171,6 @@ The admin console reports counts and account state, never the contents of anyone
 | `security.W016` | `CSRF_COOKIE_SECURE` is not `True` | Same: HTTPS-only CSRF cookies break HTTP local. |
 | `security.W018` | `DEBUG=True` | Reported when `.env` has `DEBUG=True`. Expected for local; setting `DEBUG=False` clears this warning and the process still starts. |
 
-Production must set `DEBUG=False`, a real `SECRET_KEY`, HTTPS (`SECURE_SSL_REDIRECT`, HSTS, secure cookies), and a non-console mailer. Those flags are wired in `arc_backend/settings.py` and documented in [`docs/A2_SECURITY_GAP_ANALYSIS.md`](docs/A2_SECURITY_GAP_ANALYSIS.md).
+Production must set `DEBUG=False`, a real `SECRET_KEY`, HTTPS (`SECURE_SSL_REDIRECT`, HSTS, secure cookies), and a non-console mailer. Those flags are wired in `arc_backend/settings.py` and documented in [`docs/security/a2-gap-analysis.md`](docs/security/a2-gap-analysis.md).
 
 Django's built-in `/admin/` is **off by default** (`ENABLE_DJANGO_ADMIN=False`) so it cannot bypass MFA (FR-15). Use the React staff console.

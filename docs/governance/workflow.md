@@ -4,7 +4,7 @@
 
 ## Authority and reconciliation
 
-- Product behavior: explicitly approved decisions and versioned normative contracts take precedence. Read `docs/implementation/ARC.md`, `docs/scheduler_contract.md`, `docs/timeline_contract.md`, and the relevant domain references. `ARC.md` is a behavioral map and may itself contain proposed/unresolved rules; never silently promote a proposal to a frozen rule.
+- Product behavior: explicitly approved decisions and versioned normative contracts take precedence. Read `docs/governance/constitution.md`, `docs/contracts/scheduler.md`, `docs/contracts/timeline.md`, and the relevant domain references. The constitution is a behavioral map and may itself contain proposed/unresolved rules; never silently promote a proposal to a frozen rule.
 - Implementation process: this document describes the development gate sequence. `AGENTS.md` continues to govern repository conventions and incremental `.arc-knowledge/` updates, except that explicit product-owner instructions prohibit unattended commits, branch/worktree creation, resets, rebases, pushes, or deletion of dirty/untracked work.
 - If documents or code conflict, stop and present provenance and the product decision needed. Code/tests show current behavior, not authority to change intended behavior.
 
@@ -22,7 +22,7 @@
 
 ## Contract-generation minimum
 
-Every future task contract must identify: task ID and Notion provenance; applicable authority/version; approved behavior and non-changes; exact source-anchored blueprint; test matrix; inspected Git baseline and dirty-file authorization; file scope; token/repair budgets; explicit STOP-on-material-drift semantics; the reference `docs/implementation/ARC_DEVELOPMENT_WORKFLOW.md`; and audit/human acceptance requirements. The contract must distinguish `approved-for-implementation` from `verified`, `human-accepted`, and `frozen` states.
+Every future task contract must identify: task ID and Notion provenance; applicable authority/version; approved behavior and non-changes; exact source-anchored blueprint; test matrix; inspected Git baseline and dirty-file authorization; file scope; token/repair budgets; explicit STOP-on-material-drift semantics; the reference `docs/governance/workflow.md`; and audit/human acceptance requirements. The contract must distinguish `approved-for-implementation` from `verified`, `human-accepted`, and `frozen` states.
 
 **Enforcement status:** This document and a contract reference are *process specifications*, not proof of automatic enforcement. Do not claim permanent machine enforcement until both the installed runner and the contract-generation path have been inspected and tested against stale baselines, unauthorized dirty files, missing blueprints, and bypass attempts. Any needed runner enforcement is a separately approved, versioned, independently audited worker task; never expand a product/HA1 implementation into a worker refactor.
 

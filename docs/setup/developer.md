@@ -15,7 +15,7 @@ ARC is a monorepo with:
 - a React/Vite frontend in `frontend/`;
 - PostgreSQL as the required database;
 - an external, commit-pinned scheduler package installed from `ARC-Scheduler-Arena`;
-- technical and behavioral documentation in `docs/`.
+- technical and behavioral documentation in `docs/`. The map is `docs/README.md`. This file is the only day-to-day setup procedure. Clean-clone validation stays in `docs/setup/production.md`.
 
 ---
 
@@ -184,11 +184,14 @@ A high-level ARC tree looks like this:
     │   └── ...
     │
     ├── docs/
-    │   ├── scheduler.md
-    │   ├── scheduler_contract.md
-    │   ├── timelineview.md
-    │   ├── timeline_contract.md
-    │   └── ...
+    │   ├── README.md
+    │   ├── setup/
+    │   ├── contracts/
+    │   ├── guides/
+    │   ├── governance/
+    │   ├── architecture/
+    │   ├── security/
+    │   └── reviews/
     │
     ├── README.md
     └── .gitignore
@@ -246,12 +249,12 @@ Behavioral documentation and frozen contracts.
 
 Before changing Timeline or scheduler semantics, read:
 
-- `docs/timelineview.md`
-- `docs/timeline_contract.md`
-- `docs/scheduler.md`
-- `docs/scheduler_contract.md`
+- `docs/guides/timeline.md`
+- `docs/contracts/timeline.md`
+- `docs/guides/scheduler.md`
+- `docs/contracts/scheduler.md`
 
-The `*_contract.md` files define rules future changes must preserve unless the contract itself is intentionally reviewed and changed.
+The files in `docs/contracts/` define rules future changes must preserve unless the contract itself is intentionally reviewed and changed. The matching files in `docs/guides/` describe the current implementation and do not override those contracts.
 
 ---
 
@@ -364,6 +367,47 @@ Optional demo data:
 
 The demo seed is useful for local development, but it is not required merely to run the application.
 
+`seed_demo`'s `admin@example.com` / `arc-demo-pass-1234` cannot log in until MFA is enrolled. Do not insert users by hand in pgAdmin: `users` stores a Django password hash and a Fernet-encrypted TOTP secret. pgAdmin is fine for inspecting `email`, `is_admin`, and `is_locked`.
+
+### Create or promote a staff user
+
+From `backend/` with the virtual environment active:
+
+    python manage.py shell
+
+```python
+import pyotp
+from django.contrib.auth import get_user_model
+
+User = get_user_model()
+email = "you@example.com"              # replace
+password = "pick-a-strong-password"    # replace
+
+user, created = User.objects.get_or_create(
+    email=email,
+    defaults={"is_admin": True},
+)
+user.set_password(password)
+user.is_admin = True
+user.is_locked = False
+
+secret = pyotp.random_base32()
+user.totp_secret_encrypted = secret
+user.save()
+
+print("created:" if created else "updated:", user.email)
+print("secret:", secret)
+print("code now:", pyotp.TOTP(secret).now())
+```
+
+Add **secret** to an authenticator app (issuer `ARC`). **code now** is the six-digit authentication code and changes every 30 seconds. If login rejects it as expired:
+
+    python -c "import pyotp; print(pyotp.TOTP('PASTE_SECRET_HERE').now())"
+
+Then open http://localhost:5173/admin/login. To promote an existing student who already has an authenticator, set `is_admin = True` and save `update_fields=["is_admin"]` without rotating the TOTP secret. They use `/admin/login`, not `/`.
+
+Django's built-in `/admin/` stays off unless `ENABLE_DJANGO_ADMIN=True`. Staff use the React console. Overview (`/admin`) shows counts only. Accounts (`/admin/users`) can lock or restore another user, never your own. Locking ends that user's live JWT on the next request.
+
 ---
 
 # 8. Frontend setup
@@ -463,6 +507,8 @@ From `backend/` with `.venv` active:
     python manage.py makemigrations --check --dry-run
     python -m pytest
 
+`python -m pytest` prints coverage for `accounts`, `planning`, `canvas_integration`, `analytics`, and `core`. Migrations, tests, and management commands are excluded. Models, views, and services are expected to stay around 85% or better.
+
 If your work is specifically Timeline/scheduler related, the relevant focused suites include the Timeline interaction, scheduler, history, progress, anchor and scheduler-authority tests under `backend/planning/tests/`.
 
 ## Frontend
@@ -542,8 +588,8 @@ Timeline and scheduler changes have stronger behavioral constraints than ordinar
 
 Read before modifying them:
 
-    docs/timeline_contract.md
-    docs/scheduler_contract.md
+    docs/contracts/timeline.md
+    docs/contracts/scheduler.md
 
 Examples of important boundaries include:
 

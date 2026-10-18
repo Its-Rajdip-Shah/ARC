@@ -2,7 +2,7 @@
 
 ## Scope
 
-This document describes the Timeline MVP as implemented on branch `integration/scheduler-backend` in the freeze-review package generated from commit `14fc56cea566fed5982f1c6f9db2c282c4c0838b` plus the current dirty Timeline worktree.
+This describes the Timeline implementation in the current tree. Normative rules are in [`docs/contracts/timeline.md`](../contracts/timeline.md). This guide does not override that contract. An earlier snapshot of this text was taken from branch `integration/scheduler-backend` at `14fc56cea566fed5982f1c6f9db2c282c4c0838b`.
 
 The Timeline is a projection/editor over ARC planning state. It does **not** own hierarchy, dependencies, priority, release dates, deadlines, anchors, progress, or scheduler semantics. It renders canonical facts plus scheduler-owned disposable proposal state and translates explicit user interactions into planning commands.
 
@@ -19,7 +19,7 @@ The Timeline is a projection/editor over ARC planning state. It does **not** own
 - `SchedulerRunButton.jsx` / `SchedulerAura.jsx` — explicit reschedule control and scheduler-state animation.
 - `useTimelineActions.js` — Timeline mutations, rapid completion intent queue, query invalidation.
 - `useTimelinePreferences.js` — persisted Timeline view/filter preferences.
-- `useTimelineUniverse.js` — global unpaginated actionable task index used for search/navigation.
+- `frontend/src/hooks/useTimelineUniverse.js` — global unpaginated actionable task index used for search/navigation. It lives with the other shared hooks, not under `features/timeline/`.
 - `useHoverIntent.js` — shared delayed-hover primitive.
 - `useSequenceNavigator.js` — shared x/y previous/next navigation primitive.
 - `timelineDates.js` — UTC date arithmetic, responsive scales, geometry, lane packing, concentration helpers.

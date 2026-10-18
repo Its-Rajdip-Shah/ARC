@@ -227,7 +227,7 @@ REST_FRAMEWORK = {
 
 # HTTPS / cookie hardening (A2 production bar)
 # Local HTTP keeps the defaults False/0. Production .env should flip these on
-# together with DEBUG=False — see docs/A2_SECURITY_GAP_ANALYSIS.md.
+# together with DEBUG=False — see docs/security/a2-gap-analysis.md.
 
 SECURE_SSL_REDIRECT = env('SECURE_SSL_REDIRECT')
 SESSION_COOKIE_SECURE = env('SESSION_COOKIE_SECURE')

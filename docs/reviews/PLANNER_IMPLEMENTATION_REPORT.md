@@ -1,5 +1,7 @@
 # ARC Planner / Student Shell — Branch Implementation Audit
 
+Historical branch audit. Living frontend structure is [`docs/architecture/frontend.md`](../architecture/frontend.md). Do not treat this report as current behavior.
+
 **Branch audited:** `feature/6-student-shell`
 **Baseline / merge-base:** `9de10f816d66da261d49b2bb83dc7299af6d77a2` (`origin/main` at the time of the audit)
 **Audit basis:** complete unstaged tracked diff plus the contents/inventory of untracked source files captured in `arc-branch-audit.txt`.
@@ -523,7 +525,7 @@ The package lock was correspondingly updated.
 
 ## 19. Frontend architecture documentation
 
-`docs/FRONTEND_ARCHITECTURE.md` documents the intended student frontend structure.
+`docs/architecture/frontend.md` documents the intended student frontend structure.
 
 Important decisions recorded there include:
 
@@ -580,7 +582,7 @@ This file is useful project documentation rather than generated output.
 - `backend/planning/migrations/0003_planningitem_is_deleted.py`
 - `backend/planning/services/history.py`
 - `backend/planning/tests/test_history.py`
-- `docs/FRONTEND_ARCHITECTURE.md`
+- `docs/architecture/frontend.md`
 - `frontend/src/components/student/HamburgerButton.jsx`
 - `frontend/src/components/student/NavigationDrawer.jsx`
 - `frontend/src/components/student/SearchBar.jsx`
@@ -607,7 +609,7 @@ This file is useful project documentation rather than generated output.
 | `backend/planning/migrations/0003_planningitem_is_deleted.py` | Schema migration for soft deletion. |
 | `backend/planning/services/history.py` | Bounded delta-based Planner undo/redo engine. |
 | `backend/planning/tests/test_history.py` | History/data-integrity tests. |
-| `docs/FRONTEND_ARCHITECTURE.md` | Student frontend architecture and Figma implementation rules. |
+| `docs/architecture/frontend.md` | Student frontend architecture and Figma implementation rules. |
 | `frontend/src/components/StudentRoute.jsx` | Protected non-admin student route. |
 | `frontend/src/components/student/HamburgerButton.jsx` | Student navigation trigger. |
 | `frontend/src/components/student/NavigationDrawer.jsx` | Student drawer and logout. |

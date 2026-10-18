@@ -77,7 +77,7 @@ The Priority toggle:
 - appears against the left/sidebar boundary in Priority to return;
 - is not part of Timeline, Marks, or the global student shell.
 
-Its exact routing/state model will be decided when the Priority feature is implemented.
+Priority is the `/priority` route of `PlannerPage`. The toggle leaves Planner for that route and returns to `/planner`. It is not a separate data model.
 
 ## Password recovery
 

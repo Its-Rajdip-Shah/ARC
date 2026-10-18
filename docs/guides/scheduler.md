@@ -1,5 +1,7 @@
 # ARC Scheduler — Current Implementation
 
+This describes the current integration. Normative rules are in [`docs/contracts/scheduler.md`](../contracts/scheduler.md). This guide does not override that contract.
+
 ## Version and production boundary
 
 ARC integrates the frozen external scheduler through the V1 contract.

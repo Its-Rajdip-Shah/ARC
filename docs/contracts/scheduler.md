@@ -2,7 +2,7 @@
 
 ## Status
 
-This document is normative for the current ARC scheduler integration.
+This document is normative for the current ARC scheduler integration. How that integration currently behaves is described in [`docs/guides/scheduler.md`](../guides/scheduler.md). The guide does not override this contract.
 
 Any future scheduler engine, algorithm, flavour, refactor, optimization, AI layer, or UI integration **must preserve these rules unless the contract itself is explicitly reviewed and versioned**.
 

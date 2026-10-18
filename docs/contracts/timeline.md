@@ -2,7 +2,7 @@
 
 ## Status
 
-This document is normative for the current Timeline MVP.
+This document is normative for the current Timeline MVP. How the view is currently built is described in [`docs/guides/timeline.md`](../guides/timeline.md). The guide does not override this contract.
 
 Future Timeline changes may improve layout, animation and ergonomics, but must preserve the semantic rules below unless the contract is deliberately reviewed and changed.
 

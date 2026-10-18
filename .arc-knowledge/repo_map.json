@@ -12,14 +12,15 @@
     "V3-22: Planner Overdue eligibility aligned with backend TASK/ASSIGNMENT rules; regression covers completed, reopened, GOAL and ASSIGNMENT cases.",
     "2026-10-17: Incremental V3-23/HA1 reconciliation of accepted, uncommitted working-tree content.",
     "2026-10-17: Shared calendar unification verified in browser and committed locally at 03c334c; 237 frontend tests passed, two skipped, production build passed. Final calendar fixes reconciled incrementally in the knowledge map.",
-    "2026-10-17: Timeline Reset Filters and Timezones responsive/date-card refinements verified with 242 frontend tests passed, two skipped, production build and browser checks. Knowledge entries reconciled against the inspected working tree; Git checkpoint isolation pending."
+    "2026-10-17: Timeline Reset Filters and Timezones responsive/date-card refinements verified with 242 frontend tests passed, two skipped, production build and browser checks. Knowledge entries reconciled against the inspected working tree; Git checkpoint isolation pending.",
+    "2026-10-18: Documentation layout reconciled on feature/docs-reorganisation. Snapshot provenance is unchanged. Hashes below were recomputed only for inspected documentation moves and the settings comment that cites the security matrix."
   ],
   "files": {
-    "ARC_V3_SIX_TASKS_REPORT.md": {
+    "docs/reviews/ARC_V3_SIX_TASKS_REPORT.md": {
       "area": "documentation",
       "role_hint": "ARC V3 six active tasks implementation report",
-      "sha256": "ce28de6faa6b737f81ea9200faf0d0659bc1806798cd3ebb1b07cd0f017d783c",
-      "bytes": 4918,
+      "sha256": "7dc4344f2dbb4d2056de5d8a5059daa1061386612d445aafa40bbcf162757b0f",
+      "bytes": 5139,
       "imports": [],
       "local_imports": [],
       "top_level_symbols": [],
@@ -40,8 +41,8 @@
     "AGENTS.md": {
       "area": "documentation",
       "role_hint": "ARC (Goals Tracker) Project Rules",
-      "sha256": "37beb70a09c305595ada41138fffd803d6bdd3017d9c04a611fcf2a8a932553d",
-      "bytes": 2651,
+      "sha256": "946cbf742ce882ebe5d98511cf661b31956451703795872b904a73d76fd3ef7a",
+      "bytes": 2783,
       "imports": [],
       "local_imports": [],
       "top_level_symbols": [],
@@ -51,8 +52,8 @@
     "ARCHITECTURE.md": {
       "area": "documentation",
       "role_hint": "ARC architecture",
-      "sha256": "53f249bfb7b6eba519689c2cdf88d45f32f847d8645c01e9a2c5180731a7f85f",
-      "bytes": 21221,
+      "sha256": "64e543575105b7a32d8145e9474d7468c63894638f58944a9a7e2502005664d4",
+      "bytes": 20910,
       "imports": [],
       "local_imports": [],
       "top_level_symbols": [],
@@ -62,7 +63,7 @@
     "FR_TRACEABILITY.md": {
       "area": "documentation",
       "role_hint": "ARC functional-requirement traceability",
-      "sha256": "d7f1efef557e4e0c4a36cee4c04d1a0294873114680e2f91f9557110e035511f",
+      "sha256": "407bedd5766fa82673d4f1aa1a631d152eb16941f88a776add063c01910974b7",
       "bytes": 12302,
       "imports": [],
       "local_imports": [],
@@ -84,8 +85,8 @@
     "README.md": {
       "area": "documentation",
       "role_hint": "ARC",
-      "sha256": "6a119dd0328402fd00069141921c3e871e64766684a6f775183d26a73193ef2a",
-      "bytes": 12575,
+      "sha256": "dfc809e7b73a56419052d474e6c80b735325f34e65f2ee02e9a0e78eece87358",
+      "bytes": 8464,
       "imports": [],
       "local_imports": [],
       "top_level_symbols": [],
@@ -753,8 +754,8 @@
     "backend/arc_backend/settings.py": {
       "area": "backend:arc_backend",
       "role_hint": "\"\"\"",
-      "sha256": "f3049683070cf27a93b626a5c3abb36db1d8f69b28c569cb64bf5e618ccd6ac6",
-      "bytes": 8162,
+      "sha256": "6001faea7dd560cb6bac3b9bfc861325754d0be40c7d753e4be8d0c3ef8d4178",
+      "bytes": 7891,
       "imports": [
         "datetime",
         "environ",
@@ -4296,121 +4297,121 @@
       "is_test": true,
       "imported_by": []
     },
-    "docs/A2_SECURITY_GAP_ANALYSIS.md": {
+    "docs/security/a2-gap-analysis.md": {
       "area": "documentation",
       "role_hint": "A2 security gap analysis",
-      "sha256": "820c28820faaf068af92ba90f8ff18b1a35a1cb138d5dffeb3008002795a80be",
-      "bytes": 5482,
+      "sha256": "2f6f375c53a153a54f7a014b458be3de6824f5f12f2e46d0e13d4ced643fcf62",
+      "bytes": 5983,
       "imports": [],
       "local_imports": [],
       "top_level_symbols": [],
       "is_test": false,
       "imported_by": []
     },
-    "docs/FRONTEND_ARCHITECTURE.md": {
+    "docs/architecture/frontend.md": {
       "area": "documentation",
       "role_hint": "Figma source of truth",
-      "sha256": "5ac5168c16d7a2dd73a8b60820d0f85417807335b0471d7228055715688929fe",
-      "bytes": 4251,
+      "sha256": "d98748ce766032702e7f679adeb104c4ac1cc406884ec4ff8fa317e7cacd77b6",
+      "bytes": 4316,
       "imports": [],
       "local_imports": [],
       "top_level_symbols": [],
       "is_test": false,
       "imported_by": []
     },
-    "docs/PLANNER_IMPLEMENTATION_REPORT.md": {
+    "docs/reviews/PLANNER_IMPLEMENTATION_REPORT.md": {
       "area": "documentation",
       "role_hint": "ARC Planner / Student Shell \u2014 Branch Implementation Audit",
-      "sha256": "bc48d9cbee771251312ff46845c304bd6b795818c8fe46ce3192dffc8e83df6f",
-      "bytes": 30507,
+      "sha256": "2fb44fa54c530951710ceaf0d9919ad4e9220fbae45bd5d5229be3a9be0cc1b3",
+      "bytes": 30672,
       "imports": [],
       "local_imports": [],
       "top_level_symbols": [],
       "is_test": false,
       "imported_by": []
     },
-    "docs/developer_setup_guide.md": {
+    "docs/setup/developer.md": {
       "area": "documentation",
       "role_hint": "ARC Developer Setup Guide",
-      "sha256": "e6b5031eac7199b7b675e827628efbb223fbc8837736a6cbc951980cb8c563c4",
-      "bytes": 15349,
+      "sha256": "1f6953abb0fa2797f161a9a7c60c7f21c5893cada620208b000b82e1b62aeb9e",
+      "bytes": 16986,
       "imports": [],
       "local_imports": [],
       "top_level_symbols": [],
       "is_test": false,
       "imported_by": []
     },
-    "docs/implementation/ARC.md": {
+    "docs/governance/constitution.md": {
       "area": "documentation",
       "role_hint": "Approved ARC domain rules",
-      "sha256": "0716d6f1b72a714e6bfc9423f335dc33065523474d11698260de3e9d3874b5b7",
-      "bytes": 15948,
+      "sha256": "07da8871d7621dd34c6f28b8f80e166deedcea17df6f33ba06bbf8b378df2b72",
+      "bytes": 16243,
       "imports": [],
       "local_imports": [],
       "top_level_symbols": [],
       "is_test": false,
       "imported_by": []
     },
-    "docs/implementation/ARC_DEVELOPMENT_WORKFLOW.md": {
+    "docs/governance/workflow.md": {
       "area": "documentation",
       "role_hint": "Development and approval workflow",
-      "sha256": "228547f550870811a325ea9891637a20d328b08a695e64273b2a367be9e5ba35",
-      "bytes": 6215,
+      "sha256": "406be2a335df489937373bf728b7f4f93055fff27d4462fff3fa513dc36faff7",
+      "bytes": 6210,
       "imports": [],
       "local_imports": [],
       "top_level_symbols": [],
       "is_test": false,
       "imported_by": []
     },
-    "docs/production_setup_guide.md": {
+    "docs/setup/production.md": {
       "area": "documentation",
       "role_hint": "ARC Production-Style Live Test Guide",
-      "sha256": "ca965b31aa9955a24d275b97e3914881235e5da8c60c414b4b922e32cf9c85a7",
-      "bytes": 14859,
+      "sha256": "618eb997866b57c1fc8fd3e887cb4cf6b190a4ec14c0656aac77c2e30e256372",
+      "bytes": 14282,
       "imports": [],
       "local_imports": [],
       "top_level_symbols": [],
       "is_test": false,
       "imported_by": []
     },
-    "docs/scheduler.md": {
+    "docs/guides/scheduler.md": {
       "area": "documentation",
       "role_hint": "ARC Scheduler \u2014 Current Implementation",
-      "sha256": "831655795851a0a20fb307cfc493d205f198c9e45e68ec8cf5152ace234a5b5e",
-      "bytes": 21694,
+      "sha256": "557abc451f6aa3530ae09a0b77ae2b928153c855fa1e1262dd2234fdd0b671e7",
+      "bytes": 22663,
       "imports": [],
       "local_imports": [],
       "top_level_symbols": [],
       "is_test": false,
       "imported_by": []
     },
-    "docs/scheduler_contract.md": {
+    "docs/contracts/scheduler.md": {
       "area": "documentation",
       "role_hint": "Scheduler Contract \u2014 Frozen Rules and Precedents",
-      "sha256": "3856c27dbc00ecac83fa5262acb1d47185219b4b56d96167775988717ad860fa",
-      "bytes": 12844,
+      "sha256": "0820304b11bf7c81e8cb9e96819b27face43420373b9e62ca9d6ad624d8eecfb",
+      "bytes": 13381,
       "imports": [],
       "local_imports": [],
       "top_level_symbols": [],
       "is_test": false,
       "imported_by": []
     },
-    "docs/timeline_contract.md": {
+    "docs/contracts/timeline.md": {
       "area": "documentation",
       "role_hint": "Timeline Contract \u2014 Rules and Precedents",
-      "sha256": "fc5027bce771edc3bc4beb23f0e1dc674c2052fd8bc86ef39ab00636dff37c11",
-      "bytes": 13118,
+      "sha256": "6f35beb6c3e06db454fd67effb1d6b191d37b4902c6a76092097d768848d23e9",
+      "bytes": 13629,
       "imports": [],
       "local_imports": [],
       "top_level_symbols": [],
       "is_test": false,
       "imported_by": []
     },
-    "docs/timelineview.md": {
+    "docs/guides/timeline.md": {
       "area": "documentation",
       "role_hint": "Timeline View \u2014 Current Implementation",
-      "sha256": "45cd281b7a5f5a6437d7049dee1ef972c762cef6f6f45a131dc4ed2aafa18cea",
-      "bytes": 14607,
+      "sha256": "c8a5f89e5a35d88d7be9ffddc7b099783259a74baa301ea3307589e08dcce775",
+      "bytes": 15146,
       "imports": [],
       "local_imports": [],
       "top_level_symbols": [],
@@ -4442,8 +4443,8 @@
     "frontend/README.md": {
       "area": "documentation",
       "role_hint": "ARC Frontend",
-      "sha256": "470f23beaeabf1fb18c7dc67791a4aeca19f225a1da2f118da7d9aece00695da",
-      "bytes": 1161,
+      "sha256": "e1b07d2a7a45cef7962e88f159611f221e7a715abd3aaba032187c28c6c088a2",
+      "bytes": 1210,
       "imports": [],
       "local_imports": [],
       "top_level_symbols": [],
@@ -9142,8 +9143,8 @@
     "tests/README.md": {
       "area": "verification",
       "role_hint": "ARC Testing Infrastructure",
-      "sha256": "a8b807f2714455063c0a2e4d77319197dd7f321d7d22e2e72a2b7369e31d03cb",
-      "bytes": 1677,
+      "sha256": "4295158bdfd87036596895b75f44fdb840dcc255af7eb990123e20a1b817beac",
+      "bytes": 2364,
       "imports": [],
       "local_imports": [],
       "top_level_symbols": [],
@@ -9153,8 +9154,8 @@
     "tests/contracts/regression_matrix.md": {
       "area": "verification",
       "role_hint": "ARC Regression Coverage Matrix",
-      "sha256": "39196f51c56cd62ef9f4ed552cedd7938ba43e67b8e246125a73dfdcdbd0942c",
-      "bytes": 1181,
+      "sha256": "b3ec60e707b5f14b41cd82705ed3bb85da793e8f32cb3da9ed8d2c3f97d5534c",
+      "bytes": 1322,
       "imports": [],
       "local_imports": [],
       "top_level_symbols": [],
@@ -9496,6 +9497,17 @@
       "is_test": false,
       "imported_by": []
     },
+    "docs/README.md": {
+      "area": "documentation",
+      "role_hint": "Documentation map",
+      "sha256": "a9be762f906a5e2b2d8ce70450bf97bd1dad0eaf32c125e1816a1a2cf85f7b13",
+      "bytes": 3960,
+      "imports": [],
+      "local_imports": [],
+      "top_level_symbols": [],
+      "is_test": false,
+      "imported_by": []
+    },
     "docs/reviews/ARC_PR_FREEZE_REVIEW.md": {
       "area": "documentation",
       "role_hint": "Independent PR freeze findings, repairs, verification evidence, and release verdict for ARC V3.",
@@ -9592,11 +9604,11 @@
       "is_test": true,
       "imported_by": []
     },
-    "docs/ideas/password-reset-and-study-plan-removal.md": {
+    "docs/reviews/password-reset-and-study-plan-removal.md": {
       "area": "docs",
       "role_hint": "How might a student who cannot sign in get back into ARC, and how might staff do that for them, without weakening TOTP o",
-      "sha256": "66335b64612b77dd5fa1f8031c52262131d93e7add305604fff246533cfe7139",
-      "bytes": 2942,
+      "sha256": "1e8014d9215ee8c47a80b7df1949faf657ee12773f2a9120e20935c0a0b13ddd",
+      "bytes": 3359,
       "imports": [],
       "local_imports": [],
       "top_level_symbols": [],

@@ -16,6 +16,7 @@
 - Use `core` apps for shared mixins and permissions.
 - Do not invent missing Canvas API data; handle nulls gracefully.
 - Password changes and reset approval stay in Django. The browser uses `/api/auth/password/change/`, `/api/auth/password-reset/`, and `/api/admin/password-resets/`.
+- The documentation map is `docs/README.md`. Frozen scheduler and timeline contracts stay separate from the implementation guides.
 
 <!-- ARC_KNOWLEDGE_WORKFLOW_V1_START -->
 ## Persistent Repository Intelligence — Mandatory

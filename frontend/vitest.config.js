@@ -45,6 +45,7 @@ export default defineConfig({
       'src/lib/errors.test.js',
       'src/pages/student/StudentAuthForms.test.jsx',
       'src/pages/student/ForgotPasswordPage.test.jsx',
+      'src/pages/NotFoundPage.test.jsx',
       'src/pages/admin/AdminDashboardPage.test.jsx',
       'src/components/PasswordChangeForm.test.jsx',
       'src/pages/ConnectionStatus.test.jsx',

@@ -30,6 +30,12 @@ describe('student drawer', () => {
     expect(onOpenDialog).toHaveBeenCalledWith('sync')
   })
 
+  it('marks Priority as the current planning page', () => {
+    setup('/priority')
+    expect(screen.getByRole('button', { name: 'Priority' }).getAttribute('aria-current')).toBe('page')
+    expect(screen.getByRole('button', { name: 'Canvas settings' })).toBeTruthy()
+  })
+
   it('closes on Escape and marks only the active page', () => {
     const { onClose } = setup('/planner')
     expect(screen.getByRole('button', { name: 'Planner' }).getAttribute('aria-current')).toBe('page')

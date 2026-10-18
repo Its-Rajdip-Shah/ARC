@@ -137,6 +137,7 @@ class PasswordResetRequest(models.Model):
         related_name='password_reset_requests',
     )
     token_digest = models.CharField(max_length=64, unique=True)
+    purpose = models.CharField(max_length=20, default='password')
     created_at = models.DateTimeField(auto_now_add=True)
     expires_at = models.DateTimeField()
     approved_at = models.DateTimeField(null=True, blank=True)

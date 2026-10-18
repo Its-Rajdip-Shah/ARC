@@ -127,7 +127,7 @@ export default function SchedulerRunButton({
               (
                 flavour ===
                 'lock-in'
-                  ? 'Lock-in'
+                  ? 'Locked-In'
                   : 'Monk'
               )
             )
@@ -140,7 +140,7 @@ export default function SchedulerRunButton({
               (
                 flavour ===
                 'lock-in'
-                  ? 'Lock-in'
+                  ? 'Locked-In'
                   : 'Monk'
               )
             )

@@ -168,7 +168,11 @@ export default function AdminDashboardPage() {
               <li key={row.id} className="flex flex-wrap items-center justify-between gap-3 py-2 text-sm">
                 <span>
                   <span className="font-mono text-slate-200">{row.email}</span>
-                  <span className="mt-1 block text-xs text-slate-500">{formatInstant(row.created_at)}</span>
+                  <span className="mt-1 block text-xs text-slate-500">
+                    {row.purpose === 'authenticator' ? 'Authenticator' : 'Password'}
+                    {' · '}
+                    {formatInstant(row.created_at)}
+                  </span>
                 </span>
                 {row.status === 'approved' ? (
                   <span className="text-xs tracking-wide text-amber-300 uppercase">Waiting for the student</span>

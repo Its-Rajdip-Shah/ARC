@@ -11,7 +11,7 @@ import './StudentLayout.css'
 
 const dialogTitles = {
   account: 'Account',
-  settings: 'Settings',
+  settings: 'Canvas settings',
   marks: 'Marks',
   sync: 'Canvas Sync',
 }

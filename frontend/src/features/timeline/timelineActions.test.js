@@ -69,12 +69,12 @@ test('header scheduler control exposes accessible Reschedule state and disables 
     )
 
     const button = html.match(
-      /<button[^>]*aria-label="Reschedule Timeline using Lock-in"[^>]*>/
+      /<button[^>]*aria-label="Reschedule Timeline using Locked-In"[^>]*>/
     )[0]
 
     assert.match(
       button,
-      /title="Reschedule · Lock-in"/,
+      /title="Reschedule · Locked-In"/,
     )
 
     assert.equal(

@@ -12,14 +12,18 @@ from django.utils import timezone
 from rest_framework.test import APIClient
 
 from accounts.models import PasswordResetRequest
+from accounts.totp import verify
 
-from .conftest import PASSWORD, login_through_mfa, make_user
+from .conftest import PASSWORD, code_for, login_through_mfa, make_user
 
 User = get_user_model()
 
 CHANGE = '/api/auth/password/change/'
 REQUEST = '/api/auth/password-reset/'
 CONFIRM = '/api/auth/password-reset/confirm/'
+RECOVER = '/api/auth/mfa/recover/'
+RECOVER_CONFIRM = '/api/auth/mfa/recover/confirm/'
+ENROL = '/api/auth/mfa/enroll/confirm/'
 QUEUE = '/api/admin/password-resets/'
 NEW_PASSWORD = 'fresh-stamp-7-river'
 
@@ -178,6 +182,63 @@ def test_a_second_request_consumes_the_first_token(api, user):
 
     assert api.get(status_url(first)).data == {'status': 'consumed'}
     assert api.get(status_url(second)).data == {'status': 'pending'}
+
+
+def test_password_reset_does_not_disable_mfa(api, user, admin_user, secret):
+    filed = api.post(REQUEST, {'email': user.email}, format='json')
+    admin = APIClient()
+    admin.force_authenticate(user=admin_user)
+    request_id = admin.get(QUEUE).data[0]['id']
+    admin.post(f'{QUEUE}{request_id}/approve/')
+
+    confirm = api.post(
+        CONFIRM,
+        {'request_token': filed.data['request_token'], 'new_password': NEW_PASSWORD},
+        format='json',
+    )
+
+    assert confirm.status_code == 200, confirm.data
+    user.refresh_from_db()
+    assert user.mfa_enabled is True
+    assert verify(user.totp_secret_encrypted, code_for(secret), user.pk)
+
+
+def test_approved_authenticator_recovery_replaces_the_secret(api, user, admin_user, secret):
+    filed = api.post(RECOVER, {'email': user.email}, format='json')
+    assert filed.status_code == 200, filed.data
+    token = filed.data['request_token']
+
+    admin = APIClient()
+    admin.force_authenticate(user=admin_user)
+    row = admin.get(QUEUE).data[0]
+    assert row['purpose'] == 'authenticator'
+    assert 'secret' not in row
+    approved = admin.post(f'{QUEUE}{row["id"]}/approve/')
+    assert approved.data['purpose'] == 'authenticator'
+    assert 'secret' not in approved.data
+
+    confirmed = api.post(RECOVER_CONFIRM, {'request_token': token}, format='json')
+    assert confirmed.status_code == 200, confirmed.data
+    new_secret = confirmed.data['mfa']['secret']
+    assert new_secret != secret
+
+    user.refresh_from_db()
+    assert user.mfa_enabled is False
+    assert user.check_password(PASSWORD)
+    blocked = api.post('/api/auth/login/', {'email': user.email, 'password': PASSWORD}, format='json')
+    assert blocked.status_code == 403
+    assert code(blocked) == 'mfa_enrolment_required'
+
+    enrolled = api.post(
+        ENROL,
+        {'enrolment_token': confirmed.data['enrolment_token'], 'code': code_for(new_secret)},
+        format='json',
+    )
+    assert enrolled.status_code == 200, enrolled.data
+    user.refresh_from_db()
+    assert user.mfa_enabled is True
+    assert user.totp_secret_encrypted == new_secret
+    assert verify(user.totp_secret_encrypted, code_for(secret), user.pk) is False
 
 
 def test_an_expired_request_cannot_be_approved(api, user, admin_user):

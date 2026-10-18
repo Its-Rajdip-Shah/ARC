@@ -1,11 +1,19 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 
-import { confirmPasswordReset, passwordResetStatus, requestPasswordReset } from '../../api/auth'
+import {
+  confirmAuthenticatorRecovery,
+  confirmMfaEnrolment,
+  confirmPasswordReset,
+  passwordResetStatus,
+  requestAuthenticatorRecovery,
+  requestPasswordReset,
+} from '../../api/auth'
 import loginBackground from '../../assets/auth/login-background.png'
 import { errorMessage } from '../../lib/errors'
 
 const STORAGE_KEY = 'arc.password-reset-token'
+const PURPOSE_KEY = 'arc.password-reset-purpose'
 const fieldClass =
   'h-[55px] w-full bg-[#1D4074] px-4 text-lg text-white outline-none placeholder:text-[#B7A6EC] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white sm:px-12'
 
@@ -15,8 +23,11 @@ function storedToken() {
 
 export default function ForgotPasswordPage() {
   const [email, setEmail] = useState('')
+  const [purpose, setPurpose] = useState(() => sessionStorage.getItem(PURPOSE_KEY) || 'password')
   const [token, setToken] = useState(storedToken)
   const [status, setStatus] = useState(storedToken() ? 'pending' : 'start')
+  const [enrolment, setEnrolment] = useState(null)
+  const [code, setCode] = useState('')
   const [detail, setDetail] = useState('')
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
@@ -56,8 +67,10 @@ export default function ForgotPasswordPage() {
     setBusy(true)
     setError(null)
     try {
-      const body = await requestPasswordReset({ email })
+      const request = purpose === 'authenticator' ? requestAuthenticatorRecovery : requestPasswordReset
+      const body = await request({ email })
       sessionStorage.setItem(STORAGE_KEY, body.request_token)
+      sessionStorage.setItem(PURPOSE_KEY, purpose)
       setToken(body.request_token)
       setDetail(body.detail)
       setStatus('pending')
@@ -79,6 +92,7 @@ export default function ForgotPasswordPage() {
     try {
       await confirmPasswordReset({ request_token: token, new_password: newPassword })
       sessionStorage.removeItem(STORAGE_KEY)
+      sessionStorage.removeItem(PURPOSE_KEY)
       setToken('')
       setStatus('done')
     } catch (confirmError) {
@@ -88,9 +102,46 @@ export default function ForgotPasswordPage() {
     }
   }
 
+  async function startAuthenticator(event) {
+    event.preventDefault()
+    setBusy(true)
+    setError(null)
+    try {
+      setEnrolment(await confirmAuthenticatorRecovery({ request_token: token }))
+    } catch (confirmError) {
+      setError(errorMessage(confirmError, 'Could not start authenticator setup.'))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function finishAuthenticator(event) {
+    event.preventDefault()
+    if (!enrolment || code.trim().length !== 6) return
+    setBusy(true)
+    setError(null)
+    try {
+      await confirmMfaEnrolment({
+        enrolment_token: enrolment.enrolment_token,
+        code: code.trim(),
+      })
+      sessionStorage.removeItem(STORAGE_KEY)
+      sessionStorage.removeItem(PURPOSE_KEY)
+      setToken('')
+      setStatus('done')
+    } catch (confirmError) {
+      setError(errorMessage(confirmError, 'That code was not accepted.'))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   function startAgain() {
     sessionStorage.removeItem(STORAGE_KEY)
+    sessionStorage.removeItem(PURPOSE_KEY)
     setToken('')
+    setPurpose('password')
+    setEnrolment(null)
     setStatus('start')
     setError(null)
     setDetail('')
@@ -108,6 +159,29 @@ export default function ForgotPasswordPage() {
 
         {status === 'start' && (
           <form className="mt-8" onSubmit={submitEmail}>
+            <fieldset className="mb-4">
+              <legend className="mb-2 text-sm font-medium">What do you need?</legend>
+              <label className="mr-4 text-sm">
+                <input
+                  type="radio"
+                  name="recovery"
+                  value="password"
+                  checked={purpose === 'password'}
+                  onChange={() => setPurpose('password')}
+                />
+                {' '}Password
+              </label>
+              <label className="text-sm">
+                <input
+                  type="radio"
+                  name="recovery"
+                  value="authenticator"
+                  checked={purpose === 'authenticator'}
+                  onChange={() => setPurpose('authenticator')}
+                />
+                {' '}Authenticator
+              </label>
+            </fieldset>
             <label className="block text-sm font-medium">
               Email
               <input
@@ -135,7 +209,48 @@ export default function ForgotPasswordPage() {
           </p>
         )}
 
-        {status === 'approved' && (
+        {status === 'approved' && purpose === 'authenticator' && !enrolment && (
+          <form className="mt-8" onSubmit={startAuthenticator}>
+            <p className="text-sm leading-6">An administrator approved a new authenticator. Your password stays the same.</p>
+            <button
+              type="submit"
+              disabled={busy}
+              className="mx-auto mt-10 block h-[58px] w-[172px] bg-[#C3D19B] text-lg font-semibold text-black disabled:opacity-60"
+            >
+              {busy ? 'STARTING...' : 'CONTINUE'}
+            </button>
+          </form>
+        )}
+
+        {status === 'approved' && enrolment && (
+          <form className="mt-8" onSubmit={finishAuthenticator}>
+            <p className="text-center text-sm">Scan this code, then enter the six digits.</p>
+            <img
+              alt="Authenticator QR code"
+              src={`data:image/png;base64,${enrolment.mfa.qr_png_base64}`}
+              className="mx-auto mt-4 size-40 bg-white p-2"
+            />
+            <label className="mt-4 block text-sm font-medium">
+              Authentication code
+              <input
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                value={code}
+                onChange={(event) => setCode(event.target.value.replace(/\D/g, '').slice(0, 6))}
+                className={`mt-2 ${fieldClass}`}
+              />
+            </label>
+            <button
+              type="submit"
+              disabled={busy || code.length !== 6}
+              className="mx-auto mt-10 block h-[58px] w-[172px] bg-[#C3D19B] text-lg font-semibold text-black disabled:opacity-60"
+            >
+              {busy ? 'SAVING...' : 'SAVE CODE'}
+            </button>
+          </form>
+        )}
+
+        {status === 'approved' && purpose !== 'authenticator' && (
           <form className="mt-8" onSubmit={submitPassword}>
             <p className="text-sm leading-6">An administrator approved this reset. Choose a new password.</p>
             <label className="mt-4 block text-sm font-medium">
@@ -172,7 +287,9 @@ export default function ForgotPasswordPage() {
 
         {status === 'done' && (
           <p role="status" className="mt-8 text-center text-sm">
-            Password updated. You can sign in with the new one.
+            {purpose === 'authenticator'
+              ? 'Authenticator replaced. Sign in with the new code and your current password.'
+              : 'Password updated. You can sign in with the new one.'}
           </p>
         )}
 

@@ -7,9 +7,17 @@ vi.mock('../../api/auth', () => ({
   requestPasswordReset: vi.fn(),
   passwordResetStatus: vi.fn(),
   confirmPasswordReset: vi.fn(),
+  requestAuthenticatorRecovery: vi.fn(),
+  confirmAuthenticatorRecovery: vi.fn(),
+  confirmMfaEnrolment: vi.fn(),
 }))
 
-import { confirmPasswordReset, passwordResetStatus, requestPasswordReset } from '../../api/auth'
+import {
+  confirmPasswordReset,
+  passwordResetStatus,
+  requestAuthenticatorRecovery,
+  requestPasswordReset,
+} from '../../api/auth'
 import ForgotPasswordPage from './ForgotPasswordPage'
 
 describe('ForgotPasswordPage', () => {
@@ -18,6 +26,7 @@ describe('ForgotPasswordPage', () => {
     requestPasswordReset.mockReset()
     passwordResetStatus.mockReset()
     confirmPasswordReset.mockReset()
+    requestAuthenticatorRecovery.mockReset()
   })
 
   it('keeps the browser on the request until an administrator approves it', async () => {
@@ -64,5 +73,28 @@ describe('ForgotPasswordPage', () => {
       new_password: 'fresh-stamp-7-river',
     })
     expect(sessionStorage.getItem('arc.password-reset-token')).toBeNull()
+  })
+
+  it('asks for authenticator recovery without a new password', async () => {
+    requestAuthenticatorRecovery.mockResolvedValue({
+      detail: 'If an account exists, an administrator has been asked to approve a reset. Keep this page open in this browser.',
+      request_token: 'token-2',
+    })
+    passwordResetStatus.mockResolvedValue({ status: 'pending' })
+
+    render(
+      <MemoryRouter>
+        <ForgotPasswordPage />
+      </MemoryRouter>,
+    )
+
+    fireEvent.click(screen.getByRole('radio', { name: 'Authenticator' }))
+    fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'alice@example.com' } })
+    fireEvent.click(screen.getByRole('button', { name: 'REQUEST' }))
+
+    await screen.findByRole('status')
+    expect(requestAuthenticatorRecovery).toHaveBeenCalledWith({ email: 'alice@example.com' })
+    expect(requestPasswordReset).not.toHaveBeenCalled()
+    expect(sessionStorage.getItem('arc.password-reset-purpose')).toBe('authenticator')
   })
 })

@@ -55,4 +55,22 @@ describe('AdminDashboardPage password resets', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Approve' }))
     expect(harness.approve).toHaveBeenCalledWith('request-1')
   })
+
+  it('labels an authenticator request differently from a password reset', () => {
+    harness.rows = [{
+      id: 'request-2',
+      email: 'alice@example.com',
+      created_at: '2026-10-18T04:00:00Z',
+      purpose: 'authenticator',
+      status: 'pending',
+    }]
+
+    render(
+      <MemoryRouter>
+        <AdminDashboardPage />
+      </MemoryRouter>,
+    )
+
+    expect(screen.getByText(/Authenticator/)).toBeTruthy()
+  })
 })

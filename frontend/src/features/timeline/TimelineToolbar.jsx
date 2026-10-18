@@ -743,7 +743,7 @@ export default function TimelineToolbar({
       </SequenceToggle>
 
       <IconButton
-        label="Manage timezones"
+        label="Manage date ranges"
         onClick={
           onEditTimezones
         }

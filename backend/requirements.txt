@@ -26,6 +26,7 @@ requests==2.34.2
 # Tests
 pytest==9.1.1
 pytest-django==4.14.0
+pytest-cov==7.0.0
 freezegun==1.5.5
 responses==0.26.3
 

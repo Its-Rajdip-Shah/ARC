@@ -330,6 +330,8 @@ python -m pytest
 python manage.py check
 ```
 
+`python -m pytest` also prints coverage for `accounts`, `planning`, `canvas_integration`, `analytics`, and `core` (migrations, tests, and management commands are excluded). Models, views, and services are expected to stay around 85% or better. A file listed in the report is below 100%; the missing line numbers are the gaps.
+
 Frontend production build:
 
 ```powershell

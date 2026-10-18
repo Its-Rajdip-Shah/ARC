@@ -379,7 +379,8 @@ def test_points_based_canvas_course_uses_points_as_assessment_weight(
         planning_item__canvas_object_id='501'
     )
 
-    assert detail.weight_percent == Decimal('100.00')
+    assert detail.weight_percent is None
+    assert detail.canvas_weight_percent is None
     assert detail.mark_achieved is None
 
 
@@ -418,8 +419,11 @@ def test_points_based_weights_are_proportional_to_course_points(
         planning_item__canvas_object_id='502'
     )
 
-    assert quiz.weight_percent == Decimal('25.00')
-    assert report.weight_percent == Decimal('75.00')
+    assert quiz.weight_percent is None
+    assert quiz.canvas_weight_percent is None
+
+    assert report.weight_percent is None
+    assert report.canvas_weight_percent is None
 
 
 def test_group_weight_is_split_by_assignment_points(connection, user):
@@ -481,6 +485,38 @@ def test_missing_group_weight_does_not_clobber_a_local_weight(connection, user):
     detail = AssignmentDetail.objects.get(planning_item=item)
     assert item.is_completed is True
     assert detail.weight_percent == Decimal('25.00')
+
+
+def test_points_based_weight_preserves_manual_weight(connection, user):
+    stub = StubCanvas(
+        courses=[{'id': 11, 'course_code': 'ELEC3609'}],
+        assignments={
+            11: [{
+                'id': 501,
+                'name': 'Interactive Oral',
+                'points_possible': 1,
+                'assignment_group_id': 1,
+            }]
+        },
+        assignment_groups={11: [{'id': 1, 'group_weight': 0}]},
+    )
+
+    sync.run_sync(connection, client=stub)
+
+    item = PlanningItem.objects.get(canvas_object_id='501')
+    detail = AssignmentDetail.objects.get(planning_item=item)
+
+    detail.manual_weight_percent = Decimal('1.00')
+    detail.weight_percent = Decimal('1.00')
+    detail.save()
+
+    sync.run_sync(connection, client=stub)
+
+    detail.refresh_from_db()
+
+    assert detail.manual_weight_percent == Decimal('1.00')
+    assert detail.weight_percent == Decimal('1.00')
+    assert detail.canvas_weight_percent is None
 
 
 def test_self_submission_score_becomes_a_percentage_mark(connection):

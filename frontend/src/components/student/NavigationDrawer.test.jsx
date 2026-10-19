@@ -15,10 +15,10 @@ function setup(path = '/planner') {
 }
 
 describe('student drawer', () => {
-  it('opens the Marks dialog, rather than navigating to a dead destination', () => {
+  it('routes Marks to the Marks page instead of opening the dialog', () => {
     const { onClose, onOpenDialog } = setup()
     fireEvent.click(screen.getByRole('button', { name: 'Marks' }))
-    expect(onOpenDialog).toHaveBeenCalledWith('marks')
+    expect(onOpenDialog).not.toHaveBeenCalled()
     expect(onClose).toHaveBeenCalled()
   })
 

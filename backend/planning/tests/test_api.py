@@ -12,7 +12,7 @@ import pyotp
 import pytest
 from django.utils import timezone
 from freezegun import freeze_time
-
+from decimal import Decimal
 from accounts.tests.conftest import login_through_mfa, make_user
 from planning.models import (
     AssignmentDetail,
@@ -605,7 +605,7 @@ def test_marks_group_by_subject_and_total_only_what_is_marked(client, user, make
     marked = make_item(user, 'Assignment 1', ItemType.ASSIGNMENT, parent=root)
     unmarked = make_item(user, 'Assignment 2', ItemType.ASSIGNMENT, parent=root)
     AssignmentDetail.objects.create(
-        planning_item=marked, weight_percent='25.00', mark_achieved='18.50'
+        planning_item=marked, weight_percent='25.00', mark_achieved='80.00'
     )
     AssignmentDetail.objects.create(planning_item=unmarked, weight_percent='30.00')
 
@@ -615,9 +615,262 @@ def test_marks_group_by_subject_and_total_only_what_is_marked(client, user, make
     group = response.data[0]
     assert group['root']['title'] == 'ELEC3609'
     assert group['total_weight'] == '55.00'
-    assert group['total_marks'] == '18.50'
+    assert group['total_marks'] == '20.00'
     assert group['unmarked_count'] == 1
     assert group['assessments'][1]['mark_achieved'] is None
+
+
+def test_marks_exclude_unmarked_assessments_from_contribution(client, user, make_item):
+    # unmarked assessments do not contribute to the recorded total
+    root = make_item(user, 'ELEC3609', ItemType.GOAL)
+    marked = make_item(user, 'Assignment 1', ItemType.ASSIGNMENT, parent=root)
+    unmarked = make_item(user, 'Assignment 2', ItemType.ASSIGNMENT, parent=root)
+
+    AssignmentDetail.objects.create(
+        planning_item=marked, weight_percent='25.00', mark_achieved='80.00'
+    )
+    AssignmentDetail.objects.create(
+        planning_item=unmarked, weight_percent='30.00'
+    )
+
+    group = client.get('/api/planning/marks/').data[0]
+
+    assert group['total_marks'] == '20.00'
+    assert group['total_weight'] == '55.00'
+    assert group['unmarked_count'] == 1
+
+
+def test_manual_weight_is_saved_when_canvas_weight_is_missing(
+    client, user, make_item
+):
+    item = make_item(user, 'Assignment 1', ItemType.ASSIGNMENT)
+    detail = AssignmentDetail.objects.create(planning_item=item)
+
+    response = client.patch(
+        '/api/planning/marks/weight/',
+        {'assessment_id': item.pk, 'weight_percent': '25'},
+        format='json',
+    )
+
+    assert response.status_code == 200, response.data
+
+    detail.refresh_from_db()
+    assert detail.manual_weight_percent == Decimal('25.00')
+    assert detail.weight_percent == Decimal('25.00')
+
+
+def test_canvas_weight_takes_priority_over_manual_weight(
+    client, user, make_item
+):
+    item = make_item(user, 'Assignment 1', ItemType.ASSIGNMENT)
+    detail = AssignmentDetail.objects.create(
+        planning_item=item,
+        canvas_weight_percent=Decimal('40.00'),
+        weight_percent=Decimal('40.00'),
+    )
+
+    response = client.patch(
+        '/api/planning/marks/weight/',
+        {'assessment_id': item.pk, 'weight_percent': '25'},
+        format='json',
+    )
+
+    assert response.status_code == 200, response.data
+
+    detail.refresh_from_db()
+    assert detail.manual_weight_percent == Decimal('25.00')
+    assert detail.weight_percent == Decimal('40.00')
+
+
+def test_clearing_manual_weight_preserves_canvas_weight(
+    client, user, make_item
+):
+    item = make_item(user, 'Assignment 1', ItemType.ASSIGNMENT)
+    detail = AssignmentDetail.objects.create(
+        planning_item=item,
+        canvas_weight_percent=Decimal('40.00'),
+        manual_weight_percent=Decimal('25.00'),
+        weight_percent=Decimal('40.00'),
+    )
+
+    response = client.patch(
+        '/api/planning/marks/weight/',
+        {'assessment_id': item.pk, 'weight_percent': None},
+        format='json',
+    )
+
+    assert response.status_code == 200, response.data
+
+    detail.refresh_from_db()
+    assert detail.manual_weight_percent is None
+    assert detail.weight_percent == Decimal('40.00')
+
+
+def test_manual_weight_update_cannot_access_another_users_assessment(
+    client, other_user, make_item
+):
+    item = make_item(other_user, 'Private Assignment', ItemType.ASSIGNMENT)
+    detail = AssignmentDetail.objects.create(
+        planning_item=item,
+        weight_percent=Decimal('20.00'),
+    )
+
+    response = client.patch(
+        '/api/planning/marks/weight/',
+        {'assessment_id': item.pk, 'weight_percent': '30'},
+        format='json',
+    )
+
+    assert response.status_code == 404
+
+    detail.refresh_from_db()
+    assert detail.weight_percent == Decimal('20.00')
+
+
+
+def test_marks_simulation_uses_temporary_weight_without_saving(
+    client, user, make_item
+):
+    root = make_item(user, 'ELEC3609', ItemType.GOAL)
+    item = make_item(user, 'Assignment 1', ItemType.ASSIGNMENT, parent=root)
+    detail = AssignmentDetail.objects.create(
+        planning_item=item,
+        mark_achieved=Decimal('60.00'),
+    )
+
+    response = client.post(
+        '/api/planning/marks/simulate/',
+        {
+            'marks': [{
+                'assessment_id': item.pk,
+                'mark_achieved': '90',
+                'weight_percent': '25',
+            }],
+        },
+        format='json',
+    )
+
+    assert response.status_code == 200, response.data
+
+    assessment = next(
+        row
+        for group in response.data
+        for row in group['assessments']
+        if row['id'] == item.pk
+    )
+    assert Decimal(str(assessment['mark_achieved'])) == Decimal('90.00')
+    assert Decimal(str(assessment['weight_percent'])) == Decimal('25.00')
+
+    detail.refresh_from_db()
+    assert detail.mark_achieved == Decimal('60.00')
+    assert detail.weight_percent is None
+
+
+def test_marks_simulation_temporary_weight_can_be_cleared(
+    client, user, make_item
+):
+    root = make_item(user, 'ELEC3609', ItemType.GOAL)
+    item = make_item(user, 'Assignment 1', ItemType.ASSIGNMENT, parent=root)
+    detail = AssignmentDetail.objects.create(
+        planning_item=item,
+        weight_percent=Decimal('30.00'),
+        mark_achieved=Decimal('60.00'),
+    )
+
+    response = client.post(
+        '/api/planning/marks/simulate/',
+        {
+            'marks': [{
+                'assessment_id': item.pk,
+                'mark_achieved': '90',
+                'weight_percent': None,
+            }],
+        },
+        format='json',
+    )
+
+    assert response.status_code == 200, response.data
+
+    assessment = next(
+        row
+        for group in response.data
+        for row in group['assessments']
+        if row['id'] == item.pk
+    )
+    assert assessment['weight_percent'] is None
+
+    detail.refresh_from_db()
+    assert detail.weight_percent == Decimal('30.00')
+    assert detail.mark_achieved == Decimal('60.00')
+
+
+def test_marks_simulation_rejects_invalid_temporary_weight(
+    client, user, make_item
+):
+    root = make_item(user, 'ELEC3609', ItemType.GOAL)
+    item = make_item(user, 'Assignment 1', ItemType.ASSIGNMENT, parent=root)
+    AssignmentDetail.objects.create(
+        planning_item=item,
+        weight_percent=Decimal('30.00'),
+        mark_achieved=Decimal('60.00'),
+    )
+
+    response = client.post(
+        '/api/planning/marks/simulate/',
+        {
+            'marks': [{
+                'assessment_id': item.pk,
+                'mark_achieved': '90',
+                'weight_percent': '150',
+            }],
+        },
+        format='json',
+    )
+
+    assert response.status_code == 400
+
+
+# mark validation boundaries
+@pytest.mark.parametrize('mark', ['0', '100'])
+def test_assignment_mark_accepts_boundary_values(
+    client, user, make_item, mark
+):
+    root = make_item(user, 'ELEC3609', ItemType.GOAL)
+    item = make_item(user, 'Assignment 1', ItemType.ASSIGNMENT, parent=root)
+    detail = AssignmentDetail.objects.create(
+        planning_item=item, weight_percent='25.00'
+    )
+
+    response = client.patch(
+        f'/api/planning/assignment-details/{detail.planning_item_id}/',
+        {'mark_achieved': mark},
+        format='json',
+    )
+
+    assert response.status_code == 200
+    detail.refresh_from_db()
+    assert str(detail.mark_achieved) == f'{mark}.00'
+
+
+@pytest.mark.parametrize('mark', ['-0.01', '100.01'])
+def test_assignment_mark_rejects_out_of_range_values(
+    client, user, make_item, mark
+):
+    root = make_item(user, 'ELEC3609', ItemType.GOAL)
+    item = make_item(user, 'Assignment 1', ItemType.ASSIGNMENT, parent=root)
+    detail = AssignmentDetail.objects.create(
+        planning_item=item, weight_percent='25.00', mark_achieved='80.00'
+    )
+
+    response = client.patch(
+        f'/api/planning/assignment-details/{detail.planning_item_id}/',
+        {'mark_achieved': mark},
+        format='json',
+    )
+
+    assert response.status_code == 400
+    detail.refresh_from_db()
+    assert str(detail.mark_achieved) == '80.00'
 
 
 def test_marks_separate_one_subject_from_another(client, user, make_item):
@@ -701,6 +954,190 @@ def test_another_users_assignment_detail_is_a_404(other_client, user, make_item)
         format='json',
     )
     assert response.status_code == 404
+
+
+def test_marks_simulation_does_not_change_recorded_mark(
+    client, user, make_item
+):
+    root = make_item(user, 'ELEC3609', ItemType.GOAL)
+    item = make_item(user, 'Assignment 1', ItemType.ASSIGNMENT, parent=root)
+
+    detail = AssignmentDetail.objects.create(
+        planning_item=item,
+        weight_percent='25.00',
+        mark_achieved='80.00',
+    )
+
+    response = client.post(
+        '/api/planning/marks/simulate/',
+        {'assessment_id': item.pk, 'mark_achieved': '90'},
+        format='json',
+    )
+
+    assert response.status_code == 200
+
+    group = next(
+        group for group in response.data
+        if group['root']['id'] == root.pk
+    )
+    assert str(group['total_marks']) == '22.50'
+    assert str(group['assessments'][0]['mark_achieved']) == '90.00'
+    assert group['simulated'] is True
+    assert group['simulated_assessment_id'] == item.pk
+
+    detail.refresh_from_db()
+    assert str(detail.mark_achieved) == '80.00'
+
+
+@pytest.mark.parametrize('assessment_id', ['abc', 0, -1, True])
+def test_marks_simulation_rejects_invalid_assessment_id(
+    client, assessment_id
+):
+    response = client.post(
+        '/api/planning/marks/simulate/',
+        {'assessment_id': assessment_id, 'mark_achieved': 90},
+        format='json',
+    )
+
+    assert response.status_code == 400
+
+
+@pytest.mark.parametrize('mark', [-1, 100.01, 'invalid'])
+def test_marks_simulation_rejects_invalid_marks(
+    client, user, make_item, mark
+):
+    root = make_item(user, 'ELEC3609', ItemType.GOAL)
+    item = make_item(user, 'Assignment 1', ItemType.ASSIGNMENT, parent=root)
+
+    AssignmentDetail.objects.create(
+        planning_item=item,
+        weight_percent='25.00',
+        mark_achieved='80.00',
+    )
+
+    response = client.post(
+        '/api/planning/marks/simulate/',
+        {'assessment_id': item.pk, 'mark_achieved': mark},
+        format='json',
+    )
+
+    assert response.status_code == 400
+
+
+def test_marks_simulation_cannot_access_another_users_assessment(client, user, make_item, django_user_model):
+    other_user = django_user_model.objects.create_user(
+        email='other_marks_user@example.com',
+        password='test-password',
+    )
+    root = make_item(other_user, 'COMP2017', ItemType.GOAL)
+    item = make_item(
+        other_user, 'Assignment 1', ItemType.ASSIGNMENT, parent=root
+    )
+    AssignmentDetail.objects.create(
+        planning_item=item,
+        weight_percent='25.00',
+        mark_achieved='80.00',
+    )
+
+    response = client.post(
+        '/api/planning/marks/simulate/',
+        {'assessment_id': item.pk, 'mark_achieved': 90},
+        format='json',
+    )
+
+    assert response.status_code == 404
+
+
+def test_marks_simulation_supports_multiple_assessments(client, user, make_item):
+    root = make_item(user, 'ELEC3609', ItemType.GOAL)
+    first = make_item(user, 'Assignment 1', ItemType.ASSIGNMENT, parent=root)
+    second = make_item(user, 'Assignment 2', ItemType.ASSIGNMENT, parent=root)
+
+    first_detail = AssignmentDetail.objects.create(planning_item=first, weight_percent='25.00', mark_achieved='80.00',)
+    second_detail = AssignmentDetail.objects.create(planning_item=second,weight_percent='75.00',mark_achieved='60.00',)
+
+    response = client.post(
+        '/api/planning/marks/simulate/',
+        {
+            'marks': [
+                {'assessment_id': first.pk, 'mark_achieved': 90},
+                {'assessment_id': second.pk, 'mark_achieved': 70},
+            ],
+        },
+        format='json',
+    )
+
+    assert response.status_code == 200
+
+    group = next(
+        group for group in response.data
+        if group['root']['id'] == root.pk
+    )
+
+    assert str(group['total_marks']) == '75.00'
+    assert group['simulated'] is True
+    assert set(group['simulated_assessment_ids']) == {
+        first.pk, second.pk,
+    }
+
+    first_detail.refresh_from_db()
+    second_detail.refresh_from_db()
+
+    assert str(first_detail.mark_achieved) == '80.00'
+    assert str(second_detail.mark_achieved) == '60.00'
+
+
+def test_marks_simulation_allows_zero_and_unmarked_values(
+    client, user, make_item
+):
+    root = make_item(user, 'ELEC3609', ItemType.GOAL)
+    first = make_item(user, 'Assignment 1', ItemType.ASSIGNMENT, parent=root)
+    second = make_item(user, 'Assignment 2', ItemType.ASSIGNMENT, parent=root)
+
+    AssignmentDetail.objects.create(
+        planning_item=first,
+        weight_percent='50.00',
+        mark_achieved='80.00',
+    )
+    AssignmentDetail.objects.create(
+        planning_item=second,
+        weight_percent='50.00',
+        mark_achieved='60.00',
+    )
+
+    response = client.post(
+        '/api/planning/marks/simulate/',
+        {
+            'marks': [
+                {'assessment_id': first.pk, 'mark_achieved': 0},
+                {'assessment_id': second.pk, 'mark_achieved': None},
+            ],
+        },
+        format='json',
+    )
+
+    assert response.status_code == 200
+
+    group = next(
+        group for group in response.data
+        if group['root']['id'] == root.pk
+    )
+
+    assessments = {
+        assessment['id']: assessment
+        for assessment in group['assessments']
+    }
+
+    assert str(assessments[first.pk]['mark_achieved']) == '0.00'
+    assert assessments[second.pk]['mark_achieved'] is None
+    assert str(group['total_marks']) == '0.00'
+    assert group['unmarked_count'] == 1
+
+    first_detail = AssignmentDetail.objects.get(planning_item=first)
+    second_detail = AssignmentDetail.objects.get(planning_item=second)
+
+    assert str(first_detail.mark_achieved) == '80.00'
+    assert str(second_detail.mark_achieved) == '60.00'
 
 
 # --- Tags and timezones -----------------------------------------------------

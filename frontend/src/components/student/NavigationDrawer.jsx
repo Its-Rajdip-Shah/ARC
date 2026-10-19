@@ -9,12 +9,12 @@ import { useAuthStore } from '../../stores/authStore'
 const menuItems = [
   { label: 'Account', dialog: 'account' },
   { label: 'Canvas settings', dialog: 'settings' },
-  { label: 'Marks', dialog: 'marks' },
   { label: 'Sync', dialog: 'sync' },
   { label: 'Planner', to: '/planner' },
   { label: 'Priority', to: '/priority' },
   { label: 'Timeline', to: '/timeline' },
   { label: 'Focus', to: '/focus' },
+  { label: 'Marks', to: '/marks' },
 ]
 
 export default function NavigationDrawer({ isOpen, onClose, onOpenDialog }) {

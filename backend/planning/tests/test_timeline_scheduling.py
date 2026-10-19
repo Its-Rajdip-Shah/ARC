@@ -65,7 +65,7 @@ def test_missed_manual_work_retains_user_dates(user, make_item, monkeypatch):
 
 def test_manual_move_overload_and_undo_redo(user, other_user, make_item, monkeypatch):
     monkeypatch.setitem(scheduling.BASELINE_SCHEDULER_CAPACITY, DurationCategory.UNDER_1_HOUR, 1)
-    first = make_item(user, 'First', scheduled_date=TODAY, manual_requested_date=TODAY)
+    first = make_item(user, 'First', scheduled_date=TODAY, manual_requested_date=TODAY, manual_anchor_origin_date=TODAY)
     second = make_item(user, 'Second')
     third = make_item(user, 'Third')
     theirs = make_item(other_user, 'Other', scheduled_date=TODAY - timedelta(days=5))
@@ -260,7 +260,10 @@ def test_timeline_read_respects_policy_manual_overload_and_constraints(user, api
     for item in [*manual, missed, assignment, overdue]:
         item.refresh_from_db()
     assert all(item.scheduled_date == TODAY and item.manual_requested_date == item.scheduled_date for item in manual)
-    assert missed.scheduled_date == TODAY + timedelta(days=1)
+    # Overdue recovery keeps canonical deadline ordering and now consumes
+    # automatic capacity instead of overloading the missed deadline's day.
+    assert overdue.scheduled_date == TODAY + timedelta(days=1)
+    assert missed.scheduled_date == TODAY + timedelta(days=3)
     assert assignment.scheduled_date == assignment.start_date == assignment.due_date
     assert overdue.due_date == TODAY - timedelta(days=1)
     assert overdue.scheduled_date >= TODAY
@@ -317,3 +320,48 @@ def test_timeline_move_runs_public_scheduler_once_after_preflight(
     # pass performed inside the single final public schedule() invocation.
     assert len(schedule_calls) == 1
     assert len(legacy_calls) == 2
+
+
+
+def test_replacement_clears_expired_anchor_history(user, make_item, monkeypatch):
+    """Replacing a scheduled task creates a fresh anchor, not stale history."""
+    from planning.services import overdue
+
+    monkeypatch.setitem(
+        scheduling.BASELINE_SCHEDULER_CAPACITY,
+        DurationCategory.UNDER_1_HOUR,
+        2,
+    )
+
+    displaced = make_item(user, 'Displaced')
+    replacement = make_item(
+        user,
+        'Previously expired',
+        expired_manual_requested_date=TODAY - timedelta(days=5),
+    )
+
+    assert overdue.is_expired_anchor_history(replacement, TODAY)
+
+    scheduling.schedule(user, TODAY)
+    displaced.refresh_from_db()
+
+    assert displaced.scheduled_date is not None
+
+    scheduling.replace(
+        user,
+        replacement.pk,
+        displaced.pk,
+        today=TODAY,
+    )
+
+    replacement.refresh_from_db()
+
+    assert replacement.manual_requested_date == displaced.scheduled_date
+    assert replacement.manual_anchor_origin_date == displaced.scheduled_date
+    assert replacement.expired_manual_requested_date is None
+    assert not overdue.is_expired_anchor_history(replacement, TODAY)
+
+    buckets = overdue.classify_v3(user, TODAY)
+    assert replacement.pk not in {
+        row['item'].pk for row in buckets['anchor_overdue']
+    }

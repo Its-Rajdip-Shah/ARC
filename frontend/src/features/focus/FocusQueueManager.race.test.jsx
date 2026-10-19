@@ -204,10 +204,10 @@ function candidate(
       rank,
 
     manual_requested_date:
-      '2026-10-01',
+      null,
 
     manual_requested_order:
-      rank,
+      null,
 
     priority_position:
       rank,
@@ -500,22 +500,8 @@ describe(
             ],
           ),
         ).toEqual([
-          [
-            1,
-            1,
-          ],
-          [
-            3,
-            2,
-          ],
-          [
-            4,
-            3,
-          ],
-          [
-            2,
-            4,
-          ],
+          [3, 2],
+          [4, 3],
         ])
       },
     )

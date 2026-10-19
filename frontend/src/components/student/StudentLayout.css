@@ -1,0 +1,32 @@
+:root {
+  --student-header-height: 56px;
+  --student-nav-top: 16px;
+}
+
+.student-header {
+  height: var(--student-header-height);
+}
+
+/* Anchor to the viewport and stay above sidebars without covering titles. */
+.student-view-nav {
+  position: fixed;
+  z-index: 32;
+  left: 50%;
+  top: var(--student-nav-top);
+  transform: translateX(-50%);
+  width: calc(100% - 32px);
+  max-width: 361px;
+}
+
+.student-view-nav nav {
+  width: 100%;
+  max-width: 100%;
+}
+
+/* A shared second row leaves room for titles, the logo and the menu. */
+@media (max-width: 1200px) {
+  :root {
+    --student-header-height: 80px;
+    --student-nav-top: 52px;
+  }
+}

@@ -25,9 +25,16 @@ urlpatterns = [
     path('focus/do-today/', views.FocusDoTodayView.as_view(), name='focus-do-today'),
     path('focus/automatic/', views.FocusAutomaticView.as_view(), name='focus-automatic'),
     path('focus/reprioritise/', views.FocusReprioritiseView.as_view(), name='focus-reprioritise'),
-    path('study-plans/', views.StudyPlanView.as_view(), name='study-plans'),
-    path('scheduler/settings/', views.SchedulerSettingsView.as_view(), name='scheduler-settings',),
-    path('timeline/navigation/', views.TimelineNavigationView.as_view(), name='timeline-navigation',),
+    path(
+        'scheduler/settings/',
+        views.SchedulerSettingsView.as_view(),
+        name='scheduler-settings',
+    ),
+    path(
+        'timeline/navigation/',
+        views.TimelineNavigationView.as_view(),
+        name='timeline-navigation',
+    ),
     path('timeline/anchor/', views.ScheduleAnchorView.as_view(), name='schedule-anchor'),
     path('timeline/reschedule/', views.ScheduleRescheduleView.as_view(), name='schedule-reschedule'),
     path('timeline/move/', views.ScheduleMoveView.as_view(), name='schedule-move'),
@@ -37,7 +44,7 @@ urlpatterns = [
     path('overdue/', views.OverdueView.as_view(), name='overdue'),
     path('marks/', views.MarksView.as_view(), name='marks'),
     path('marks/reorder/', views.MarksReorderView.as_view(), name='marks-reorder'),
-    path('marks/weight/', views.MarksWeightUpdateView.as_view(), name='marks-weight-update',),
+    path('marks/weight/', views.MarksWeightUpdateView.as_view(), name='marks-weight-update'),
     path('marks/simulate/', views.MarksSimulationView.as_view(), name='marks-simulate'),
     path('', include(router.urls)),
 ]

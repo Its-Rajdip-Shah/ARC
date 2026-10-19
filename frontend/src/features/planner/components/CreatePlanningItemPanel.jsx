@@ -1,13 +1,18 @@
-import { useEffect, useState } from 'react'
+import ArcDateField from '../../../components/ArcDateField'
+import { useEffect, useId, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { CalendarDays, Plus, X } from 'lucide-react'
+import { Plus, Trash2, X } from 'lucide-react'
+import { userDateKey } from '../../../lib/calendarDates.js'
+import { usePriorityOrder } from '../../../hooks/usePriorityOrder'
 
 import {
-  createItem,
   createTag,
+  deleteTag,
+  getDependencyGraph,
   listTags,
-  updateItem,
+  updateTag,
 } from '../../../api/planning'
+import DependencyGraphModal from './DependencyGraphModal'
 
 const inputClass = `
   w-full rounded-[10px]
@@ -20,31 +25,98 @@ const inputClass = `
   focus:border-[#7c9cde]
 `
 
+function priorityMaximum(rows, isCreating) {
+  const currentMaximum = rows.reduce((maximum, row) => (
+    Number.isInteger(row.position) && row.position > maximum
+      ? row.position
+      : maximum
+  ), 0)
+  return Math.max(1, currentMaximum + (isCreating ? 1 : 0))
+}
+
+function clampPriorityPosition(value, maximum) {
+  if (!/^\d+$/.test(String(value).trim())) return maximum
+  return Math.min(Math.max(Number(value), 1), maximum)
+}
+
 export default function CreatePlanningItemPanel({
   onClose,
   parentId,
   parentItem = null,
   editingItem = null,
-  onCreated,
-  onUpdated,
+  onCreate,
+  draft = null,
+  createError = null,
+  onSave,
+  editDraft = null,
+  editError = null,
 }) {
   const queryClient = useQueryClient()
+  const submitted = useRef(false)
+  const createOwner = useRef(null)
+  const tagClickTimer = useRef(null)
+  const priorityTouched = useRef(false)
+
+  useEffect(() => {
+    return () => clearTimeout(tagClickTimer.current)
+  }, [])
+  const [createSubmitted, setCreateSubmitted] = useState(false)
+  const [dependencyGraphOpen, setDependencyGraphOpen] = useState(false)
 
   const [itemType, setItemType] = useState(editingItem?.item_type ?? 'TASK')
   const [title, setTitle] = useState(editingItem?.title ?? '')
   const [description, setDescription] = useState(editingItem?.description ?? '')
   const [tagInput, setTagInput] = useState('')
+  const [editingTagId, setEditingTagId] = useState(null)
+  const [editingTagName, setEditingTagName] = useState('')
+  const [deletingTag, setDeletingTag] = useState(null)
+  const [tagManagementError, setTagManagementError] = useState('')
   const [selectedTagIds, setSelectedTagIds] = useState(() => (editingItem?.tags ?? []).map((tag) => tag.id))
-  const [startDate, setStartDate] = useState(editingItem?.start_date ?? '')
-  const [dueDate, setDueDate] = useState(editingItem?.due_date ?? '')
+  const [startDate, setStartDate] = useState((editingItem ? editingItem.start_date : parentItem?.start_date) ?? '')
+  const [dueDate, setDueDate] = useState((editingItem ? editingItem.due_date : parentItem?.due_date) ?? '')
+  const [priorityPosition, setPriorityPosition] = useState(editingItem?.priority_position?.toString() ?? '')
   const [durationCategory, setDurationCategory] = useState(editingItem?.duration_category ?? '')
   const [weightPercent, setWeightPercent] = useState(editingItem?.assignment_detail?.weight_percent ?? '')
   const [submissionUrl, setSubmissionUrl] = useState(editingItem?.assignment_detail?.submission_url ?? '')
+  const estimateFeedbackId = useId()
+  const missingOriginalEstimate = !editingItem && !durationCategory
+  const dueDateErrorId = useId()
+  const assignmentWeightInvalid =
+    itemType === 'ASSIGNMENT' &&
+    weightPercent !== '' &&
+    (
+      !Number.isFinite(Number(weightPercent)) ||
+      Number(weightPercent) < 0 ||
+      Number(weightPercent) > 100 ||
+      !/^\d+(?:\.\d{1,2})?$/.test(String(weightPercent))
+    )
+
+  const assignmentUrlInvalid = (() => {
+    if (itemType !== 'ASSIGNMENT' || !submissionUrl.trim()) return false
+
+    try {
+      const url = new URL(submissionUrl.trim())
+      return !['https:', 'http:'].includes(url.protocol)
+    } catch {
+      return true
+    }
+  })()
+
+  const today = userDateKey()
+  const invalidPastDueDate = Boolean(dueDate && dueDate < today && dueDate !== editingItem?.due_date)
 
   const tagsQuery = useQuery({
     queryKey: ['planning-tags'],
     queryFn: listTags,
   })
+  const priorityQuery = usePriorityOrder()
+  const dependencyGraphQuery = useQuery({
+    queryKey: ['planning', 'dependency-graph', editingItem?.id],
+    queryFn: () => getDependencyGraph(editingItem.id),
+    enabled: Boolean(editingItem?.id),
+  })
+  const priorityRows = Array.isArray(priorityQuery.data) ? priorityQuery.data : []
+  const maximumPriorityPosition = priorityMaximum(priorityRows, !editingItem)
 
   const tags = Array.isArray(tagsQuery.data)
     ? tagsQuery.data
@@ -68,91 +140,129 @@ export default function CreatePlanningItemPanel({
     },
   })
 
+  const updateTagMutation = useMutation({
+    mutationFn: ({ id, name }) => updateTag(id, { name }),
+    onSuccess: async () => {
+      setEditingTagId(null)
+      setEditingTagName('')
+      setTagManagementError('')
+      await queryClient.invalidateQueries({ queryKey: ['planning-tags'] })
+      await queryClient.invalidateQueries({ queryKey: ['planning'] })
+    },
+    onError: () => {
+      setTagManagementError('Could not rename tag. Please try again.')
+    },
+  })
+
+  const deleteTagMutation = useMutation({
+    mutationFn: (id) => deleteTag(id),
+    onSuccess: async (_, deletedId) => {
+      setSelectedTagIds((current) => current.filter((id) => id !== deletedId))
+      setDeletingTag(null)
+      setTagManagementError('')
+      await queryClient.invalidateQueries({ queryKey: ['planning-tags'] })
+      await queryClient.invalidateQueries({ queryKey: ['planning'] })
+    },
+    onError: () => {
+      setTagManagementError('Could not delete tag. Please try again.')
+    },
+  })
+
+  function beginRenameTag(tag) {
+    setTagManagementError('')
+    setEditingTagId(tag.id)
+    setEditingTagName(tag.name)
+  }
+
+  function saveRenamedTag(tag) {
+    const name = editingTagName.trim()
+
+    if (!name || updateTagMutation.isPending) return
+
+    if (name === tag.name) {
+      setEditingTagId(null)
+      return
+    }
+
+    const duplicate = tags.some(
+      (candidate) =>
+        candidate.id !== tag.id &&
+        candidate.name.toLowerCase() === name.toLowerCase(),
+    )
+
+    if (duplicate) {
+      setTagManagementError('A tag with that name already exists.')
+      return
+    }
+
+    setTagManagementError('')
+    updateTagMutation.mutate({ id: tag.id, name })
+  }
+
   useEffect(() => {
     /*
      * EDIT MODE
-     * Populate the form exclusively from the item being edited.
+     * Restore the submitted draft, or populate from the item being edited.
      */
     if (editingItem) {
-      setItemType(editingItem.item_type ?? 'TASK')
-      setTitle(editingItem.title ?? '')
-      setDescription(editingItem.description ?? '')
-      setSelectedTagIds(
-        (editingItem.tags ?? []).map((tag) =>
-          typeof tag === 'object' ? tag.id : tag
-        )
+      createOwner.current = null
+      const source = editDraft ?? editingItem
+      priorityTouched.current = Boolean(editDraft?.priorityChanged)
+      setItemType(editDraft ? source.itemType : source.item_type ?? 'TASK')
+      setTitle(source.title ?? '')
+      setDescription(source.description ?? '')
+      setSelectedTagIds(editDraft ? source.selectedTagIds : (source.tags ?? []).map((tag) =>
+        typeof tag === 'object' ? tag.id : tag
+      ))
+      setStartDate(editDraft ? source.startDate : source.start_date ?? '')
+      setDueDate(editDraft ? source.dueDate : source.due_date ?? '')
+      setPriorityPosition(
+        editDraft
+          ? source.priorityPosition ?? source.priority_position?.toString() ?? String(maximumPriorityPosition)
+          : source.priority_position?.toString() ?? String(maximumPriorityPosition),
       )
-      setStartDate(editingItem.start_date ?? '')
-      setDueDate(editingItem.due_date ?? '')
-      setDurationCategory(editingItem.duration_category ?? '')
-      setWeightPercent(
-        editingItem.assignment_detail?.weight_percent ?? ''
-      )
-      setSubmissionUrl(
-        editingItem.assignment_detail?.submission_url ?? ''
-      )
-      setTagInput('')
+      setDurationCategory(editDraft ? source.durationCategory : source.duration_category ?? '')
+      setWeightPercent(editDraft ? source.weightPercent : source.assignment_detail?.weight_percent ?? '')
+      setSubmissionUrl(editDraft ? source.submissionUrl : source.assignment_detail?.submission_url ?? '')
+      setTagInput(editDraft ? source.tagInput : '')
       return
     }
 
     /*
      * CREATE MODE
-     * Always start from a fresh scaffold.
+     * Restore a failed submission, or start from a fresh scaffold.
      *
      * A nested child initially inherits its parent's tags.
      * These are only initial values; the user can freely edit them.
      */
-    setItemType('TASK')
-    setTitle('')
-    setDescription('')
-    setTagInput('')
+    // Refetching the parent must not reset a draft the user is typing.
+    if (createOwner.current?.parentId === parentId && createOwner.current?.draft === draft) return
+    createOwner.current = { parentId, draft }
+    submitted.current = false
+    setCreateSubmitted(false)
+    setItemType(draft?.itemType ?? 'TASK')
+    setTitle(draft?.title ?? '')
+    setDescription(draft?.description ?? '')
+    setTagInput(draft?.tagInput ?? '')
     setSelectedTagIds(
-      (parentItem?.tags ?? []).map((tag) =>
+      draft?.selectedTagIds ?? (parentItem?.tags ?? []).map((tag) =>
         typeof tag === 'object' ? tag.id : tag
       )
     )
-    setStartDate('')
-    setDueDate('')
-    setDurationCategory('')
-    setWeightPercent('')
-    setSubmissionUrl('')
-  }, [editingItem, parentId, parentItem])
+    setStartDate(draft?.startDate ?? parentItem?.start_date ?? '')
+    setDueDate(draft?.dueDate ?? parentItem?.due_date ?? '')
+    priorityTouched.current = Boolean(draft?.priorityChanged)
+    setPriorityPosition(draft?.priorityPosition ?? String(maximumPriorityPosition))
+    setDurationCategory(draft?.durationCategory ?? '')
+    setWeightPercent(draft?.weightPercent ?? '')
+    setSubmissionUrl(draft?.submissionUrl ?? '')
+  }, [editingItem, editDraft, parentId, parentItem, draft, maximumPriorityPosition])
 
-  const updateItemMutation = useMutation({
-    mutationFn: ({ id, payload }) => updateItem(id, payload),
-
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({
-        queryKey: ['planning', 'tree'],
-      })
-
-      await queryClient.invalidateQueries({
-        queryKey: ['planning', 'priority'],
-      })
-
-      await queryClient.invalidateQueries({
-        queryKey: ['planning', 'history'],
-      })
-
-      onUpdated?.()
-    },
-  })
-
-  const createItemMutation = useMutation({
-    mutationFn: createItem,
-
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({
-        queryKey: ['planning', 'tree'],
-      })
-
-      await queryClient.invalidateQueries({
-        queryKey: ['planning', 'history'],
-      })
-
-      onCreated?.()
-    },
-  })
+  useEffect(() => {
+    if (!editingItem && !draft?.priorityPosition && !priorityTouched.current) {
+      setPriorityPosition(String(maximumPriorityPosition))
+    }
+  }, [draft?.priorityPosition, editingItem, maximumPriorityPosition])
 
   function toggleTag(tagId) {
     setSelectedTagIds((current) =>
@@ -194,11 +304,32 @@ export default function CreatePlanningItemPanel({
 
     if (
       !trimmedTitle ||
-      createItemMutation.isPending ||
-      updateItemMutation.isPending
+      missingOriginalEstimate ||
+      invalidPastDueDate ||
+      assignmentWeightInvalid ||
+      assignmentUrlInvalid ||
+      (!editingItem && submitted.current)
     ) {
       return
     }
+
+    if (startDate && dueDate && startDate > dueDate) {
+      return
+    }
+
+    const normalisedPriorityPosition = clampPriorityPosition(
+      priorityPosition,
+      maximumPriorityPosition,
+    )
+    setPriorityPosition(String(normalisedPriorityPosition))
+
+    const currentPriorityPosition = editingItem?.priority_position
+    const priorityChanged = priorityTouched.current && (
+      editingItem
+        ? Number.isInteger(currentPriorityPosition) &&
+          normalisedPriorityPosition !== currentPriorityPosition
+        : normalisedPriorityPosition !== maximumPriorityPosition
+    )
 
     const payload = {
       ...(editingItem ? {} : { parent: parentId }),
@@ -208,12 +339,15 @@ export default function CreatePlanningItemPanel({
       tag_ids: selectedTagIds,
     }
 
-    if (startDate) {
-      payload.start_date = startDate
-    }
-
-    if (dueDate) {
-      payload.due_date = dueDate
+    payload.start_date = startDate || null
+    // Omit an untouched inherited deadline so Django can preserve its
+    // explicit/inherited provenance instead of treating it as an override.
+    const isUntouchedInheritedDueDate = (
+      (!editingItem && parentItem && dueDate === (parentItem.due_date ?? '')) ||
+      (editingItem?.due_date_inherited && dueDate === (editingItem.due_date ?? ''))
+    )
+    if (!isUntouchedInheritedDueDate) {
+      payload.due_date = dueDate || null
     }
 
     if (durationCategory) {
@@ -237,12 +371,60 @@ export default function CreatePlanningItemPanel({
     }
 
     if (editingItem) {
-      updateItemMutation.mutate({
+      if (submitted.current) return
+
+      submitted.current = true
+
+      const form = Object.freeze({
+        itemType,
+        title,
+        description,
+        tagInput,
+        selectedTagIds: Object.freeze([...selectedTagIds]),
+        startDate,
+        dueDate,
+        priorityPosition,
+        priorityChanged,
+        durationCategory,
+        weightPercent,
+        submissionUrl,
+      })
+
+      onSave?.({
         id: editingItem.id,
-        payload,
+        payload: Object.freeze({
+          ...payload,
+          tag_ids: Object.freeze([...selectedTagIds]),
+          ...(payload.assignment_detail
+            ? {
+                assignment_detail: Object.freeze({
+                  ...payload.assignment_detail,
+                }),
+              }
+            : {}),
+        }),
+        form,
+        priorityPosition: priorityChanged ? normalisedPriorityPosition : null,
+        tags: tags
+          .filter((tag) => selectedTagIds.includes(tag.id))
+          .map((tag) => ({ ...tag })),
       })
     } else {
-      createItemMutation.mutate(payload)
+      submitted.current = true
+      setCreateSubmitted(true)
+      const form = Object.freeze({
+        itemType, title, description, tagInput,
+        selectedTagIds: Object.freeze([...selectedTagIds]),
+        startDate, dueDate, priorityPosition, priorityChanged, durationCategory, weightPercent, submissionUrl,
+      })
+      onCreate?.({
+        payload: Object.freeze({ ...payload, tag_ids: Object.freeze([...selectedTagIds]),
+          ...(payload.assignment_detail ? { assignment_detail: Object.freeze({ ...payload.assignment_detail }) } : {}),
+        }),
+        form,
+        priorityPosition: priorityChanged ? normalisedPriorityPosition : null,
+        tags: tags.filter((tag) => selectedTagIds.includes(tag.id)).map((tag) => ({ ...tag })),
+      })
     }
   }
 
@@ -274,7 +456,7 @@ export default function CreatePlanningItemPanel({
         <X size={16} strokeWidth={1.9} />
       </button>
 
-      <form onSubmit={handleSubmit}>
+      <form noValidate onSubmit={handleSubmit}>
         <div
           className="
             flex h-[26px] w-full overflow-hidden
@@ -327,19 +509,65 @@ export default function CreatePlanningItemPanel({
           {/* Tags */}
           <div>
             <div className="flex gap-[5px]">
-              <input
-                type="text"
-                value={tagInput}
-                onChange={(event) => setTagInput(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter') {
-                    event.preventDefault()
-                    handleCreateTag()
-                  }
-                }}
-                placeholder="tags..."
-                className={inputClass}
-              />
+              <div
+                className="
+                  flex min-h-[35px] min-w-0 flex-1 flex-wrap items-center
+                  gap-[5px] rounded-[10px] border border-[#2e286b]
+                  bg-[#383969] px-[7px] py-[5px]
+                  focus-within:border-[#7c9cde]
+                "
+              >
+                {tags
+                  .filter((tag) => selectedTagIds.includes(tag.id))
+                  .map((tag) => (
+                    <span
+                      key={tag.id}
+                      className="
+                        inline-flex max-w-full items-center gap-[4px]
+                        rounded-[6px] bg-[#c3d19b] px-[6px] py-[3px]
+                        text-[11px] text-[#171a36]
+                      "
+                    >
+                      <span className="min-w-0 truncate">{tag.name}</span>
+                      <button
+                        type="button"
+                        aria-label={`Unselect tag ${tag.name}`}
+                        title={`Unselect ${tag.name}`}
+                        onClick={() => {
+                          clearTimeout(tagClickTimer.current)
+                          setSelectedTagIds((current) =>
+                            current.filter((id) => id !== tag.id),
+                          )
+                        }}
+                        className="
+                          flex shrink-0 items-center justify-center
+                          rounded-[3px] hover:bg-black/10
+                        "
+                      >
+                        <X size={11} />
+                      </button>
+                    </span>
+                  ))}
+
+                <input
+                  type="text"
+                  aria-label="Tags"
+                  value={tagInput}
+                  onChange={(event) => setTagInput(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') {
+                      event.preventDefault()
+                      handleCreateTag()
+                    }
+                  }}
+                  placeholder="tags..."
+                  className="
+                    min-w-[75px] flex-1 bg-transparent px-[3px]
+                    text-[13px] text-white outline-none
+                    placeholder:text-[#918bc7]
+                  "
+                />
+              </div>
 
               <button
                 type="button"
@@ -361,16 +589,14 @@ export default function CreatePlanningItemPanel({
               <div className="mt-[7px] flex flex-wrap gap-[5px]">
                 {tags.map((tag) => {
                   const selected = selectedTagIds.includes(tag.id)
+                  const renaming = editingTagId === tag.id
 
                   return (
-                    <button
+                    <div
                       key={tag.id}
-                      type="button"
-                      onClick={() => toggleTag(tag.id)}
                       className={`
-                        flex items-center gap-1
-                        rounded-[7px] border px-[7px] py-[3px]
-                        text-[10px]
+                        flex items-center gap-1 rounded-[7px] border
+                        px-[5px] py-[3px] text-[10px]
                         ${
                           selected
                             ? 'border-[#c3d19b] bg-[#c3d19b] text-[#171a36]'
@@ -378,13 +604,136 @@ export default function CreatePlanningItemPanel({
                         }
                       `}
                     >
-                      {tag.name}
+                      {renaming ? (
+                        <>
+                          <input
+                            aria-label={`Rename ${tag.name}`}
+                            value={editingTagName}
+                            onChange={(event) => setEditingTagName(event.target.value)}
+                            onKeyDown={(event) => {
+                              if (event.key === 'Enter') {
+                                event.preventDefault()
+                                saveRenamedTag(tag)
+                              }
+                              if (event.key === 'Escape') {
+                                setEditingTagId(null)
+                                setTagManagementError('')
+                              }
+                            }}
+                            className="w-[90px] rounded bg-[#383969] px-1 text-white"
+                          />
+                          <button
+                            type="button"
+                            aria-label={`Save rename ${tag.name}`}
+                            disabled={!editingTagName.trim() || updateTagMutation.isPending}
+                            onClick={() => saveRenamedTag(tag)}
+                          >
+                            Save
+                          </button>
+                          <button
+                            type="button"
+                            aria-label={`Cancel rename ${tag.name}`}
+                            onClick={() => {
+                              setEditingTagId(null)
+                              setTagManagementError('')
+                            }}
+                          >
+                            Cancel
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <button
+                            type="button"
+                            aria-label={`Select tag ${tag.name}`}
+                            aria-pressed={selected}
+                            onClick={(event) => {
+                              if (event.detail > 1) return
 
-                      {selected && <X size={9} />}
-                    </button>
+                              clearTimeout(tagClickTimer.current)
+                              tagClickTimer.current = setTimeout(() => {
+                                toggleTag(tag.id)
+                              }, 220)
+                            }}
+                            onDoubleClick={(event) => {
+                              event.preventDefault()
+                              event.stopPropagation()
+                              clearTimeout(tagClickTimer.current)
+                              beginRenameTag(tag)
+                            }}
+                            title="Double-click to rename"
+                            className="flex items-center gap-1"
+                          >
+                            {tag.name}
+                          </button>
+                          <button
+                            type="button"
+                            aria-label={`Delete tag ${tag.name}`}
+                            title={`Delete ${tag.name}`}
+                            onClick={() => {
+                              setTagManagementError('')
+                              setDeletingTag(tag)
+                            }}
+                            className="rounded p-[2px] hover:bg-red-400/30"
+                          >
+                            <Trash2 size={12} />
+                          </button>
+                        </>
+                      )}
+                    </div>
                   )
                 })}
               </div>
+            )}
+
+            {deletingTag && (
+              <div
+                role="alertdialog"
+                aria-label={`Delete tag ${deletingTag.name}`}
+                aria-describedby="tag-delete-explanation"
+                className="mt-2 rounded-[9px] border border-[#a45b6a] bg-[#29264c] p-3 text-white"
+                onKeyDown={(event) => {
+                  if (event.key === 'Escape' && !deleteTagMutation.isPending) {
+                    event.stopPropagation()
+                    setDeletingTag(null)
+                    setTagManagementError('')
+                  }
+                }}
+              >
+                <p className="text-[12px] font-semibold">
+                  Delete “{deletingTag.name}”?
+                </p>
+                <p id="tag-delete-explanation" className="mt-1 text-[11px]">
+                  This permanently deletes the tag from all tasks that use it.
+                </p>
+                <div className="mt-2 flex gap-2">
+                  <button
+                    type="button"
+                    disabled={deleteTagMutation.isPending}
+                    onClick={() => {
+                      setDeletingTag(null)
+                      setTagManagementError('')
+                    }}
+                    className="rounded bg-[#383969] px-3 py-1 text-[11px]"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    disabled={deleteTagMutation.isPending}
+                    onClick={() => deleteTagMutation.mutate(deletingTag.id)}
+                    className="rounded bg-[#a33f55] px-3 py-1 text-[11px]"
+                  >
+                    {deleteTagMutation.isPending ? 'Deleting...' : 'Delete'}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {tagManagementError && (
+              <p role="alert" className="mt-1 text-[10px] text-[#e87979]">
+                {tagManagementError}
+              </p>
             )}
 
             {createTagMutation.isError && (
@@ -401,39 +750,60 @@ export default function CreatePlanningItemPanel({
             ['Start:', startDate, setStartDate],
             ['Due:', dueDate, setDueDate],
           ].map(([label, value, setter]) => (
-            <label
+            <div
               key={label}
               className="flex items-center gap-2 text-[12px] text-white"
             >
               <span className="w-[35px] shrink-0">{label}</span>
 
               <div className="relative flex-1">
-                <input
+                <ArcDateField
                   type="date"
+                  aria-label={label}
                   value={value}
+                  aria-invalid={label === 'Due:' && invalidPastDueDate ? true : undefined}
+                  aria-describedby={label === 'Due:' && invalidPastDueDate ? dueDateErrorId : undefined}
                   onChange={(event) => setter(event.target.value)}
                   className={`${inputClass} pr-8`}
                 />
-
-                <CalendarDays
-                  size={14}
-                  className="
-                    pointer-events-none absolute right-2 top-1/2
-                    -translate-y-1/2 text-[#a9a4cf]
-                  "
-                />
               </div>
-            </label>
+            </div>
           ))}
+          {invalidPastDueDate && (
+            <p id={dueDateErrorId} role="alert" className="text-[11px] text-[#e87979]">
+              Due date cannot be earlier than today.
+            </p>
+          )}
         </div>
 
         {/* Manual estimate */}
         <div className="mt-[15px]">
+          <label className="flex items-center gap-2 text-[12px] text-white">
+            <span className="shrink-0">Priority:</span>
+            <input
+              type="number"
+              inputMode="numeric"
+              min="1"
+              max={maximumPriorityPosition}
+              step="1"
+              aria-label="Priority position"
+              value={priorityPosition}
+              onChange={(event) => {
+                priorityTouched.current = true
+                setPriorityPosition(event.target.value)
+              }}
+              onBlur={() => setPriorityPosition(String(clampPriorityPosition(priorityPosition, maximumPriorityPosition)))}
+              className={`${inputClass} w-[72px] py-[5px]`}
+            />
+          </label>
+        </div>
+
+        <div className="mt-[15px]">
           <p className="mb-[6px] text-[12px] text-white">
-            Estimated:
+            Original estimate:
           </p>
 
-          <div className="flex gap-[5px]">
+          <div role="group" aria-label="Original estimate" aria-describedby={missingOriginalEstimate ? estimateFeedbackId : undefined} className="grid grid-cols-3 gap-[5px] min-w-0">
             {[
               ['UNDER_20_MINUTES', '<20m'],
               ['UNDER_1_HOUR', '<1h'],
@@ -445,13 +815,14 @@ export default function CreatePlanningItemPanel({
               <button
                 key={value}
                 type="button"
-                onClick={() =>
+                aria-pressed={durationCategory === value}
+                onClick={() => {
                   setDurationCategory(
                     durationCategory === value ? '' : value,
                   )
-                }
+                }}
                 className={`
-                  flex-1 rounded-[8px]
+                  min-w-0 rounded-[8px]
                   border border-[#2e286b]
                   px-1 py-[5px]
                   text-[11px] text-white
@@ -466,7 +837,29 @@ export default function CreatePlanningItemPanel({
               </button>
             ))}
           </div>
+          {missingOriginalEstimate && (
+            <p id={estimateFeedbackId} role="status" className="mt-2 text-[11px] text-[#e87979]">
+              Choose an original estimate.
+            </p>
+          )}
         </div>
+
+        {editingItem && ['UNDER_8_HOURS', 'UNDER_16_HOURS', 'OVER_16_HOURS'].includes(durationCategory) && (
+          <p className="mt-2 text-[11px] text-white/50" role="status">
+            Progress {Number(editingItem.percent_completed ?? 0)}%
+            {editingItem.remaining_fraction != null && <> · Remaining {Math.round(Number(editingItem.remaining_fraction) * 100)}%</>}
+          </p>
+        )}
+
+        {editingItem && dependencyGraphQuery.data?.edges?.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setDependencyGraphOpen(true)}
+            className="mt-3 w-full rounded-[8px] border border-[#7c9cde] bg-[#2c3369] px-3 py-2 text-[12px] font-medium text-[#c3d19b] hover:bg-[#383969]"
+          >
+            Dependencies
+          </button>
+        )}
 
         {/* Assignment-only */}
         {itemType === 'ASSIGNMENT' && (
@@ -482,6 +875,7 @@ export default function CreatePlanningItemPanel({
                   min="0"
                   max="100"
                   step="0.01"
+                  aria-invalid={assignmentWeightInvalid}
                   value={weightPercent}
                   onChange={(event) =>
                     setWeightPercent(event.target.value)
@@ -500,8 +894,15 @@ export default function CreatePlanningItemPanel({
               </div>
             </label>
 
+            {assignmentWeightInvalid && (
+              <p role="alert" className="text-[11px] text-[#e87979]">
+                Weightage must be between 0 and 100, with at most two decimal places.
+              </p>
+            )}
+
             <input
               type="url"
+              aria-invalid={assignmentUrlInvalid}
               value={submissionUrl}
               onChange={(event) =>
                 setSubmissionUrl(event.target.value)
@@ -509,16 +910,46 @@ export default function CreatePlanningItemPanel({
               placeholder="submission link..."
               className={inputClass}
             />
+            {assignmentUrlInvalid && (
+              <p role="alert" className="text-[11px] text-[#e87979]">
+                Enter a valid http:// or https:// submission link.
+              </p>
+            )}
           </div>
         )}
 
-        {createItemMutation.isError && (
-          <div className="mt-3 text-[11px] text-[#e87979]">
+        {startDate && dueDate && startDate > dueDate && (
+          <p role="alert" className="mt-3 text-[11px] text-[#e87979]">
+            Due date cannot be earlier than start date.
+          </p>
+        )}
+
+        {editError && (
+          <div
+            role="alert"
+            className="mt-3 text-[11px] text-[#e87979]"
+          >
+            <p>Could not save changes.</p>
+
+            <pre className="mt-1 whitespace-pre-wrap break-words">
+              {JSON.stringify(
+                editError?.response?.data ??
+                  editError?.message ??
+                  'Could not update item.',
+                null,
+                2,
+              )}
+            </pre>
+          </div>
+        )}
+
+        {createError && (
+          <div role="alert" className="mt-3 text-[11px] text-[#e87979]">
             <p>Could not create item.</p>
             <pre className="mt-1 whitespace-pre-wrap break-words">
               {JSON.stringify(
-                createItemMutation.error?.response?.data ??
-                  createItemMutation.error?.message,
+                createError?.response?.data ??
+                  createError?.message,
                 null,
                 2,
               )}
@@ -530,8 +961,12 @@ export default function CreatePlanningItemPanel({
           type="submit"
           disabled={
             !title.trim() ||
-            createItemMutation.isPending ||
-            updateItemMutation.isPending
+            missingOriginalEstimate ||
+            invalidPastDueDate ||
+            assignmentWeightInvalid ||
+            assignmentUrlInvalid ||
+            Boolean(startDate && dueDate && startDate > dueDate) ||
+            (!editingItem && createSubmitted)
           }
           className="
             mx-auto mt-[20px] block
@@ -544,15 +979,15 @@ export default function CreatePlanningItemPanel({
             disabled:cursor-not-allowed disabled:opacity-50
           "
         >
-          {editingItem
-            ? updateItemMutation.isPending
-              ? 'SAVING...'
-              : 'SAVE'
-            : createItemMutation.isPending
-              ? 'CREATING...'
-              : 'CREATE'}
+          {editingItem ? 'SAVE' : 'CREATE'}
         </button>
       </form>
+      {dependencyGraphOpen && (
+        <DependencyGraphModal
+          task={editingItem}
+          onClose={() => setDependencyGraphOpen(false)}
+        />
+      )}
     </aside>
   )
 }

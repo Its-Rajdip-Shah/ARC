@@ -10,7 +10,8 @@ import {
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useSortable } from '@dnd-kit/sortable'
 
-import { completeItem, deleteItem } from '../../../api/planning'
+import { completeItem, deleteItem, getPlanningTree } from '../../../api/planning'
+import { newlyActionableParent } from '../residualEstimatePrompt'
 import {
   createLatestIntentQueue,
   createSerialActionQueue,
@@ -37,6 +38,8 @@ const plannerCompletionRequests =
 
 
 export default function PlannerTreeItem({
+  editLocked = false,
+  saveStatus = null,
   item,
   depth = 0,
   previewDepth = null,
@@ -50,11 +53,17 @@ export default function PlannerTreeItem({
   onHoverItem,
   onSelectItem,
   onEditItem,
+  onCreateDependency,
   onCreateNested,
+  onResidualEstimatePrompt,
   dndEnabled = true,
 }) {
+  const provisional = Boolean(item.is_provisional)
   const queryClient = useQueryClient()
   const clickTimerRef = useRef(null)
+
+  const completionBeforeRef = useRef(null)
+  const completionChildIdRef = useRef(null)
 
   const completionDesiredRef =
     useRef(
@@ -153,7 +162,7 @@ export default function PlannerTreeItem({
     isDragging,
   } = useSortable({
     id: item.id,
-    disabled: !dndEnabled,
+    disabled: !dndEnabled || provisional,
   })
 
   const completionMutation =
@@ -172,17 +181,51 @@ export default function PlannerTreeItem({
         return promise
       },
 
+      async onSuccess() {
+        await plannerCompletionRequests.whenIdle()
+
+        const before = completionBeforeRef.current
+        const childId = completionChildIdRef.current
+
+        if (!before || childId == null) return
+
+        try {
+          const confirmedTree = await getPlanningTree()
+
+          // A newer completion/reopening request must not leave a stale prompt.
+          await plannerCompletionRequests.whenIdle()
+
+          const candidate = newlyActionableParent(
+            before,
+            confirmedTree,
+            childId,
+          )
+
+          if (candidate) {
+            const latestTree = await getPlanningTree()
+            const stillActionable = newlyActionableParent(
+              before,
+              latestTree,
+              childId,
+            )
+
+            if (stillActionable) {
+              onResidualEstimatePrompt?.(stillActionable)
+            }
+          }
+        } catch {
+          // Completion succeeded; a prompt-read failure must not undo it.
+        }
+      },
+
       async onSettled() {
-        /*
-         * Multiple Planner rows share one FIFO network queue. Do not refetch
-         * after row A while row B still contains newer optimistic intent.
-         */
+        completionBeforeRef.current = null
+        completionChildIdRef.current = null
+
         await plannerCompletionRequests.whenIdle()
 
         void queryClient.invalidateQueries({
-          queryKey: [
-            'planning',
-          ],
+          queryKey: ['planning'],
         })
       },
     })
@@ -203,12 +246,19 @@ export default function PlannerTreeItem({
   ])
 
   function queueCompletion() {
+    if (provisional) return
     const completed =
       !completionDesiredRef
         .current
 
     completionDesiredRef.current =
       completed
+
+    if (!completionQueueRef.current.isRunning()) {
+      completionBeforeRef.current =
+        queryClient.getQueryData(['planning', 'tree']) ?? null
+      completionChildIdRef.current = item.id
+    }
 
     /*
      * React Query cache is presentation state only. The canonical mutation is
@@ -294,6 +344,7 @@ export default function PlannerTreeItem({
 
   function handleDelete(event) {
     event.stopPropagation()
+    if (provisional) return
 
     if (onDeleteItem) {
       onDeleteItem(item.id)
@@ -367,6 +418,17 @@ export default function PlannerTreeItem({
           paddingLeft: `${indent}px`,
         }}
       >
+        {item.deadline_overdue === true && !item.is_completed && (
+          <i
+            className="pointer-events-none absolute top-1/2 z-20 h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full border border-[#e0b84f] bg-[#e0b84f]"
+            role="img"
+            aria-label="Deadline overdue"
+            data-arc-overdue-marker
+            style={{
+              left: depth === 0 ? '0px' : `${(depth - 1) * 42 + 33}px`,
+            }}
+          />
+        )}
         {isDragging && previewDepth != null && (
           <>
             <span
@@ -445,6 +507,7 @@ export default function PlannerTreeItem({
               ? `Reopen ${item.title}`
               : `Mark ${item.title} complete`
           }
+          disabled={provisional}
           aria-pressed={item.is_completed}
           aria-busy={completionMutation.isPending}
           onPointerDown={(event) => event.stopPropagation()}
@@ -469,11 +532,41 @@ export default function PlannerTreeItem({
         </button>
         )}
 
+        {(saveStatus || provisional) && (
+          <span
+            role="status"
+            aria-label={
+              saveStatus === 'confirmed'
+                ? 'Changes saved'
+                : provisional
+                  ? 'Creating item'
+                  : 'Saving changes'
+            }
+            title={saveStatus === 'confirmed' ? 'Saved' : 'Saving'}
+            className={`
+              pointer-events-none
+              relative z-10
+              ml-1 flex h-[20px] w-[20px]
+              shrink-0 items-center justify-center
+              rounded-full border
+              transition-colors duration-200
+              ${
+                saveStatus === 'confirmed'
+                  ? 'border-[#7c9cde] bg-[#7c9cde] text-[#171a36]'
+                  : 'border-[#7c9cde] bg-transparent text-[#7c9cde]'
+              }
+            `}
+          >
+            <Check size={13} strokeWidth={2.2} aria-hidden="true" />
+          </span>
+        )}
+
         <button
           type="button"
           onClick={(event) => {
             event.stopPropagation()
 
+            if (provisional) return
             if (event.detail !== 1) {
               return
             }
@@ -485,7 +578,7 @@ export default function PlannerTreeItem({
                 singleClickTimerRef.current = null
               }
 
-              onCreateNested?.(item)
+              if (!provisional) onCreateNested?.(item)
               return
             }
 
@@ -503,7 +596,7 @@ export default function PlannerTreeItem({
               singleClickTimerRef.current = null
             }
 
-            onEditItem?.(item)
+            if (!provisional && !editLocked) onEditItem?.(item)
           }}
           className={`
             relative z-10 min-w-0 flex-1 truncate
@@ -578,11 +671,12 @@ export default function PlannerTreeItem({
 
             <button
               type="button"
+              disabled={provisional}
               aria-label={`Create nested item under ${item.title}`}
               onPointerDown={(event) => event.stopPropagation()}
               onClick={(event) => {
                 event.stopPropagation()
-                onCreateNested?.(item)
+                if (!provisional) onCreateNested?.(item)
               }}
               className="
                 flex h-[18px] w-[18px]
@@ -597,11 +691,12 @@ export default function PlannerTreeItem({
 
             <button
               type="button"
+              disabled={provisional || editLocked}
               aria-label={`Edit ${item.title}`}
               onPointerDown={(event) => event.stopPropagation()}
               onClick={(event) => {
                 event.stopPropagation()
-                onEditItem?.(item)
+                if (!provisional && !editLocked) onEditItem?.(item)
               }}
               className="
                 flex h-[18px] w-[21px]
@@ -616,10 +711,24 @@ export default function PlannerTreeItem({
 
             <button
               type="button"
+              disabled={provisional}
+              aria-label={`Create dependency for ${item.title}`}
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={(event) => {
+                event.stopPropagation()
+                if (!provisional) onCreateDependency?.(item)
+              }}
+              className="flex h-[18px] w-[18px] items-center justify-center rounded-[5px] text-[#c3d19b] hover:bg-white/10"
+            >
+              <span aria-hidden="true">↔</span>
+            </button>
+
+            <button
+              type="button"
               aria-label={`Delete ${item.title}`}
               onPointerDown={(event) => event.stopPropagation()}
               onClick={handleDelete}
-              disabled={deleteMutation.isPending}
+              disabled={provisional || deleteMutation.isPending}
               className="
                 flex h-[18px] w-[18px]
                 items-center justify-center
@@ -632,7 +741,7 @@ export default function PlannerTreeItem({
         )}
       </div>
 
-      {showDetails && (
+      {(showDetails || provisional) && (
         <div
           className="
             relative z-10 pb-3 pr-[72px]

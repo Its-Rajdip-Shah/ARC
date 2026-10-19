@@ -13,7 +13,8 @@ from decimal import Decimal, InvalidOperation
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
 from django.db.models import Exists, OuterRef
-from django.utils import timezone
+from django.shortcuts import get_object_or_404
+from planning.services.calendar_dates import user_local_date
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import (
     OpenApiParameter,
@@ -34,6 +35,7 @@ from planning.models import (
     AssignmentDetail,
     DurationCategory,
     ItemType,
+    PlanningDependency,
     PlanningItem,
     SchedulerAllocation,
     SchedulingOverload,
@@ -51,8 +53,6 @@ from planning.serializers import (
     SchedulerRuntimeSerializer,
     SchedulerSettingsSerializer,
     SchedulerSettingsUpdateSerializer,
-    StudyPlanEditSerializer,
-    StudyPlanRequestSerializer,
     CompleteSerializer,
     FocusCurrentSerializer,
     FocusAnchorSerializer,
@@ -75,7 +75,6 @@ from planning.serializers import (
     TimezoneSerializer,
 )
 from planning.services import dependencies, focus, hierarchy, leaf_order_sync, overdue, priority, progress, scheduling
-from planning.services.study_plan import load_plan, present, request_plan, save_edited_plan
 from planning.services import deletion, history, lifecycle
 from planning.services.focus_buckets import focus_bucket_key
 
@@ -114,7 +113,7 @@ def _root_lookup(user):
 
 def ensure_scheduled(user):
     """Re-evaluate current capacity and eligibility; same-day changes matter."""
-    return scheduling.daily_schedule(user, timezone.localdate())
+    return scheduling.daily_schedule(user, user_local_date(user))
 
 
 class TagViewSet(UserScopedMixin, viewsets.ModelViewSet):
@@ -167,12 +166,132 @@ class PlanningItemViewSet(UserScopedMixin, viewsets.ModelViewSet):
     filter_backends = [SearchFilter]
     search_fields = ['title', 'description', 'tags__name']
 
+    @action(detail=True, methods=['get'])
+    def dependency_graph(self, request, pk=None):
+        """Return the visible dependency component containing this item.
+
+        Dependency edges are deliberately traversed independently of the
+        planning hierarchy.  The two bulk queries avoid a request/query per
+        graph hop and the user filters are a second isolation boundary beyond
+        ``get_object``'s scoped queryset.
+        """
+        item = self.get_object()
+        edges = list(
+            PlanningDependency.objects.filter(
+                prerequisite__user=request.user,
+                dependent__user=request.user,
+                prerequisite__is_deleted=False,
+                dependent__is_deleted=False,
+            ).values_list('prerequisite_id', 'dependent_id')
+        )
+        neighbours = {}
+        for prerequisite_id, dependent_id in edges:
+            neighbours.setdefault(prerequisite_id, set()).add(dependent_id)
+            neighbours.setdefault(dependent_id, set()).add(prerequisite_id)
+
+        component = {item.pk}
+        frontier = [item.pk]
+        while frontier:
+            current = frontier.pop()
+            for neighbour in neighbours.get(current, ()):
+                if neighbour not in component:
+                    component.add(neighbour)
+                    frontier.append(neighbour)
+
+        component_edges = [
+            {'prerequisite_id': prerequisite_id, 'dependent_id': dependent_id}
+            for prerequisite_id, dependent_id in edges
+            if prerequisite_id in component and dependent_id in component
+        ]
+        # Fetch the user's visible hierarchy once. The graph stays a
+        # dependency component; this map supplies real parent ancestry with
+        # no query per ancestor.
+        item_rows = list(
+            PlanningItem.objects.visible().filter(user=request.user).values(
+                'id', 'parent_id', 'title', 'description', 'item_type'
+            )
+        )
+        items_by_id = {row['id']: row for row in item_rows}
+
+        def ancestry_for(item_id):
+            ancestry = []
+            seen = {item_id}
+            parent_id = items_by_id.get(item_id, {}).get('parent_id')
+            while parent_id and parent_id not in seen:
+                seen.add(parent_id)
+                parent = items_by_id.get(parent_id)
+                # Deleted or inaccessible parents must not leak through this endpoint.
+                if parent is None:
+                    break
+                ancestry.append({'id': parent['id'], 'title': parent['title']})
+                parent_id = parent['parent_id']
+            return list(reversed(ancestry))
+
+        nodes = [
+            {
+                'id': row['id'],
+                'title': row['title'],
+                # The persisted field is nullable for legacy items, whereas
+                # the graph's presentation contract is always text.
+                'description': row['description'] or '',
+                'item_type': row['item_type'],
+                'ancestry': ancestry_for(row['id']),
+            }
+            for row in item_rows
+            if row['id'] in component
+        ]
+        return Response({
+            'task_id': item.pk,
+            'nodes': nodes,
+            'edges': sorted(
+                component_edges,
+                key=lambda edge: (edge['prerequisite_id'], edge['dependent_id']),
+            ),
+        })
+
+    @action(detail=True, methods=['get', 'post', 'delete'])
+    @transaction.atomic
+    def prerequisites(self, request, pk=None):
+        """Independent dependency edits; every mutation uses the canonical service."""
+        if request.method != 'GET':
+            priority._lock(request.user)
+        item = self.get_object()
+        if request.method != 'GET':
+            payload = serializers.Serializer(data=request.data)
+            payload.fields['prerequisite_id'] = serializers.IntegerField(min_value=1)
+            payload.is_valid(raise_exception=True)
+            prerequisite = get_object_or_404(
+                PlanningItem.objects.filter(user=request.user, is_deleted=False),
+                pk=payload.validated_data['prerequisite_id'],
+            )
+            present = dependencies.prerequisites_for(item).filter(pk=prerequisite.pk).exists()
+            requested_present = request.method == 'POST'
+            if present != requested_present:
+                try:
+                    operation = dependencies.add if requested_present else dependencies.remove
+                    operation(prerequisite, item)
+                except DjangoValidationError as exc:
+                    raise _as_400(exc)
+                state = {'prerequisite_id': prerequisite.pk, 'dependent_id': item.pk}
+                history.record_checkpoint(
+                    request.user, 'UPDATE',
+                    {'dependency': {**state, 'present': present}},
+                    {'dependency': {**state, 'present': requested_present}},
+                )
+        prerequisites = dependencies.prerequisites_for(item).filter(
+            user=request.user, is_deleted=False,
+        )
+        return Response(self.get_serializer(prerequisites, many=True).data)
+
     def get_queryset(self):
         queryset = (
             super()
             .get_queryset()
             .visible()
-            .select_related('assignment_detail', 'parent')
+            # IsOwner reads ``item.user`` after get_object(). Loading the
+            # owner with the detail row preserves that isolation backstop
+            # without issuing a separate query for every detail action.
+            .select_related('assignment_detail', 'parent', 'user')
             .prefetch_related('tags')
         )
         params = self.request.query_params
@@ -729,7 +848,7 @@ class PriorityReorderView(APIView):
 def _focus_projection(user):
     projection = focus.build(
         user,
-        today=timezone.localdate(),
+        today=user_local_date(user),
     )
 
     parents = queries.parent_map(
@@ -821,6 +940,8 @@ def _focus_projection(user):
                 item.due_date,
             'manual_requested_date':
                 item.manual_requested_date,
+            'manual_anchor_origin_date':
+                item.manual_anchor_origin_date,
             'manual_requested_order':
                 item.manual_requested_order,
             'percent_completed':
@@ -1081,7 +1202,7 @@ class TimelineView(APIView):
         ),
     )
     def get(self, request):
-        today = timezone.localdate()
+        today = user_local_date(request.user)
         start = _date_param(request, 'from', today - timedelta(days=7))
         end = _date_param(request, 'to', today + timedelta(days=28))
         if end < start:
@@ -1095,7 +1216,19 @@ class TimelineView(APIView):
             .annotate(
                 has_children=Exists(
                     PlanningItem.objects.filter(parent_id=OuterRef('pk'))
-                )
+                ),
+                has_unfinished_children=Exists(
+                    PlanningItem.objects.for_user(request.user).filter(
+                        parent_id=OuterRef('pk'),
+                        is_completed=False,
+                    )
+                ),
+            )
+            # Factual date overlap must not turn structural work into an
+            # execution card. Keep completed history and residual parents.
+            .exclude(
+                is_completed=False,
+                has_unfinished_children=True,
             )
             .select_related('assignment_detail')
             .prefetch_related('tags')
@@ -1191,23 +1324,23 @@ class TimelineView(APIView):
 
 
 class OverdueView(APIView):
-    """FR-12: GET /api/planning/overdue/"""
+    """GET /api/planning/overdue/: derived deadline and anchor misses."""
 
     @extend_schema(
         responses=inline_serializer(
             'OverdueResponse',
             {
-                'recent': OverdueEntrySerializer(many=True),
-                'backlog': OverdueEntrySerializer(many=True),
+                'deadline_overdue': OverdueEntrySerializer(many=True),
+                'anchor_overdue': OverdueEntrySerializer(many=True),
             },
         ),
-        description='Missed fixed deadlines, split into Recent (within 7 days) and Backlog.',
+        description='Incomplete deadline misses and missed manual-anchor commitments.',
     )
     def get(self, request):
-        buckets = overdue.classify(request.user, timezone.localdate())
+        buckets = overdue.classify_v3(request.user, user_local_date(request.user))
         return Response({
-            'recent': OverdueEntrySerializer(buckets['recent'], many=True).data,
-            'backlog': OverdueEntrySerializer(buckets['backlog'], many=True).data,
+            'deadline_overdue': OverdueEntrySerializer(buckets['deadline_overdue'], many=True).data,
+            'anchor_overdue': OverdueEntrySerializer(buckets['anchor_overdue'], many=True).data,
         })
 
 
@@ -1615,13 +1748,14 @@ class MarksReorderView(APIView):
         serializer.is_valid(raise_exception=True)
         ordered_ids = serializer.validated_data['ordered_ids']
 
-        details = {
-            detail.planning_item_id: detail
-            for detail in AssignmentDetail.objects.filter(
-                planning_item__user=request.user, planning_item_id__in=ordered_ids
+        items = {
+            item.pk: item
+            for item in PlanningItem.objects.for_user(request.user).filter(
+                pk__in=ordered_ids,
+                item_type=ItemType.ASSIGNMENT,
             )
         }
-        missing = set(ordered_ids) - set(details)
+        missing = set(ordered_ids) - set(items)
         if missing:
             raise ValidationError(
                 {'ordered_ids': f'Not your assessments: {sorted(missing)}'}
@@ -1630,7 +1764,9 @@ class MarksReorderView(APIView):
         with transaction.atomic():
             changed = []
             for position, item_id in enumerate(ordered_ids, start=1):
-                detail = details[item_id]
+                detail, _ = AssignmentDetail.objects.get_or_create(
+                    planning_item=items[item_id],
+                )
                 if detail.marks_position != position:
                     detail.marks_position = position
                     changed.append(detail)
@@ -1638,41 +1774,6 @@ class MarksReorderView(APIView):
                 AssignmentDetail.objects.bulk_update(changed, ['marks_position'])
 
         return Response({'reordered': len(ordered_ids)})
-
-
-class StudyPlanView(APIView):
-    """Suggest a study plan for the signed-in student.
-
-    The model call stays in this process. A failure returns the last saved
-    plan when there is one, and never writes planner rows.
-    """
-
-    def get(self, request):
-        return Response(present(request.user, load_plan(request.user)))
-
-    def post(self, request):
-        serializer = StudyPlanRequestSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        data = serializer.validated_data
-        result = present(request.user, request_plan(
-            request.user,
-            data['availability'],
-            data.get('notes', ''),
-        ))
-        status = 200 if result['plan'] is not None else 502
-        return Response(result, status=status)
-
-    def patch(self, request):
-        serializer = StudyPlanEditSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        try:
-            result = present(request.user, save_edited_plan(
-                request.user,
-                serializer.validated_data['sessions'],
-            ))
-        except ValueError as exc:
-            raise ValidationError({'sessions': str(exc)}) from exc
-        return Response(result)
 
 
 class SchedulerSettingsView(APIView):
@@ -1765,6 +1866,8 @@ def _schedule_anchor_response(user, data):
                 item.pk,
             'manual_requested_date':
                 None,
+            'manual_anchor_origin_date':
+                None,
             'manual_requested_order':
                 None,
             'scheduled_date':
@@ -1779,7 +1882,7 @@ def _schedule_anchor_response(user, data):
 
     day = data['date']
 
-    if day < timezone.localdate():
+    if day < user_local_date(user):
         return Response(
             {
                 'conflicts': [
@@ -1811,6 +1914,8 @@ def _schedule_anchor_response(user, data):
                 item.pk,
             'code':
                 'after_deadline',
+            'original_date': item.due_date,
+            'proposed_date': day,
         })
 
         decisions.append({
@@ -1835,6 +1940,8 @@ def _schedule_anchor_response(user, data):
                 item.pk,
             'code':
                 'before_release',
+            'original_date': item.start_date,
+            'proposed_date': day,
         })
 
         decisions.append({
@@ -1944,6 +2051,8 @@ def _schedule_anchor_response(user, data):
             item.pk,
         'manual_requested_date':
             item.manual_requested_date,
+        'manual_anchor_origin_date':
+            item.manual_anchor_origin_date,
         'manual_requested_order':
             item.manual_requested_order,
         'scheduled_date':
@@ -2020,7 +2129,7 @@ class FocusAnchorBatchView(APIView):
             "changes"
         ]
 
-        today = timezone.localdate()
+        today = user_local_date(request.user)
 
         item_ids = [
             change[
@@ -2061,6 +2170,10 @@ class FocusAnchorBatchView(APIView):
             day = change[
                 "date"
             ]
+
+            if change.get("order_only") and item.manual_requested_date != day:
+                conflicts.append({"item_id": item.pk, "code": "anchor_changed"})
+                continue
 
             if day < today:
                 conflicts.append({
@@ -2245,6 +2358,7 @@ class FocusAnchorBatchView(APIView):
                 scheduling.set_anchor_batch(
                     request.user,
                     changes,
+                    expected_queue=serializer.validated_data.get("expected_queue"),
                 )
             )
 
@@ -2341,7 +2455,7 @@ class FocusDoTodayView(APIView):
             {
                 **serializer.validated_data,
                 'date':
-                    timezone.localdate(),
+                    user_local_date(request.user),
                 'remove':
                     False,
             },

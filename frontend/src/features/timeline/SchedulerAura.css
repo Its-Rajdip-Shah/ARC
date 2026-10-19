@@ -1,0 +1,109 @@
+/* Shared layout tokens; the 160px animation geometry remains unchanged. */
+:root {
+  --scheduler-scale: 1.38;
+  --scheduler-footprint: calc(160px * var(--scheduler-scale));
+  --scheduler-dock-width: 216px;
+  --scheduler-dock-bottom: 32px;
+}
+.timeline-sidebar-scheduler,
+.planner-scheduler-mascot {
+  display: flex;
+  justify-content: center;
+  flex: 0 0 auto;
+  margin-top: auto;
+  padding: 16px 0 8px;
+  min-height: calc(var(--scheduler-footprint) + 24px);
+  /* Use the sidebar's full width so the expanded aura clears its scroll clip. */
+  margin-inline: -20px;
+}
+.timeline-scheduler-run {
+  position: relative;
+  isolation: isolate;
+  display: grid;
+  place-items: center;
+  --scheduler-responsive-art-size: 104px;
+  flex: 0 1 var(--scheduler-footprint);
+  width: var(--scheduler-footprint) !important;
+  max-width: 100%;
+  height: var(--scheduler-footprint) !important;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  overflow: visible;
+  background: transparent !important;
+  opacity: 1 !important;
+  cursor: pointer;
+  color: #a9d8ff;
+}
+.timeline-scheduler-run:disabled { cursor: wait; }
+.timeline-scheduler-run:focus-visible { outline: 2px solid #b2dfff; outline-offset: 2px; }
+/* Both layers share one transform; animation coordinates stay unchanged. */
+.scheduler-visual {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 160px;
+  height: 160px;
+  transform: translate(-50%, -50%) scale(var(--scheduler-scale));
+  transform-origin: center;
+  pointer-events: none;
+}
+.timeline-scheduler-art {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+}
+.timeline-scheduler-art img {
+  display: block;
+  width: var(--scheduler-responsive-art-size) !important;
+  height: var(--scheduler-responsive-art-size) !important;
+  object-fit: contain;
+  filter: drop-shadow(0 0 7px #66baffb3) drop-shadow(0 0 15px #98caff80);
+}
+.timeline-scheduler-hover .timeline-scheduler-art img,
+.timeline-scheduler-scheduling .timeline-scheduler-art img {
+  filter: drop-shadow(0 0 9px #80d5ffcc) drop-shadow(0 0 19px #a9bbff99);
+}
+.scheduler-aura {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: .24;
+  transition: opacity 240ms ease;
+}
+.scheduler-aura-hover { opacity: .9; }
+.scheduler-aura-scheduling { opacity: 1; }
+.scheduler-aura-blob {
+  position: absolute;
+  left: calc(50% - var(--s) / 2);
+  top: calc(50% - var(--s) / 2);
+  width: var(--s);
+  height: var(--s);
+  z-index: 1;
+  border-radius: 65% 35% 55% 45%;
+  background: var(--particle-colour);
+  box-shadow: 0 0 4px var(--particle-colour);
+}
+.scheduler-aura-idle .scheduler-aura-blob,
+.scheduler-aura-hover .scheduler-aura-blob,
+.scheduler-aura-scheduling .scheduler-aura-blob { will-change: transform; }
+.scheduler-aura-scheduling .scheduler-aura-front { z-index: 12; }
+.scheduler-aura-cyan { --particle-colour: #91dfff; }
+.scheduler-aura-periwinkle { --particle-colour: #bdc9ff; }
+.scheduler-aura-electric { --particle-colour: #78beff; }
+.scheduler-aura-ice { --particle-colour: #e1f5ff; }
+.scheduler-aura-shard-1 { border-radius: 20% 80% 35% 65%; }
+.scheduler-aura-shard-2 { clip-path: polygon(12% 24%, 82% 5%, 100% 58%, 61% 94%, 7% 76%); }
+.scheduler-aura-shard-3 { clip-path: polygon(18% 8%, 91% 31%, 74% 91%, 23% 76%, 0 37%); }
+.scheduler-aura-shard-4 { border-radius: 61% 39% 81% 19%; }
+.scheduler-aura-shard-5 { clip-path: polygon(7% 41%, 34% 4%, 93% 22%, 78% 86%, 29% 97%); }
+@media (max-width: 800px) {
+  .timeline-scheduler-run { --scheduler-responsive-art-size: 96px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .scheduler-aura { transition: none; }
+  .scheduler-aura-blob { will-change: auto; }
+}

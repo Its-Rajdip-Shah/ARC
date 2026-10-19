@@ -87,7 +87,7 @@ def test_overdue_frozen_and_legacy_repaired_and_visible(user, make_item, api_for
     assert scheduling.schedule(user, mode='global')['changed_ids'] == []
     response = api_for(user).get('/api/planning/overdue/')
     assert response.status_code == 200
-    overdue_ids = {row['item']['id'] for bucket in ('recent', 'backlog') for row in response.data[bucket]}
+    overdue_ids = {row['item']['id'] for row in response.data['deadline_overdue']}
     assert {legacy.pk, existing.pk} <= overdue_ids
 
 
@@ -366,9 +366,9 @@ def test_daily_schedule_expires_past_manual_anchor(user, make_item):
     item = make_item(
         user,
         'Expired anchor',
-        scheduled_date=today - timedelta(days=1),
-        manual_requested_date=today - timedelta(days=1),
-        due_date=today + timedelta(days=10),
+        scheduled_date=today - timedelta(days=4),
+        manual_requested_date=today - timedelta(days=4),
+        due_date=today + timedelta(days=40),
     )
 
     result = scheduling.daily_schedule(user, today=today)
@@ -377,7 +377,7 @@ def test_daily_schedule_expires_past_manual_anchor(user, make_item):
 
     assert item.manual_requested_date is None
     assert item.pk in result['expired_anchor_ids']
-    assert item.due_date == today + timedelta(days=10)
+    assert item.due_date == today + timedelta(days=40)
     assert item.scheduled_date >= today
 
 
@@ -426,8 +426,8 @@ def test_expired_anchor_does_not_create_overdue_semantics(user, make_item):
     item = make_item(
         user,
         'Expired preference but live deadline',
-        scheduled_date=today - timedelta(days=3),
-        manual_requested_date=today - timedelta(days=3),
+        scheduled_date=today - timedelta(days=4),
+        manual_requested_date=today - timedelta(days=4),
         due_date=today + timedelta(days=7),
     )
 

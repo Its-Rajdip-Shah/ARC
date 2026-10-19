@@ -25,24 +25,16 @@ env = environ.Env(
     ALLOWED_HOSTS=(list, []),
     CORS_ALLOWED_ORIGINS=(list, []),
     ARC_FIELD_ENCRYPTION_KEY=(str, ''),
+    # Production HTTPS hardening. Off by default so local HTTP keeps working.
+    SECURE_SSL_REDIRECT=(bool, False),
+    SESSION_COOKIE_SECURE=(bool, False),
+    CSRF_COOKIE_SECURE=(bool, False),
+    SECURE_HSTS_SECONDS=(int, 0),
+    SECURE_HSTS_INCLUDE_SUBDOMAINS=(bool, False),
+    SECURE_HSTS_PRELOAD=(bool, False),
+    # Django's built-in admin is a password-only surface (no TOTP). Off by default.
+    ENABLE_DJANGO_ADMIN=(bool, False),
     CANVAS_BASE_URL=(str, 'https://canvas.sydney.edu.au'),
-    LLM_API_BASE=(str, 'https://api.openai.com/v1'),
-    LLM_API_KEY=(str, ''),
-    LLM_MODEL=(str, 'gpt-4o-mini'),
-    LLM_TIMEOUT_SECONDS=(int, 45),
-    # Failover slots. Empty keys are skipped.
-    LLM_API_BASE_2=(str, 'https://api.x.ai/v1'),
-    LLM_API_KEY_2=(str, ''),
-    LLM_MODEL_2=(str, 'grok-3-mini'),
-    LLM_API_BASE_3=(str, 'https://api.groq.com/openai/v1'),
-    LLM_API_KEY_3=(str, ''),
-    LLM_MODEL_3=(str, 'openai/gpt-oss-20b'),
-    LLM_API_BASE_4=(str, ''),
-    LLM_API_KEY_4=(str, ''),
-    LLM_MODEL_4=(str, ''),
-    LLM_API_BASE_5=(str, ''),
-    LLM_API_KEY_5=(str, ''),
-    LLM_MODEL_5=(str, ''),
 )
 environ.Env.read_env(BASE_DIR / '.env')
 
@@ -55,6 +47,13 @@ SECRET_KEY = env('SECRET_KEY')
 DEBUG = env('DEBUG')
 
 ALLOWED_HOSTS = env('ALLOWED_HOSTS')
+
+ENABLE_DJANGO_ADMIN = env('ENABLE_DJANGO_ADMIN')
+# OpenAPI / Swagger follow DEBUG unless ENABLE_API_DOCS is set explicitly.
+if 'ENABLE_API_DOCS' in env.ENVIRON:
+    ENABLE_API_DOCS = env.bool('ENABLE_API_DOCS')
+else:
+    ENABLE_API_DOCS = DEBUG
 
 
 # Application definition
@@ -83,12 +82,13 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
-    'corsheaders.middleware.CorsMiddleware', # Add this line right here
+    'corsheaders.middleware.CorsMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'core.middleware.SecurityHeadersMiddleware',
 ]
 
 ROOT_URLCONF = 'arc_backend.urls'
@@ -116,6 +116,19 @@ WSGI_APPLICATION = 'arc_backend.wsgi.application'
 
 DATABASES = {
     'default': env.db('DATABASE_URL'),
+}
+
+
+# Cache
+# LocMem is fine for single-process local/dev. TOTP replay protection and DRF
+# throttles share this cache — multi-worker production should point at Redis
+# (or another shared backend) via CACHES in an override if needed.
+
+CACHES = {
+    'default': {
+        'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+        'LOCATION': 'arc-default',
+    },
 }
 
 
@@ -186,6 +199,10 @@ CORS_ALLOWED_ORIGINS = env('CORS_ALLOWED_ORIGINS')
 
 # Django REST Framework
 
+_RENDERERS = ['rest_framework.renderers.JSONRenderer']
+if DEBUG:
+    _RENDERERS.append('rest_framework.renderers.BrowsableAPIRenderer')
+
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
         'accounts.authentication.ArcJWTAuthentication',
@@ -193,15 +210,36 @@ REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.IsAuthenticated',
     ],
+    'DEFAULT_THROTTLE_RATES': {
+        # Public auth surface — caps password / TOTP spraying.
+        'auth': '30/min',
+        'auth_strict': '10/min',
+        # The forgot-password page polls status while it waits for approval.
+        'password_reset': '60/min',
+    },
     'EXCEPTION_HANDLER': 'core.exceptions.arc_exception_handler',
     'DEFAULT_PAGINATION_CLASS': 'core.pagination.ArcPageNumberPagination',
     'PAGE_SIZE': 50,
-    'DEFAULT_RENDERER_CLASSES': [
-        'rest_framework.renderers.JSONRenderer',
-        'rest_framework.renderers.BrowsableAPIRenderer',
-    ],
+    'DEFAULT_RENDERER_CLASSES': _RENDERERS,
     'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
 }
+
+
+# HTTPS / cookie hardening (A2 production bar)
+# Local HTTP keeps the defaults False/0. Production .env should flip these on
+# together with DEBUG=False — see docs/security/a2-gap-analysis.md.
+
+SECURE_SSL_REDIRECT = env('SECURE_SSL_REDIRECT')
+SESSION_COOKIE_SECURE = env('SESSION_COOKIE_SECURE')
+CSRF_COOKIE_SECURE = env('CSRF_COOKIE_SECURE')
+SECURE_HSTS_SECONDS = env('SECURE_HSTS_SECONDS')
+SECURE_HSTS_INCLUDE_SUBDOMAINS = env('SECURE_HSTS_INCLUDE_SUBDOMAINS')
+SECURE_HSTS_PRELOAD = env('SECURE_HSTS_PRELOAD')
+SECURE_CONTENT_TYPE_NOSNIFF = True
+SECURE_REFERRER_POLICY = 'same-origin'
+X_FRAME_OPTIONS = 'DENY'
+SESSION_COOKIE_HTTPONLY = True
+CSRF_COOKIE_HTTPONLY = True
 
 
 # OpenAPI schema at /api/schema/, Swagger UI at /api/docs/
@@ -225,26 +263,6 @@ SPECTACULAR_SETTINGS = {
 # The institution's Canvas host. No trailing /api/v1: the client appends it.
 
 CANVAS_BASE_URL = env('CANVAS_BASE_URL')
-
-# Study plans. Keys stay in this process. Providers are tried in order
-# inside one shared timeout. With no saved plan, a missing key or a failed
-# call falls back to a local deadline order; a saved plan is kept.
-LLM_API_BASE = env('LLM_API_BASE')
-LLM_API_KEY = env('LLM_API_KEY')
-LLM_MODEL = env('LLM_MODEL')
-LLM_TIMEOUT_SECONDS = env('LLM_TIMEOUT_SECONDS')
-LLM_API_BASE_2 = env('LLM_API_BASE_2')
-LLM_API_KEY_2 = env('LLM_API_KEY_2')
-LLM_MODEL_2 = env('LLM_MODEL_2')
-LLM_API_BASE_3 = env('LLM_API_BASE_3')
-LLM_API_KEY_3 = env('LLM_API_KEY_3')
-LLM_MODEL_3 = env('LLM_MODEL_3')
-LLM_API_BASE_4 = env('LLM_API_BASE_4')
-LLM_API_KEY_4 = env('LLM_API_KEY_4')
-LLM_MODEL_4 = env('LLM_MODEL_4')
-LLM_API_BASE_5 = env('LLM_API_BASE_5')
-LLM_API_KEY_5 = env('LLM_API_KEY_5')
-LLM_MODEL_5 = env('LLM_MODEL_5')
 
 
 # Field-level encryption (core.fields.EncryptedCharField)

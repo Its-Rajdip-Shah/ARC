@@ -20,8 +20,8 @@ from datetime import date
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
-from django.utils import timezone
 
+from planning.services.calendar_dates import user_local_date
 from planning.models import PlanningDependency, PlanningItem
 from planning.queries import descendant_ids
 from planning.services import dependencies, hierarchy, priority, scheduling
@@ -112,6 +112,18 @@ def delete_subtree(item: PlanningItem):
             )
             for row in rows
             if row.pk in active_ids
+        },
+        "manual_anchor_origin_dates": {
+            str(row.pk): row.manual_anchor_origin_date.isoformat() if row.manual_anchor_origin_date else None
+            for row in rows if row.pk in active_ids
+        },
+        "manual_requested_orders": {
+            str(row.pk): row.manual_requested_order
+            for row in rows if row.pk in active_ids
+        },
+        "expired_manual_requested_dates": {
+            str(row.pk): row.expired_manual_requested_date.isoformat() if row.expired_manual_requested_date else None
+            for row in rows if row.pk in active_ids
         },
         "dependencies": list(edge_states.values()),
     }
@@ -320,7 +332,7 @@ def restore_subtree(item: PlanningItem, *, today=None):
 
     item = _coerce_item(item)
     priority._lock(item.user)
-    today = today or timezone.localdate()
+    today = user_local_date(item.user, explicit_date=today)
 
     root = (
         PlanningItem.objects
@@ -409,14 +421,26 @@ def restore_subtree(item: PlanningItem, *, today=None):
 
         if old_anchor:
             anchor_day = date.fromisoformat(old_anchor)
+            old_origin = context.get("manual_anchor_origin_dates", {}).get(str(row.pk))
+            origin = date.fromisoformat(old_origin) if old_origin else anchor_day
 
             # D7: a missed historical anchor is not resurrected as a new hard
             # current commitment merely because the task was restored later.
             if anchor_day < today:
-                row.expired_manual_requested_date = anchor_day
+                row.expired_manual_requested_date = origin
                 row.manual_requested_date = None
+                row.manual_requested_order = None
+                row.manual_anchor_origin_date = None
             else:
                 row.manual_requested_date = anchor_day
+                row.manual_anchor_origin_date = origin
+                row.manual_requested_order = context.get("manual_requested_orders", {}).get(str(row.pk))
+                # Undoing deletion restores the prior historical marker too;
+                # termination during deletion must not overwrite that history.
+                expired_dates = context.get("expired_manual_requested_dates", {})
+                if str(row.pk) in expired_dates:
+                    old_expired = expired_dates[str(row.pk)]
+                    row.expired_manual_requested_date = date.fromisoformat(old_expired) if old_expired else None
 
         changed.append(row)
 
@@ -427,6 +451,8 @@ def restore_subtree(item: PlanningItem, *, today=None):
             "parent",
             "sibling_order",
             "manual_requested_date",
+            "manual_anchor_origin_date",
+            "manual_requested_order",
             "expired_manual_requested_date",
         ],
     )

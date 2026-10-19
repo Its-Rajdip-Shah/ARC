@@ -94,9 +94,12 @@ function SortableRoot({
 
 
 export default function PlannerSidebar({
+  scheduler,
   roots = [],
   showOverdue = false,
   onToggleOverdue,
+  onNavigateToOverdueSection,
+  activeOverdueSection = null,
   onNavigateToRoot,
 }) {
   const [isCreating, setIsCreating] = useState(false)
@@ -291,23 +294,23 @@ export default function PlannerSidebar({
   return (
     <aside
       className="
-        flex w-full flex-col overflow-y-auto overscroll-contain
+        flex max-h-dvh w-full flex-col overflow-clip
         border-white/10 bg-arc-surface px-5
         max-md:border-b max-md:pt-20 max-md:pb-3
-        md:sticky md:top-0 md:z-30 md:h-screen md:w-arc-sidebar md:shrink-0
+        md:sticky md:top-0 md:z-30 md:h-dvh md:w-arc-sidebar md:shrink-0
         md:border-r md:pb-6 md:pt-5
       "
     >
       <img
         src={arcLogo}
         alt="ARC"
-        className="hidden h-auto w-[92px] md:block"
+        className="hidden h-auto w-[92px] shrink-0 md:block"
       />
 
-      <nav aria-label="Planner navigation" className="md:mt-20">
-        <div className="mb-3 flex items-center gap-2 px-3">
+      <nav aria-label="Planner navigation" className="flex min-h-0 flex-1 flex-col md:mt-20">
+        <div className="mb-3 flex shrink-0 items-center gap-2 px-3">
           <h2 className="hidden text-[22px] font-bold tracking-[0.12em] text-arc-text-secondary md:block">
-            Subjects
+            Roots
           </h2>
 
           <button
@@ -322,7 +325,7 @@ export default function PlannerSidebar({
             aria-controls="planner-subjects"
             onClick={() => setSubjectsOpen((open) => !open)}
           >
-            Subjects
+            Roots
             <span aria-hidden="true" className="text-sm tracking-normal">
               {subjectsOpen ? '▾' : '▸'}
             </span>
@@ -349,7 +352,7 @@ export default function PlannerSidebar({
 
         <div
           id="planner-subjects"
-          className={subjectsOpen ? 'space-y-1' : 'hidden space-y-1 md:block'}
+          className={`min-h-0 flex-1 overflow-y-auto overscroll-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden space-y-1 ${subjectsOpen ? '' : 'hidden md:block'}`}
         >
           <button
             type="button"
@@ -364,6 +367,24 @@ export default function PlannerSidebar({
           >
             Overdue
           </button>
+          {showOverdue && (
+            <div role="group" aria-label="Overdue sections" className="mb-2 ml-4 space-y-1">
+              {[
+                ['deadline', 'Deadline'],
+                ['anchor', 'Anchor'],
+              ].map(([section, label]) => (
+                <button
+                  key={section}
+                  type="button"
+                  aria-current={activeOverdueSection === section ? 'location' : undefined}
+                  onClick={() => onNavigateToOverdueSection?.(section)}
+                  className={`block w-full rounded-arc-sm px-3 py-1.5 text-left text-sm text-arc-danger-light hover:bg-white/5 ${activeOverdueSection === section ? 'bg-white/10 font-semibold' : ''}`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
 
           {isCreating && (
             <form onSubmit={handleSubmit} className="px-3 py-1">
@@ -416,6 +437,7 @@ export default function PlannerSidebar({
           </PlannerSidebarDnd>
         </div>
       </nav>
+      {scheduler}
     </aside>
   )
 }

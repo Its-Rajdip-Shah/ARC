@@ -316,32 +316,19 @@ export default function FocusPage() {
     )
   }
 
-  if (focusQuery.isLoading) {
-    return (
-      <div className="focus-state-page">
-        Loading Focus…
-      </div>
-    )
-  }
-
-  if (focusQuery.isError) {
-    return (
-      <div className="focus-state-page">
-        Focus could not be loaded.
-      </div>
-    )
-  }
-
   const empty =
     candidates.length === 0
 
   return (
     <div className="focus-page">
       <main className="focus-content">
-        <h1 className="arc-display focus-title">
-          FOCUS
-        </h1>
-
+        <h1 className="sr-only">FOCUS</h1>
+        {focusQuery.isLoading ? (
+          <p className="focus-state-message" role="status">Loading Focus…</p>
+        ) : focusQuery.isError ? (
+          <p className="focus-state-message" role="alert">Focus could not be loaded.</p>
+        ) : (
+          <>
         {currentCandidate && (
           <button
             type="button"
@@ -453,6 +440,8 @@ export default function FocusPage() {
               }
             />
           )}
+          </>
+        )}
       </main>
 
       <FocusSchedulerMascot />

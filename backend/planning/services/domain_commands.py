@@ -8,6 +8,24 @@ EDITABLE = {'title', 'description', 'item_type', 'parent', 'sibling_order',
             'start_date', 'due_date', 'duration_category', 'is_completed'}
 
 
+def _propagate_inherited_due_dates(parent):
+    """Keep direct followers in sync, then carry the change down the tree."""
+    children = list(
+        PlanningItem.objects.filter(
+            parent=parent,
+            due_date_inherited=True,
+            is_deleted=False,
+        ).only('pk', 'due_date')
+    )
+    if not children:
+        return
+    for child in children:
+        child.due_date = parent.due_date
+    PlanningItem.objects.bulk_update(children, ['due_date'])
+    for child in children:
+        _propagate_inherited_due_dates(child)
+
+
 def _resolve_parent(user, value):
     if value is None:
         return None
@@ -47,13 +65,22 @@ def create_item(user, **values):
         raise ValidationError("Creation accepts only user-editable task facts.")
     parent = _resolve_parent(user, values.pop('parent', None))
     completed = values.pop('is_completed', False)
+    inherits_due_date = parent is not None and 'due_date' not in values
     if parent:
         values.setdefault('start_date', parent.start_date)
         values.setdefault('due_date', parent.due_date)
     values.setdefault('sibling_order', hierarchy._next_sibling_order(user, parent))
-    item = PlanningItem(user=user, parent=parent, **values)
+    item = PlanningItem(
+        user=user,
+        parent=parent,
+        due_date_inherited=inherits_due_date,
+        **values,
+    )
     if parent:
         item.manual_requested_date = parent.manual_requested_date
+        item.manual_anchor_origin_date = (
+            parent.manual_anchor_origin_date or parent.manual_requested_date
+        )
     validate_changes(item, {})
     item.save()
     if not completed:
@@ -69,6 +96,11 @@ def create_item(user, **values):
 def update_item(item, changes):
     item = lifecycle.active(item)
     changes = dict(changes)
+    explicit_due_change = 'due_date' in changes
+    requested_parent = _resolve_parent(item.user, changes.get('parent', item.parent_id))
+    parent_changed = item.parent_id != (requested_parent.pk if requested_parent else None)
+    if parent_changed and item.due_date_inherited and not explicit_due_change:
+        changes['due_date'] = requested_parent.due_date if requested_parent else None
     planning_changed = bool(set(changes) - {"title", "description"})
     validate_changes(item, changes)
     old_parent = item.parent
@@ -80,7 +112,11 @@ def update_item(item, changes):
     item.parent = parent
     for key, value in changes.items():
         setattr(item, key, value)
+    if explicit_due_change or (parent_changed and requested_parent is None):
+        item.due_date_inherited = False
     item.save()
+    if 'due_date' in changes:
+        _propagate_inherited_due_dates(item)
     if duration != item.duration_category:
         progress.set_duration(item, duration, reconcile=False)
     if old_parent != parent:

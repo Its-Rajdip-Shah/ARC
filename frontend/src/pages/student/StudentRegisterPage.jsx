@@ -9,7 +9,7 @@ import { totpNow, waitForNextTotpStep } from '../../lib/totp'
 import { useAuthStore } from '../../stores/authStore'
 
 const inputClass =
-  'h-[55px] w-full bg-[#1D4074] px-12 text-lg text-white outline-none placeholder:text-[#B7A6EC]'
+  'h-[55px] w-full bg-[#1D4074] px-4 text-lg text-white outline-none placeholder:text-[#B7A6EC] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white sm:px-12'
 const buttonClass =
   'mx-auto mt-10 block h-[58px] w-[172px] bg-[#C3D19B] text-lg font-semibold text-black disabled:opacity-60'
 
@@ -47,6 +47,7 @@ export default function StudentRegisterPage() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
+  const [schedulerFlavour, setSchedulerFlavour] = useState('')
   const [enrolment, setEnrolment] = useState(null)
   const [code, setCode] = useState(Array(6).fill(''))
   const [busy, setBusy] = useState(false)
@@ -66,7 +67,11 @@ export default function StudentRegisterPage() {
     setError(null)
 
     try {
-      const data = await register({ email: email.trim(), password })
+      const data = await register({
+        email: email.trim(),
+        password,
+        scheduler_flavour: schedulerFlavour,
+      })
       setEnrolment({
         token: data.enrolment_token,
         secret: data.mfa.secret,
@@ -154,10 +159,10 @@ export default function StudentRegisterPage() {
 
   return (
     <main
-      className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[#152C72] bg-cover bg-center"
+      className="relative flex min-h-screen items-center justify-center overflow-y-auto bg-[#152C72] bg-cover bg-center"
       style={{ backgroundImage: `url(${loginBackground})` }}
     >
-      <section className="relative w-[499px] max-w-[calc(100vw-32px)] bg-[#7D98D7]/40 px-[61px] py-[26px] text-white">
+      <section className="relative my-6 w-[499px] max-w-[calc(100vw-32px)] bg-[#7D98D7]/40 px-6 py-6 text-white sm:px-[61px]">
         <h1 className="text-center text-[32px] font-semibold tracking-wide">
           {enrolment ? 'AUTHENTICATOR' : 'SIGN UP'}
         </h1>
@@ -168,35 +173,91 @@ export default function StudentRegisterPage() {
           </p>
         ) : !enrolment ? (
           <form className="mt-8" onSubmit={submitCredentials}>
-            <input
-              type="email"
-              required
-              autoComplete="username"
-              placeholder="email..."
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
-              className={inputClass}
-            />
-            <input
-              type="password"
-              required
-              minLength={8}
-              autoComplete="new-password"
-              placeholder="password..."
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              className={`mt-[17px] ${inputClass}`}
-            />
-            <input
-              type="password"
-              required
-              minLength={8}
-              autoComplete="new-password"
-              placeholder="confirm password..."
-              value={confirmPassword}
-              onChange={(event) => setConfirmPassword(event.target.value)}
-              className={`mt-[17px] ${inputClass}`}
-            />
+            <label className="block text-sm font-medium">
+              Email
+              <input
+                type="email"
+                required
+                autoComplete="username"
+                value={email}
+                onChange={(event) => setEmail(event.target.value)}
+                className={`mt-2 ${inputClass}`}
+              />
+            </label>
+            <label className="mt-[17px] block text-sm font-medium">
+              Password
+              <input
+                type="password"
+                required
+                minLength={8}
+                autoComplete="new-password"
+                aria-describedby="password-rules"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                className={`mt-2 ${inputClass}`}
+              />
+            </label>
+            <p id="password-rules" className="mt-2 text-sm text-[#D8CDF8]">
+              At least 8 characters. Not a common password, and not only numbers.
+            </p>
+            <label className="mt-[17px] block text-sm font-medium">
+              Confirm password
+              <input
+                type="password"
+                required
+                minLength={8}
+                autoComplete="new-password"
+                value={confirmPassword}
+                onChange={(event) => setConfirmPassword(event.target.value)}
+                className={`mt-2 ${inputClass}`}
+              />
+            </label>
+            <fieldset className="mt-6">
+  <legend className="mb-2 text-lg font-semibold">
+    Choose your scheduling style
+  </legend>
+
+  <p className="mb-4 text-sm text-[#D8CDF8]">
+    This controls how aggressively ARC schedules your tasks.
+    You can change it later in Timeline.
+  </p>
+
+  <div className="flex flex-col gap-4 sm:flex-row">
+    <label className="flex flex-1 cursor-pointer flex-col gap-2 bg-[#1D4074] p-4">
+      <span className="flex items-center gap-2 font-semibold">
+        <input
+          type="radio"
+          name="schedulerFlavour"
+          value="lock-in"
+          checked={schedulerFlavour === 'lock-in'}
+          onChange={(event) => setSchedulerFlavour(event.target.value)}
+          required
+        />
+        Locked-In
+      </span>
+      <span className="text-sm text-[#D8CDF8]">
+        More aggressive task scheduling.
+      </span>
+    </label>
+
+    <label className="flex flex-1 cursor-pointer flex-col gap-2 bg-[#1D4074] p-4">
+      <span className="flex items-center gap-2 font-semibold">
+        <input
+          type="radio"
+          name="schedulerFlavour"
+          value="monk"
+          checked={schedulerFlavour === 'monk'}
+          onChange={(event) => setSchedulerFlavour(event.target.value)}
+          required
+        />
+        Monk
+      </span>
+      <span className="text-sm text-[#D8CDF8]">
+        Calmer, less aggressive scheduling.
+      </span>
+    </label>
+  </div>
+</fieldset>
             <button type="submit" disabled={busy} className={buttonClass}>
               {busy ? 'CREATING...' : 'SIGN UP'}
             </button>
@@ -232,7 +293,7 @@ export default function StudentRegisterPage() {
                   onChange={(event) => updateCode(index, event.target.value)}
                   onKeyDown={(event) => handleCodeKeyDown(index, event)}
                   onPaste={index === 0 ? handleCodePaste : undefined}
-                  className="h-[55px] w-[59px] bg-[#1D4074] text-center text-2xl text-[#B7A6EC] outline-none"
+                  className="h-[55px] w-[59px] bg-[#1D4074] text-center text-2xl text-[#B7A6EC] outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
                 />
               ))}
             </div>
@@ -247,7 +308,7 @@ export default function StudentRegisterPage() {
         )}
 
         {error && (
-          <p className="mt-4 text-center text-sm text-red-200">{error}</p>
+          <p role="alert" className="mt-4 text-center text-sm text-red-200">{error}</p>
         )}
 
         {!signingIn && (

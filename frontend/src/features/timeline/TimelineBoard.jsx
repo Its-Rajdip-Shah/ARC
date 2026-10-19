@@ -1,6 +1,7 @@
 import {
   useCallback,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from 'react'
@@ -336,6 +337,9 @@ export default function TimelineBoard({
   scrollRef,
   onRequestAnchor,
   onEditTimezones,
+  onEditTask,
+  navigationTarget,
+  onVisibleTaskItemsChange,
   onRenameTimezone,
   onViewportWidth,
   dateHighlights,
@@ -416,6 +420,14 @@ export default function TimelineBoard({
   }
 
   useLayoutEffect(() => {
+    if (navigationTarget) {
+      dateHover.cancel()
+      setPreviewColumn(null)
+      setSelectedColumn(null)
+    }
+  }, [navigationTarget])
+
+  useLayoutEffect(() => {
     const node =
       scrollRef.current
 
@@ -474,12 +486,15 @@ export default function TimelineBoard({
       [],
     )
 
-  const visibleItems =
-    concentratedItems(
-      items,
-      previewColumn,
-      selectedColumn,
-    )
+  const visibleItems = useMemo(
+    () => concentratedItems(items, previewColumn, selectedColumn),
+    [items, previewColumn, selectedColumn],
+  )
+
+  useLayoutEffect(() => {
+    onVisibleTaskItemsChange?.(visibleItems.filter((item) =>
+      item.scheduled_date >= scale.from && item.scheduled_date <= scale.to))
+  }, [visibleItems, scale.from, scale.to, onVisibleTaskItemsChange])
 
   const persistentConcentration =
     isPersistentConcentration(
@@ -516,6 +531,31 @@ export default function TimelineBoard({
           ...rootGroups.values(),
         ]
       : [visibleItems]
+
+  const stickyHeaderRef = useRef(null)
+
+  useLayoutEffect(() => {
+    const header = stickyHeaderRef.current
+    const scroller = scrollRef?.current
+
+    if (!header || !scroller) return undefined
+
+    const updateHeaderHeight = () => {
+      scroller.style.setProperty(
+        '--timeline-sticky-header-height',
+        `${Math.ceil(header.getBoundingClientRect().height)}px`,
+      )
+    }
+
+    updateHeaderHeight()
+
+    if (typeof ResizeObserver === 'undefined') return undefined
+
+    const observer = new ResizeObserver(updateHeaderHeight)
+    observer.observe(header)
+
+    return () => observer.disconnect()
+  }, [scrollRef])
 
   const {
     assignments:
@@ -662,6 +702,10 @@ export default function TimelineBoard({
         }
       >
         <div
+          className="timeline-sticky-header"
+          ref={stickyHeaderRef}
+        >
+        <div
           className="timeline-axis"
           style={{
             width:
@@ -679,6 +723,7 @@ export default function TimelineBoard({
                   : null
 
               const overloaded =
+                column.from >= today &&
                 column.from ===
                   column.to &&
                 (
@@ -690,6 +735,7 @@ export default function TimelineBoard({
                 )
 
               const infeasible =
+                column.from >= today &&
                 column.from ===
                   column.to &&
                 load?.status ===
@@ -824,53 +870,6 @@ export default function TimelineBoard({
                   currentWeek.width,
               }}
             />
-          )}
-        </div>
-
-        <div
-          className="timeline-status-guides"
-          aria-hidden="true"
-        >
-          {scale.columns.map(
-            (
-              column,
-              index,
-            ) => {
-              const active =
-                (
-                  dateHighlights
-                    ?.overloadActive &&
-                  dateHighlights
-                    .overloadDates
-                    ?.has(
-                      column.from,
-                    )
-                ) ||
-                (
-                  dateHighlights
-                    ?.infeasibleActive &&
-                  dateHighlights
-                    .infeasibleDates
-                    ?.has(
-                      column.from,
-                    )
-                )
-
-              return active
-                ? (
-                    <span
-                      key={
-                        column.from
-                      }
-                      style={{
-                        left:
-                          index *
-                          scale.columnWidth,
-                      }}
-                    />
-                  )
-                : null
-            },
           )}
         </div>
 
@@ -1009,6 +1008,55 @@ export default function TimelineBoard({
           )}
         </div>
 
+        </div>
+
+        <div
+          className="timeline-status-guides"
+          aria-hidden="true"
+        >
+          {scale.columns.map(
+            (
+              column,
+              index,
+            ) => {
+              const active =
+                (
+                  dateHighlights
+                    ?.overloadActive &&
+                  dateHighlights
+                    .overloadDates
+                    ?.has(
+                      column.from,
+                    )
+                ) ||
+                (
+                  dateHighlights
+                    ?.infeasibleActive &&
+                  dateHighlights
+                    .infeasibleDates
+                    ?.has(
+                      column.from,
+                    )
+                )
+
+              return active
+                ? (
+                    <span
+                      key={
+                        column.from
+                      }
+                      style={{
+                        left:
+                          index *
+                          scale.columnWidth,
+                      }}
+                    />
+                  )
+                : null
+            },
+          )}
+        </div>
+
         {groups
           .filter(
             (group) =>
@@ -1082,8 +1130,8 @@ export default function TimelineBoard({
                                     popped,
                                 ),
                           )
-                            ? 'timeline-row timeline-row-constrained'
-                            : 'timeline-row'
+                            ? 'timeline-row timeline-row-constrained' + (persistentConcentration ? ' timeline-row-selected-date' : '')
+                            : 'timeline-row' + (persistentConcentration ? ' timeline-row-selected-date' : '')
                         }
                         key={
                           index
@@ -1187,6 +1235,8 @@ export default function TimelineBoard({
                                     flat={
                                       !grouped
                                     }
+                                    onEdit={onEditTask}
+                                    expansionVariant={persistentConcentration ? 'selected-date' : 'default'}
                                     expanded={
                                       persistentConcentration
                                     }

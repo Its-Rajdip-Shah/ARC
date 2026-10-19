@@ -1,5 +1,10 @@
 .focus-page {
-  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  height: 100dvh;
+  padding-top: 80px;
+  padding-left: 0;
   background:
     radial-gradient(
       circle at 50% 22%,
@@ -11,17 +16,18 @@
 }
 
 .focus-content {
-  width: min(720px, calc(100vw - 80px));
+  width: min(720px, calc(100% - 32px));
   margin: 0 auto;
-  padding: 84px 24px 64px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: none;
+  overscroll-behavior-y: contain;
+  padding: 4px 24px 24px;
 }
 
-.focus-title {
-  margin: 0 0 12px;
-  text-align: center;
-  font-size: 58px;
-  line-height: 1;
-  font-weight: 400;
+.focus-content::-webkit-scrollbar {
+  display: none;
 }
 
 .focus-current-chip {
@@ -215,7 +221,7 @@
   background: transparent;
   color: rgb(195 209 155 / 75%);
   cursor: pointer;
-  opacity: 1;
+  opacity: 0;
   transform: scale(.92);
   transition:
     opacity 110ms ease,
@@ -224,9 +230,19 @@
 }
 
 .focus-task:hover .focus-target-button,
+.focus-task:focus-within .focus-target-button,
 .focus-target-button.is-current {
   opacity: 1;
   transform: scale(1);
+}
+
+.focus-target-button:not(.is-current) {
+  pointer-events: none;
+}
+
+.focus-task:hover .focus-target-button,
+.focus-task:focus-within .focus-target-button {
+  pointer-events: auto;
 }
 
 .focus-target-button:hover,
@@ -250,9 +266,38 @@
   display: block;
 }
 
+.focus-description-block {
+  margin-bottom: 7px;
+}
+
 .focus-description {
-  margin: 0 0 7px;
+  margin: 0;
   line-height: 1.45;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.focus-description-toggle {
+  display: inline-block;
+  margin-top: 4px;
+  border: 0;
+  background: transparent;
+  padding: 2px 0;
+  color: #a9bff1;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 650;
+}
+
+.focus-description-toggle:hover {
+  color: #d1ddff;
+  text-decoration: underline;
+}
+
+.focus-description-toggle:focus-visible {
+  outline: 2px solid #a9bff1;
+  outline-offset: 3px;
+  border-radius: 2px;
 }
 
 .focus-detail-grid {
@@ -506,7 +551,7 @@
 
 @media (max-width: 820px) {
   .focus-content {
-    width: min(680px, calc(100vw - 36px));
+    width: min(680px, calc(100% - 36px));
     padding-right: 10px;
     padding-left: 10px;
   }
@@ -1417,76 +1462,6 @@
   height: 12px;
 }
 
-/*
- * Exact same scheduler mascot/button component as Timeline,
- * presented larger at Focus's lower-left corner.
- */
-.focus-scheduler-mascot {
-  position: fixed;
-  z-index: 28;
-  left: 20px;
-  bottom: 14px;
-  width: 156px;
-  height: 156px;
-}
-
-.focus-scheduler-mascot
-.timeline-scheduler-run {
-  position: relative;
-  isolation: isolate;
-  width: 156px !important;
-  height: 156px !important;
-  overflow: visible;
-  border: 0;
-  background: transparent !important;
-  opacity: 1 !important;
-}
-
-.focus-scheduler-mascot
-.timeline-scheduler-art {
-  position: absolute;
-  inset: 14px;
-  z-index: 3;
-  display: grid;
-  place-items: center;
-  pointer-events: none;
-}
-
-.focus-scheduler-mascot
-.timeline-scheduler-art img {
-  width: 122px !important;
-  height: 122px !important;
-  object-fit: contain;
-}
-
-.focus-scheduler-mascot
-.timeline-scheduler-run:disabled {
-  opacity: 1 !important;
-}
-
-@media (max-width: 900px) {
-  .focus-scheduler-mascot {
-    width: 118px;
-    height: 118px;
-    left: 8px;
-    bottom: 8px;
-  }
-
-  .focus-scheduler-mascot
-  .timeline-scheduler-run {
-    width: 118px !important;
-    height: 118px !important;
-  }
-
-  .focus-scheduler-mascot
-  .timeline-scheduler-art img {
-    width: 90px !important;
-    height: 90px !important;
-  }
-}
-
-
-
 /* ==========================================================
    Focus performance + interaction acceptance pass
    ========================================================== */
@@ -1577,40 +1552,6 @@
   background: #dbe879;
   box-shadow:
     0 0 9px rgb(219 232 121 / 32%);
-}
-
-
-/* Make the dark monk readable on the dark Focus surface. */
-.focus-scheduler-mascot {
-  display: grid;
-  place-items: center;
-  border: 1px solid rgb(195 209 155 / 22%);
-  border-radius: 34px;
-  background:
-    radial-gradient(
-      circle at 50% 44%,
-      rgb(195 209 155 / 18%),
-      rgb(124 156 222 / 10%) 46%,
-      rgb(29 35 80 / 35%) 72%,
-      transparent 74%
-    );
-  box-shadow:
-    0 16px 50px rgb(0 0 0 / 24%),
-    inset 0 1px 0 rgb(255 255 255 / 8%);
-  backdrop-filter:
-    blur(9px)
-    saturate(120%);
-}
-
-.focus-scheduler-mascot
-.timeline-scheduler-art img {
-  filter:
-    brightness(1.45)
-    contrast(1.08)
-    drop-shadow(
-      0 5px 13px
-      rgb(195 209 155 / 22%)
-    );
 }
 
 
@@ -1881,42 +1822,6 @@
 }
 
 
-/* Monk should glow out of the page itself—not sit inside a button/card. */
-.focus-scheduler-mascot {
-  border: 0 !important;
-  border-radius: 0 !important;
-  background:
-    radial-gradient(
-      circle at 50% 50%,
-      rgb(124 156 222 / 18%) 0%,
-      rgb(124 156 222 / 10%) 32%,
-      rgb(124 156 222 / 4%) 52%,
-      transparent 74%
-    ) !important;
-  box-shadow:
-    none !important;
-  backdrop-filter:
-    none !important;
-}
-
-.focus-scheduler-mascot
-.timeline-scheduler-run {
-  border: 0 !important;
-  border-radius: 0 !important;
-  background:
-    transparent !important;
-  box-shadow:
-    none !important;
-}
-
-.focus-scheduler-mascot
-.timeline-scheduler-art img {
-  filter:
-    brightness(1.42)
-    contrast(1.08) !important;
-}
-
-
 /* ==========================================================
    Focus date-aware queue drag geometry
    ========================================================== */
@@ -2144,4 +2049,28 @@
 .focus-date-heading-drop,
 .focus-date-heading-drop > h3 {
   isolation: auto;
+}
+
+/* Keep the persistent mascot outside the centered, scrolling task column. */
+.focus-scheduler-mascot {
+  position: fixed;
+  z-index: 28;
+  left: 0;
+  bottom: var(--scheduler-dock-bottom);
+  display: flex;
+  justify-content: center;
+  width: var(--scheduler-dock-width);
+}
+.focus-state-message {
+  padding: 24px;
+  text-align: center;
+  color: rgb(255 255 255 / 60%);
+}
+@media (max-width: 900px) {
+  /* Narrow screens retain full-width task rows above the persistent dock.
+     This reserves viewport space, rather than adding a gap after the task list. */
+  .focus-page {
+    padding-left: 0;
+    padding-bottom: calc(var(--scheduler-footprint) + var(--scheduler-dock-bottom));
+  }
 }

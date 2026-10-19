@@ -11,6 +11,7 @@ import {
   todayKey,
 } from './timelineDates'
 
+import TimelineDescription from './TimelineDescription'
 import DurationGlyph from './DurationGlyph'
 import useHoverIntent from './useHoverIntent'
 import {
@@ -25,6 +26,8 @@ export default function TimelineCard({
   readOnly = false,
   expanded = false,
   onAnchor,
+  onEdit = null,
+  expansionVariant = 'default',
 }) {
   const [
     hoverExpanded,
@@ -74,6 +77,9 @@ export default function TimelineCard({
       item.manual_requested_date,
     )
 
+  const deadlineOverdue = item.deadline_overdue ?? item.overdue
+  const carriedAnchorOverdue = Boolean(item.active_carried_anchor)
+
   const sessionText =
     item.session_count > 1
       ? (
@@ -96,6 +102,12 @@ export default function TimelineCard({
   return (
     <article
       tabIndex={-1}
+      data-timeline-task-id={readOnly ? undefined : item.id}
+      onDoubleClick={(event) => {
+        if (readOnly || event.target.closest('button, input, select, textarea, a, [contenteditable]:not([contenteditable="false"])')) return
+        event.stopPropagation()
+        onEdit?.(item.id)
+      }}
       ref={
         readOnly
           ? undefined
@@ -122,6 +134,8 @@ export default function TimelineCard({
       }}
       className={
         'timeline-card ' +
+        (expansionVariant === 'selected-date' ? 'timeline-card-selected-date ' : '') +
+        (hoverExpanded ? 'timeline-card-hover-intent ' : '') +
         (
           item.scheduled_date ===
           todayKey()
@@ -144,6 +158,11 @@ export default function TimelineCard({
         (
           anchored
             ? 'timeline-card-anchored '
+            : ''
+        ) +
+        (
+          carriedAnchorOverdue
+            ? 'timeline-card-carried-anchor-overdue '
             : ''
         ) +
         (
@@ -223,6 +242,9 @@ export default function TimelineCard({
         </button>
       )}
 
+      {deadlineOverdue && (
+        <i className="timeline-deadline-overdue-dot" role="img" aria-label="Deadline overdue" />
+      )}
       <div className="timeline-card-main">
         <input
           type="checkbox"
@@ -276,6 +298,7 @@ export default function TimelineCard({
       </div>
 
       <div className="timeline-card-details">
+        <TimelineDescription description={item.description} />
         {sessionText && (
           <p>
             {sessionText}
@@ -334,13 +357,13 @@ export default function TimelineCard({
           }
 
           {
-            item.overdue
+            deadlineOverdue
               ? ' · Overdue'
               : ''
           }
         </p>
 
-        {(item.start_date || item.due_date) && (
+        {!deadlineOverdue && (item.start_date || item.due_date) && (
           <p>
             {
               item.start_date

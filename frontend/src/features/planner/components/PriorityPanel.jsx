@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { usePriorityOrder, useReorderPriority } from '../../../hooks/usePriorityOrder'
 import { usePlanningTree } from '../../../hooks/usePlanningTree'
 import PriorityCard from './PriorityCard'
@@ -11,6 +11,11 @@ import PriorityDnd from '../../../dnd/priority/PriorityDnd'
 import './PriorityPanel.css'
 
 const EMPTY = []
+
+function clearHoverTimer(timer) {
+  window.clearTimeout(timer.current)
+  timer.current = null
+}
 
 // Read the hierarchy once; root identity and execution positions come from Priority.
 function hierarchyContext(tree) {
@@ -27,6 +32,24 @@ function hierarchyContext(tree) {
 
 function PriorityContent({ canUndo, canRedo, onUndo, onRedo, historyBusy }) {
   const [selectedRoot, setSelectedRoot] = useState(null)
+  const [hoveredRoot, setHoveredRoot] = useState(null)
+  const touchInteraction = useRef(false)
+  const hoverTimer = useRef(null)
+
+  useEffect(() => {
+    function handleKeyDown(event) {
+      touchInteraction.current = false
+      if (event.key === 'Escape') {
+        clearHoverTimer(hoverTimer)
+        setHoveredRoot(null)
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown, true)
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown, true)
+      clearHoverTimer(hoverTimer)
+    }
+  }, [])
   const priority = usePriorityOrder()
   const tree = usePlanningTree()
   const reorder = useReorderPriority()
@@ -69,7 +92,10 @@ function PriorityContent({ canUndo, canRedo, onUndo, onRedo, historyBusy }) {
     for (const root of ordered) represented.delete(root.id)
     return [...ordered, ...represented.values()]
   }, [roots, rows])
-  const activeRoot = columns.some((root) => root.id === selectedRoot) ? selectedRoot : null
+  const committedRoot = columns.some((root) => root.id === selectedRoot) ? selectedRoot : null
+  // Both previews and committed selections use the same row filter below.
+  const displayedRoot = hoveredRoot ?? committedRoot
+  const activeRoot = columns.some((root) => root.id === displayedRoot) ? displayedRoot : null
   const visibleRows = useMemo(() => activeRoot === null ? rows : rows.filter((row) => row.root.id === activeRoot), [rows, activeRoot])
   const find = usePriorityFind(visibleRows, paths)
   const { isSuccess, reset } = reorder
@@ -122,17 +148,11 @@ function PriorityContent({ canUndo, canRedo, onUndo, onRedo, historyBusy }) {
 
   return (
     <>
-      <header className="priority-heading">
-        <h1 id="priority-heading" className="arc-display text-[42px] leading-none sm:text-[52px]">Priority</h1>
-      </header>
-      <PriorityToolbar find={find} canUndo={canUndo} canRedo={canRedo} onUndo={onUndo} onRedo={onRedo} busy={busy} />
-      <div className="priority-feedback" role="status" aria-live="polite">
-        {
-          !reconciling
-          && reorder.isSuccess
-            ? 'Priority saved.'
-            : ''
-        }
+      <div className="priority-toolbar-area">
+        <PriorityToolbar find={find} canUndo={canUndo} canRedo={canRedo} onUndo={onUndo} onRedo={onRedo} busy={busy} />
+        <div className="priority-feedback" role="status" aria-live="polite">
+          {!reconciling && reorder.isSuccess ? 'Priority saved.' : ''}
+        </div>
       </div>
       {reorder.isError && <p role="alert" className="mx-5 my-3 text-arc-danger-light sm:mx-12">Could not save priority. Your last saved order is shown. Try again.</p>}
       {unavailable ? (
@@ -150,12 +170,42 @@ function PriorityContent({ canUndo, canRedo, onUndo, onRedo, historyBusy }) {
       ) : (
         <div className="priority-scroll" tabIndex={0} aria-label="Priority order by root goal; scroll horizontally for more goals">
           <div className="priority-board" style={{ '--root-count': columns.length }}>
-            <div className="priority-columns">
+            <div className="priority-columns"
+              onPointerDownCapture={(event) => { touchInteraction.current = event.pointerType === 'touch' }}
+              onPointerLeave={() => {
+                clearHoverTimer(hoverTimer)
+                setHoveredRoot(null)
+              }}
+              onBlur={(event) => {
+                if (!event.currentTarget.contains(event.relatedTarget)) {
+                  clearHoverTimer(hoverTimer)
+                  setHoveredRoot(null)
+                }
+              }}>
               <span className="priority-order-label">Order</span>
               {columns.map((root, index) => (
-                <button type="button" key={root.id} aria-pressed={activeRoot === root.id}
-                  title={root.title} onClick={() => setSelectedRoot(activeRoot === root.id ? null : root.id)}
-                  className="priority-column" style={{ left: `calc(var(--number-width) + ${index} * var(--column-width))` }}>
+                <button key={root.id} type="button" className="priority-column"
+                  aria-pressed={committedRoot === root.id}
+                  onPointerEnter={(event) => {
+                    clearHoverTimer(hoverTimer)
+                    if (event.pointerType !== 'touch' && window.matchMedia('(hover: hover)').matches) {
+                      hoverTimer.current = window.setTimeout(() => {
+                        hoverTimer.current = null
+                        setHoveredRoot(root.id)
+                      }, 400)
+                    }
+                  }}
+                  onPointerLeave={() => clearHoverTimer(hoverTimer)}
+                  onFocus={() => {
+                    clearHoverTimer(hoverTimer)
+                    if (!touchInteraction.current) setHoveredRoot(root.id)
+                  }}
+                  onClick={() => {
+                    clearHoverTimer(hoverTimer)
+                    setSelectedRoot(committedRoot === root.id ? null : root.id)
+                    setHoveredRoot(null)
+                  }}
+                  style={{ left: `calc(var(--number-width) + ${index} * var(--column-width))` }}>
                   <span>{root.title}</span>
                 </button>
               ))}
@@ -186,11 +236,10 @@ function PriorityContent({ canUndo, canRedo, onUndo, onRedo, historyBusy }) {
   )
 }
 
-export default function PriorityPanel({ isOpen, ...history }) {
+export default function PriorityPanel(history) {
   return (
-    <aside id="priority-panel" aria-hidden={!isOpen} aria-labelledby="priority-heading"
-      className={`priority-panel ${isOpen ? 'priority-panel-open' : ''}`}>
-      {isOpen && <PriorityContent {...history} />}
-    </aside>
+    <section id="priority-panel" aria-label="Priority" className="priority-panel">
+      <PriorityContent {...history} />
+    </section>
   )
 }

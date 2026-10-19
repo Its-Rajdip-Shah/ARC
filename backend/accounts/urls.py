@@ -10,6 +10,12 @@ app_name = 'accounts'
 urlpatterns = [
     path('register/', views.RegisterView.as_view(), name='register'),
     path('mfa/enroll/confirm/', views.MFAEnrolConfirmView.as_view(), name='mfa-enrol-confirm'),
+    path('mfa/recover/', views.AuthenticatorRecoveryRequestView.as_view(), name='mfa-recover'),
+    path(
+        'mfa/recover/confirm/',
+        views.AuthenticatorRecoveryConfirmView.as_view(),
+        name='mfa-recover-confirm',
+    ),
     path('login/', views.LoginView.as_view(), name='login'),
     path('login/mfa/', views.MFAVerifyView.as_view(), name='login-mfa'),
     path('admin/login/', views.AdminLoginView.as_view(), name='admin-login'),
@@ -17,4 +23,16 @@ urlpatterns = [
     path('token/refresh/', TokenRefreshView.as_view(), name='token-refresh'),
     path('logout/', views.LogoutView.as_view(), name='logout'),
     path('me/', views.MeView.as_view(), name='me'),
+    path('password/change/', views.PasswordChangeView.as_view(), name='password-change'),
+    path('password-reset/', views.PasswordResetRequestView.as_view(), name='password-reset'),
+    path(
+        'password-reset/status/<str:token>/',
+        views.PasswordResetStatusView.as_view(),
+        name='password-reset-status',
+    ),
+    path(
+        'password-reset/confirm/',
+        views.PasswordResetConfirmView.as_view(),
+        name='password-reset-confirm',
+    ),
 ]

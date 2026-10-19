@@ -20,6 +20,7 @@ from planning.models import (
     Tag,
     Timezone,
 )
+from planning.services.calendar_dates import user_local_date
 
 
 class TagSerializer(serializers.ModelSerializer):
@@ -98,14 +99,21 @@ class TimelineNavigationItemSerializer(serializers.ModelSerializer):
             'due_date',
             'scheduled_date',
             'completed_display_date',
-            'manual_requested_date',
+            'manual_requested_date', 'manual_anchor_origin_date',
             'duration_category',
             'is_completed',
             'tags',
         ]
 
 
-class PlanningItemSerializer(serializers.ModelSerializer):
+class RemainingWorkMixin:
+    def get_remaining_fraction(self, item):
+        from planning.services.scheduler_v1 import _remaining_fraction
+        return '0' if item.is_completed else str(_remaining_fraction(item))
+
+
+class PlanningItemSerializer(RemainingWorkMixin, serializers.ModelSerializer):
+    remaining_fraction = serializers.SerializerMethodField()
     tags = TagSerializer(many=True, read_only=True)
     tag_ids = UserScopedPrimaryKeyRelatedField(
         many=True, queryset=Tag.objects.all(), source='tags', required=False,
@@ -122,8 +130,9 @@ class PlanningItemSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'parent', 'item_type', 'title', 'description', 'sibling_order',
             'start_date', 'due_date', 'scheduled_date', 'execution_rank',
-            'completed_display_date', 'manual_requested_date',
-            'duration_category', 'percent_completed',
+            'due_date_inherited',
+            'completed_display_date', 'manual_requested_date', 'manual_anchor_origin_date',
+            'duration_category', 'percent_completed', 'remaining_fraction',
             'priority_position', 'is_completed', 'has_deadline',
             'canvas_object_type', 'canvas_object_id',
             'tags', 'tag_ids', 'assignment_detail',
@@ -131,7 +140,8 @@ class PlanningItemSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = [
             'priority_position', 'scheduled_date', 'execution_rank',
-            'completed_display_date', 'manual_requested_date',
+            'due_date_inherited',
+            'completed_display_date', 'manual_requested_date', 'manual_anchor_origin_date',
             'percent_completed', 'canvas_object_type',
             'canvas_object_id', 'created_at', 'updated_at',
         ]
@@ -148,6 +158,15 @@ class PlanningItemSerializer(serializers.ModelSerializer):
         if start and due and due < start:
             raise serializers.ValidationError(
                 {'due_date': 'A due date cannot fall before the start date.'}
+            )
+        if (
+            'due_date' in attrs
+            and due is not None
+            and (self.instance is None or due != self.instance.due_date)
+            and due < user_local_date(self.context['request'].user)
+        ):
+            raise serializers.ValidationError(
+                {'due_date': 'Due date cannot be earlier than today.'}
             )
         return attrs
 
@@ -206,12 +225,13 @@ class PlanningItemSerializer(serializers.ModelSerializer):
         """Rewrite the junction rows rather than using the m2m manager, so the
         explicit through model stays the single way rows are created."""
         PlanningItemTag.objects.filter(planning_item=item).delete()
+        unique_tags = {tag.pk: tag for tag in tags}.values()
         PlanningItemTag.objects.bulk_create(
-            [PlanningItemTag(planning_item=item, tag=tag) for tag in tags]
+            [PlanningItemTag(planning_item=item, tag=tag) for tag in unique_tags]
         )
 
 
-class PlanningItemTreeSerializer(serializers.ModelSerializer):
+class PlanningItemTreeSerializer(RemainingWorkMixin, serializers.ModelSerializer):
     """A Text View node (FR-06). ``children`` is filled in by the view, which
     already has the whole tree in memory."""
 
@@ -219,6 +239,10 @@ class PlanningItemTreeSerializer(serializers.ModelSerializer):
     assignment_detail = AssignmentDetailSerializer(read_only=True)
     depth = serializers.IntegerField(read_only=True)
     children = serializers.SerializerMethodField()
+    remaining_fraction = serializers.SerializerMethodField()
+    deadline_overdue = serializers.SerializerMethodField()
+    active_carried_anchor = serializers.SerializerMethodField()
+    expired_anchor_history = serializers.SerializerMethodField()
 
     #: Recursive, so the schema describes children as a list of nodes rather
     #: than trying to expand the nesting forever.
@@ -228,9 +252,11 @@ class PlanningItemTreeSerializer(serializers.ModelSerializer):
         model = PlanningItem
         fields = [
             'id', 'parent', 'item_type', 'title', 'description', 'depth',
-            'sibling_order', 'start_date', 'due_date', 'scheduled_date',
-            'duration_category', 'priority_position', 'is_completed',
-            'tags', 'assignment_detail', 'children',
+            'sibling_order', 'start_date', 'due_date', 'due_date_inherited', 'scheduled_date',
+            'duration_category', 'percent_completed', 'remaining_fraction', 'priority_position', 'is_completed',
+            'tags', 'assignment_detail', 'manual_requested_date', 'manual_anchor_origin_date',
+            'expired_manual_requested_date', 'deadline_overdue', 'active_carried_anchor',
+            'expired_anchor_history', 'children',
         ]
 
     @extend_schema_field(_children_schema)
@@ -238,6 +264,21 @@ class PlanningItemTreeSerializer(serializers.ModelSerializer):
         return PlanningItemTreeSerializer(
             getattr(item, 'child_nodes', []), many=True, context=self.context
         ).data
+
+    def _today(self, item):
+        return user_local_date(item.user)
+
+    def get_deadline_overdue(self, item):
+        from planning.services.overdue import is_overdue
+        return is_overdue(item, self._today(item))
+
+    def get_active_carried_anchor(self, item):
+        from planning.services.overdue import is_active_carried_anchor
+        return is_active_carried_anchor(item, self._today(item))
+
+    def get_expired_anchor_history(self, item):
+        from planning.services.overdue import is_expired_anchor_history
+        return is_expired_anchor_history(item, self._today(item))
 
 
 class RootRefSerializer(serializers.ModelSerializer):
@@ -327,6 +368,7 @@ class FocusCandidateSerializer(serializers.Serializer):
     manual_requested_date = serializers.DateField(
         allow_null=True,
     )
+    manual_anchor_origin_date = serializers.DateField(allow_null=True, read_only=True)
     manual_requested_order = serializers.IntegerField(
         allow_null=True,
     )
@@ -390,11 +432,20 @@ class FocusAnchorBatchChangeSerializer(
 ):
     """One staged Focus queue placement."""
 
+    order_only = serializers.BooleanField(default=False)
+
+
+class FocusExpectedQueueEntrySerializer(serializers.Serializer):
+    item_id = serializers.IntegerField(min_value=1)
+    date = serializers.DateField()
+
 
 class FocusAnchorBatchSerializer(
     serializers.Serializer
 ):
     """One atomic staged Focus queue Apply."""
+
+    expected_queue = FocusExpectedQueueEntrySerializer(many=True, required=False, allow_empty=False)
 
     changes = FocusAnchorBatchChangeSerializer(
         many=True,
@@ -434,6 +485,9 @@ class TimelineItemSerializer(serializers.ModelSerializer):
 
     tags = TagSerializer(many=True, read_only=True)
     overdue = serializers.SerializerMethodField()
+    deadline_overdue = serializers.SerializerMethodField()
+    active_carried_anchor = serializers.SerializerMethodField()
+    expired_anchor_history = serializers.SerializerMethodField()
     submission_url = serializers.CharField(source='assignment_detail.submission_url', read_only=True, allow_null=True, default=None)
     hierarchy_path = serializers.SerializerMethodField()
     has_children = serializers.SerializerMethodField()
@@ -444,16 +498,32 @@ class TimelineItemSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'parent', 'title', 'description', 'item_type', 'start_date', 'due_date',
             'scheduled_date', 'execution_rank', 'completed_display_date',
-            'manual_requested_date', 'manual_requested_order',
+            'manual_requested_date', 'manual_anchor_origin_date', 'manual_requested_order',
+            'expired_manual_requested_date',
             'duration_category',
-            'is_completed', 'priority_position', 'tags', 'overdue', 'submission_url',
+            'is_completed', 'priority_position', 'tags', 'overdue', 'deadline_overdue',
+            'active_carried_anchor', 'expired_anchor_history', 'submission_url',
             'hierarchy_path', 'has_children', 'allocations',
         ]
 
     @extend_schema_field(serializers.BooleanField())
     def get_overdue(self, item):
-        from django.utils import timezone
-        return bool(not item.is_completed and item.due_date and item.due_date < timezone.localdate())
+        return self.get_deadline_overdue(item)
+
+    @extend_schema_field(serializers.BooleanField())
+    def get_deadline_overdue(self, item):
+        from planning.services.overdue import is_overdue
+        return is_overdue(item, user_local_date(item.user))
+
+    @extend_schema_field(serializers.BooleanField())
+    def get_active_carried_anchor(self, item):
+        from planning.services.overdue import is_active_carried_anchor
+        return is_active_carried_anchor(item, user_local_date(item.user))
+
+    @extend_schema_field(serializers.BooleanField())
+    def get_expired_anchor_history(self, item):
+        from planning.services.overdue import is_expired_anchor_history
+        return is_expired_anchor_history(item, user_local_date(item.user))
 
     @extend_schema_field(serializers.ListField(child=serializers.DictField()))
     def get_hierarchy_path(self, item):
@@ -477,10 +547,12 @@ class TimelineItemSerializer(serializers.ModelSerializer):
 
 
 class OverdueEntrySerializer(serializers.Serializer):
-    """One Recent or Backlog row (FR-12)."""
+    """One Deadline or Anchor Overdue row."""
 
     item = TimelineItemSerializer()
-    days_overdue = serializers.IntegerField()
+    days_overdue = serializers.IntegerField(allow_null=True)
+    anchor_kind = serializers.CharField(allow_null=True)
+    missed_anchor_date = serializers.DateField(allow_null=True)
     hierarchy_path = serializers.ListField(child=serializers.CharField())
 
 
@@ -682,53 +754,3 @@ class SchedulerSettingsUpdateSerializer(serializers.Serializer):
         choices=SchedulingState.SchedulerFlavour.choices,
         allow_null=True,
     )
-
-
-class AvailabilityWindowSerializer(serializers.Serializer):
-    weekday = serializers.IntegerField(min_value=0, max_value=6)
-    start = serializers.TimeField(format='%H:%M', input_formats=['%H:%M'])
-    end = serializers.TimeField(format='%H:%M', input_formats=['%H:%M'])
-
-    def validate(self, data):
-        # end == start is kept on purpose: the day is not skipped. It is a
-        # zero-length window, so flag_conflicts treats any session of at
-        # least one minute as outside_availability.
-        if data['end'] < data['start']:
-            raise serializers.ValidationError(
-                'End is before start. Clear both times to skip that day.'
-            )
-        return {
-            'weekday': data['weekday'],
-            'start': data['start'].strftime('%H:%M'),
-            'end': data['end'].strftime('%H:%M'),
-        }
-
-
-class StudyPlanRequestSerializer(serializers.Serializer):
-    availability = AvailabilityWindowSerializer(many=True)
-    notes = serializers.CharField(
-        required=False, allow_blank=True, max_length=500, default=''
-    )
-
-
-class StudyPlanSessionSerializer(serializers.Serializer):
-    item_id = serializers.IntegerField()
-    date = serializers.DateField()
-    start_time = serializers.TimeField(format='%H:%M', input_formats=['%H:%M'])
-    duration_minutes = serializers.IntegerField(min_value=1, max_value=24 * 60)
-    order = serializers.IntegerField(required=False, min_value=1)
-
-    def validate(self, data):
-        row = {
-            'item_id': data['item_id'],
-            'date': data['date'].isoformat(),
-            'start_time': data['start_time'].strftime('%H:%M'),
-            'duration_minutes': data['duration_minutes'],
-        }
-        if 'order' in data:
-            row['order'] = data['order']
-        return row
-
-
-class StudyPlanEditSerializer(serializers.Serializer):
-    sessions = StudyPlanSessionSerializer(many=True, allow_empty=False)

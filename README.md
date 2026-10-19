@@ -76,15 +76,21 @@ Do not replace the commit pin with an unpinned branch such as `main`.
 
 Required contracts:
 
-- `docs/scheduler_contract.md`
-- `docs/timeline_contract.md`
+- `docs/contracts/scheduler.md`
+- `docs/contracts/timeline.md`
 
 Implementation references:
 
-- `docs/scheduler.md`
-- `docs/timelineview.md`
+- `docs/guides/scheduler.md`
+- `docs/guides/timeline.md`
+
+## Documentation
+
+The map of what to read, and what stays separate, is [`docs/README.md`](docs/README.md).
 
 ## First-time setup
+
+Daily setup, PostgreSQL, staff MFA enrolment, and troubleshooting live in one place: [`docs/setup/developer.md`](docs/setup/developer.md). A clean-clone validation pass is a different job: [`docs/setup/production.md`](docs/setup/production.md).
 
 ### 1. Clone and branch
 
@@ -118,7 +124,6 @@ Fill in `backend/.env` (never commit this file):
 | `ARC_FIELD_ENCRYPTION_KEY` | Fernet key for TOTP secrets and Canvas tokens. Generate with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. Changing it later makes existing encrypted rows unreadable. |
 | `CORS_ALLOWED_ORIGINS` | `http://localhost:5173,http://127.0.0.1:5173` |
 | `CANVAS_BASE_URL` | Institution Canvas host, no trailing `/api/v1` |
-| `LLM_API_KEY` … `LLM_API_KEY_5` | Optional study-plan providers, tried in order. Leave empty to use a local deadline order. See `backend/.env.example`. The browser never receives these keys. |
 
 Create the Postgres database if needed (`CREATE DATABASE arc_db;`), then:
 
@@ -127,7 +132,7 @@ python manage.py migrate
 python manage.py seed_demo
 ```
 
-`seed_demo` is optional. It creates local demo students plus `admin@example.com`. That admin **cannot log in until MFA is enrolled** (see [Admin accounts](#admin-accounts) below). Re-run with `--reset` to wipe and recreate those demo emails.
+`seed_demo` is optional. It creates local demo students plus `admin@example.com`. That admin cannot log in until MFA is enrolled. Enrolment, PostgreSQL roles, and troubleshooting are in [`docs/setup/developer.md`](docs/setup/developer.md). Re-run with `--reset` to wipe and recreate those demo emails.
 
 ### 3. Frontend environment
 
@@ -167,151 +172,7 @@ Frontend:
 For fresh clones, prefer `npm ci` over `npm install`; it installs exactly from
 the committed `package-lock.json`.
 
-### Backend environment
-
-ARC requires PostgreSQL. SQLite is intentionally unsupported because ARC uses
-database behaviour that SQLite cannot reproduce correctly.
-
-Create your local environment file:
-
-    cd backend
-    cp .env.example .env
-
-On Windows PowerShell:
-
-    cd backend
-    Copy-Item .env.example .env
-
-Generate a Django secret:
-
-    python -c "from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())"
-
-Paste it after `SECRET_KEY=`.
-
-Generate the ARC field-encryption key:
-
-    python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
-
-Paste it after `ARC_FIELD_ENCRYPTION_KEY=`.
-
-Do not commit `backend/.env`.
-
-#### PostgreSQL database
-
-The default development database name is:
-
-    arc_db
-
-There are two normal local connection styles.
-
-**macOS/Linux with a local PostgreSQL role matching your OS username**
-
-For installations such as Homebrew PostgreSQL, this is often enough:
-
-    createdb arc_db
-
-Then use:
-
-    DATABASE_URL=postgres:///arc_db
-
-This uses the local PostgreSQL role associated with your operating-system user
-and does not require storing a database password in `.env`.
-
-**Password-authenticated PostgreSQL / Windows**
-
-Create a developer role and database using a PostgreSQL administrator account.
-For example, in `psql`:
-
-    CREATE ROLE arc_dev WITH LOGIN PASSWORD 'choose-a-local-password';
-    CREATE DATABASE arc_db OWNER arc_dev;
-
-Then use:
-
-    DATABASE_URL=postgres://arc_dev:YOUR_PASSWORD@localhost:5432/arc_db
-
-If the password contains reserved URL characters, percent-encode them.
-
-Each developer may use their own local PostgreSQL credentials. Database
-credentials are machine-local and must never be committed.
-
-After configuring the database:
-
-    python manage.py migrate
-
-Optional demo data:
-
-    python manage.py seed_demo
-
-The encryption key is different from the database password. Existing shared or
-deployed databases must keep their original `ARC_FIELD_ENCRYPTION_KEY`, because
-changing that key makes previously encrypted values unreadable.
-
-### Do not create users in pgAdmin
-
-The `users` table stores a Django **password hash** and a **Fernet-encrypted** TOTP secret. A handmade `INSERT` will not log in. pgAdmin is fine for inspecting `email`, `is_admin`, and `is_locked`. Do not edit `password_hash` or `totp_secret_encrypted` by hand.
-
-### Create (or promote) a staff user in the Django shell
-
-From `backend/` with the venv active and settings loading (you must **not** see `Automatic imports are disabled since settings are not configured`):
-
-```powershell
-python manage.py shell
-```
-
-```python
-import pyotp
-from django.contrib.auth import get_user_model
-
-User = get_user_model()
-email = "you@example.com"              # replace
-password = "pick-a-strong-password"    # replace
-
-user, created = User.objects.get_or_create(
-    email=email,
-    defaults={"is_admin": True},
-)
-user.set_password(password)
-user.is_admin = True
-user.is_locked = False
-
-secret = pyotp.random_base32()
-user.totp_secret_encrypted = secret
-user.save()
-
-print("created:" if created else "updated:", user.email)
-print("secret:", secret)
-print("code now:", pyotp.TOTP(secret).now())
-```
-
-- **secret** — add this to an authenticator app (issuer `ARC`), or keep it to generate codes in the shell.
-- **code now** — the six digits for the **Authentication code** field. It changes every 30 seconds.
-
-If the login page rejects the code as expired, print a fresh one (still in the venv):
-
-```powershell
-python -c "import pyotp; print(pyotp.TOTP('PASTE_SECRET_HERE').now())"
-```
-
-Then open http://localhost:5173/admin/login, enter the email and password, **Continue**, then the six digits, **Enter console**.
-
-`seed_demo`'s `admin@example.com` / `arc-demo-pass-1234` still needs this MFA enrolment step. The same shell snippet works: set `email = "admin@example.com"` and the demo password, or only assign `totp_secret_encrypted` if the password is already set.
-
-To promote an existing student (already MFA-enrolled) without rotating their TOTP:
-
-```python
-user = User.objects.get(email="student@example.com")
-user.is_admin = True
-user.save(update_fields=["is_admin"])
-```
-
-They then use `/admin/login` with their existing authenticator, not `/`.
-
-### After you are in
-
-- **Overview** (`/admin`) — counts only: people, locks, overdue items, Canvas sync health. No planner titles or tokens. See [FR-16](FR_TRACEABILITY.md#fr-16--admin-stats-lock-and-unlock).
-- **Accounts** (`/admin/users`) — search by email, lock or restore. You cannot lock your own account.
-
-An administrator cannot delete users from this console. Locking ends the target's live JWT on their next request (`ArcJWTAuthentication` re-reads `is_locked`).
+PostgreSQL connection styles, why SQLite is unsupported, staff MFA enrolment, and local troubleshooting are in [`docs/setup/developer.md`](docs/setup/developer.md).
 
 ## Tests
 
@@ -322,12 +183,9 @@ python -m pytest
 python manage.py check
 ```
 
-Frontend production build:
+`python -m pytest` also prints coverage for `accounts`, `planning`, `canvas_integration`, `analytics`, and `core` (migrations, tests, and management commands are excluded). Models, views, and services are expected to stay around 85% or better. A file listed in the report is below 100%; the missing line numbers are the gaps.
 
-```powershell
-cd frontend
-npm run build
-```
+How the smoke, regression, and certify gates fit together is in [`tests/README.md`](tests/README.md). The suite matrix is [`tests/contracts/regression_matrix.md`](tests/contracts/regression_matrix.md).
 
 ## Project layout
 
@@ -335,7 +193,8 @@ npm run build
 backend/          Django project (arc_backend), apps: core, accounts, planning,
                   canvas_integration, analytics
 frontend/         Vite SPA
+docs/README.md    Which document to read
 ARCHITECTURE.md   Why the system is shaped this way
 FR_TRACEABILITY.md  FR-01 … FR-16 → endpoints, services, tests, React views
-AGENTS.md         Stack and git conventions for this repo
+AGENTS.md         Stack, git, and agent conventions for this repo
 ```

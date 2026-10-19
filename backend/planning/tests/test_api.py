@@ -6,8 +6,11 @@ custom actions, and above all that no endpoint will serve or accept another
 user's rows (FR-03).
 """
 
+from datetime import timedelta
+
 import pyotp
 import pytest
+from django.utils import timezone
 from freezegun import freeze_time
 from decimal import Decimal
 from accounts.tests.conftest import login_through_mfa, make_user
@@ -74,7 +77,7 @@ def test_creating_an_assignment_with_nested_detail(client):
         {
             'item_type': ItemType.ASSIGNMENT,
             'title': 'Assignment 1',
-            'due_date': '2026-10-01',
+            'due_date': (timezone.localdate() + timedelta(days=7)).isoformat(),
             'assignment_detail': {'weight_percent': '25.00', 'submission_url': 'https://x.test/a'},
         },
         format='json',
@@ -350,6 +353,39 @@ def test_reopening_a_task_returns_it_to_the_priority_order(client, user, make_it
     assert done.priority_position == 2
 
 
+@freeze_time('2026-09-14')
+def test_reopening_a_past_due_task_restores_overdue_eligibility_without_changing_dates(
+        client, user, other_user, make_item):
+    item = make_item(
+        user,
+        'Past-due task',
+        start_date='2026-09-01',
+        due_date='2026-09-13',
+    )
+    make_item(other_user, 'Other user task', due_date='2026-09-13')
+
+    completed = client.post(
+        f'/api/planning/items/{item.pk}/complete/', {}, format='json'
+    )
+    assert completed.status_code == 200, completed.data
+    assert client.get('/api/planning/overdue/').data == {
+        'deadline_overdue': [], 'anchor_overdue': []
+    }
+
+    reopened = client.post(
+        f'/api/planning/items/{item.pk}/complete/',
+        {'completed': False},
+        format='json',
+    )
+    assert reopened.status_code == 200, reopened.data
+    assert [row['item']['id'] for row in client.get('/api/planning/overdue/').data['deadline_overdue']] == [item.pk]
+
+    item.refresh_from_db()
+    assert item.is_completed is False
+    assert item.start_date.isoformat() == '2026-09-01'
+    assert item.due_date.isoformat() == '2026-09-13'
+
+
 # --- Priority ---------------------------------------------------------------
 
 def test_priority_lists_active_tasks_in_order_with_their_root(client, user, make_item):
@@ -520,19 +556,18 @@ def test_the_timeline_never_includes_another_users_items(client, other_user, mak
 # --- Overdue ----------------------------------------------------------------
 
 @freeze_time('2026-09-14')
-def test_overdue_splits_recent_from_backlog(client, user, make_item):
-    """FR-12: the boundary is seven days."""
+def test_overdue_returns_one_deadline_section(client, user, make_item):
     make_item(user, 'Yesterday', due_date='2026-09-13')
     make_item(user, 'A week ago', due_date='2026-09-07')
     make_item(user, 'Ancient', due_date='2026-08-01')
 
     response = client.get('/api/planning/overdue/')
     assert response.status_code == 200
-    assert [row['item']['title'] for row in response.data['recent']] == [
-        'A week ago', 'Yesterday'
+    assert [row['item']['title'] for row in response.data['deadline_overdue']] == [
+        'Ancient', 'A week ago', 'Yesterday'
     ]
-    assert [row['item']['title'] for row in response.data['backlog']] == ['Ancient']
-    assert response.data['recent'][1]['days_overdue'] == 1
+    assert response.data['deadline_overdue'][2]['days_overdue'] == 1
+    assert response.data['anchor_overdue'] == []
 
 
 @freeze_time('2026-09-14')
@@ -541,7 +576,7 @@ def test_overdue_reports_the_hierarchy_path(client, user, make_item):
     week = make_item(user, 'Week 5', ItemType.GOAL, parent=root)
     make_item(user, 'Quiz', parent=week, due_date='2026-09-13')
 
-    row = client.get('/api/planning/overdue/').data['recent'][0]
+    row = client.get('/api/planning/overdue/').data['deadline_overdue'][0]
     assert row['hierarchy_path'] == ['ELEC3609', 'Week 5', 'Quiz']
 
 
@@ -553,13 +588,13 @@ def test_adaptive_and_completed_items_are_never_overdue(client, user, make_item)
     make_item(user, 'Goal', ItemType.GOAL, due_date='2026-09-01')
 
     response = client.get('/api/planning/overdue/')
-    assert response.data == {'recent': [], 'backlog': []}
+    assert response.data == {'deadline_overdue': [], 'anchor_overdue': []}
 
 
 @freeze_time('2026-09-14')
 def test_overdue_never_includes_another_users_items(client, other_user, make_item):
     make_item(other_user, 'Their missed quiz', due_date='2026-09-01')
-    assert client.get('/api/planning/overdue/').data == {'recent': [], 'backlog': []}
+    assert client.get('/api/planning/overdue/').data == {'deadline_overdue': [], 'anchor_overdue': []}
 
 
 # --- Marks ------------------------------------------------------------------
@@ -1163,9 +1198,13 @@ def test_every_planning_endpoint_refuses_an_anonymous_request(db, api):
         '/api/planning/timeline/',
         '/api/planning/overdue/',
         '/api/planning/marks/',
-        '/api/planning/study-plans/',
     ):
         assert api.get(path).status_code == 401, path
+
+
+def test_study_plan_endpoint_is_gone(db, api):
+    """The study-plan suggestion is no longer part of the product."""
+    assert api.get('/api/planning/study-plans/').status_code == 404
 
 
 def test_the_item_list_shows_only_your_own_items(client, user, other_user, make_item):

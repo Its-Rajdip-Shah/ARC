@@ -326,9 +326,11 @@ export function useBatchAnchorFocus() {
 
     mutationFn({
       changes,
+      expectedQueue,
     }) {
       return anchorFocusBatch({
         changes,
+        ...(expectedQueue ? { expected_queue: expectedQueue } : {}),
       })
     },
 
@@ -389,6 +391,9 @@ export function useBatchAnchorFocus() {
 
             manual_requested_order:
               change.order,
+
+            manual_anchor_origin_date:
+              change.order_only ? candidate.manual_anchor_origin_date : change.date,
           }
         }
 

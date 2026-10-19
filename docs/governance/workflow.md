@@ -1,0 +1,31 @@
+# ARC Development Workflow — Architect / Bricklayer
+
+**Status:** Product-owner-directed development process, effective for subsequent ARC tasks once installed and accepted. This document governs *how implementation work is authorized*; it does not supersede domain behavior or frozen scheduling/Timeline contracts.
+
+## Authority and reconciliation
+
+- Product behavior: explicitly approved decisions and versioned normative contracts take precedence. Read `docs/governance/constitution.md`, `docs/contracts/scheduler.md`, `docs/contracts/timeline.md`, and the relevant domain references. The constitution is a behavioral map and may itself contain proposed/unresolved rules; never silently promote a proposal to a frozen rule.
+- Implementation process: this document describes the development gate sequence. `AGENTS.md` continues to govern repository conventions and incremental `.arc-knowledge/` updates, except that explicit product-owner instructions prohibit unattended commits, branch/worktree creation, resets, rebases, pushes, or deletion of dirty/untracked work.
+- If documents or code conflict, stop and present provenance and the product decision needed. Code/tests show current behavior, not authority to change intended behavior.
+
+## Required sequence for every roadmap item
+
+1. **Roadmap reconciliation.** Confirm the next uncompleted Notion milestone and acceptance expectations; check already-frozen work and historical runs. Do not restart an independently accepted milestone merely because an old worker state remains blocked.
+2. **Source inspection.** Check current branch/HEAD, complete dirty/untracked inventory, actual affected files/functions, tests, migrations, knowledge index, normative contracts and relevant domain invariants. Reuse recent inspected evidence when hashes/status still match; inspect only changed relevant regions. Avoid broad or repeated paid investigation.
+3. **Exact implementation blueprint.** The *assistant* is the implementation architect. Produce file-by-file instructions citing existing symbols/paths, current relevant behavior, exact intended additions/removals/replacements, regression cases, test commands, invariant protection, allowed files, expected UI changes and identified risks. Explain in concise terms **what changes**, **what stays unchanged**, and **potential issues**. Never silently decide an unresolved product behavior.
+4. **Verified execution authorization.** Obtain explicit product-owner approval for the behavior and consequential choices before implementing. Verify blueprint against current Git HEAD, tracked/untracked status and relevant source hashes immediately before dispatch. Record authorized dirty-file mutations specifically; preserve unrelated hunks. Reject stale source or unexpected files. A blueprint is precise but not blindly rigid: material divergence triggers STOP, not improvisation. Ensure the complete blueprint and workflow reference are **inside** the worker contract. Check for existing contract/run before writing and never overwrite history.
+5. **Codex implementation.** Codex is an execution bricklayer, not the product architect. Follow the verified blueprint with minimal discretion. Minor syntax and local integration details may be resolved when semantics remain identical. Report material discrepancies, changed assumptions, normative conflicts or new product decisions and stop for further approval. Keep work bounded and token-efficient. Use existing worker isolation, masking, auth, recovery, timeouts, monitoring and Docker cleanup protections; do not modify worker mechanics as part of a product UI task.
+6. **Automated verification.** Run focused regressions, relevant existing suites, deterministic/static checks, builds and backend checks when backend behavior changes. Include edge cases: tenant isolation, local-day boundaries, canonical dates, anchor carry/expiry, scheduler flavors, atomicity and keyboard/responsive UI where applicable. Do not weaken tests to make them pass.
+7. **Independent technical audit.** The assistant independently examines the real diff, tests, generated artifact/report, affected invariants and complete dirty/untracked inventory. Codex's own success report is not independent acceptance. Request a bounded inspection ZIP when necessary. Verify no unrelated modifications and no historical evidence replacement.
+8. **Human acceptance.** Present concrete user-visible acceptance checks and obtain the product owner's actual approval. Passing unit tests does not establish pixel-level UI acceptance.
+9. **Roadmap reconciliation and freeze.** After independent audit and human acceptance, record freeze evidence without rewriting historical failed/blocked runs; reconcile the roadmap before selecting the next task. Never announce freeze prematurely.
+
+## Contract-generation minimum
+
+Every future task contract must identify: task ID and Notion provenance; applicable authority/version; approved behavior and non-changes; exact source-anchored blueprint; test matrix; inspected Git baseline and dirty-file authorization; file scope; token/repair budgets; explicit STOP-on-material-drift semantics; the reference `docs/governance/workflow.md`; and audit/human acceptance requirements. The contract must distinguish `approved-for-implementation` from `verified`, `human-accepted`, and `frozen` states.
+
+**Enforcement status:** This document and a contract reference are *process specifications*, not proof of automatic enforcement. Do not claim permanent machine enforcement until both the installed runner and the contract-generation path have been inspected and tested against stale baselines, unauthorized dirty files, missing blueprints, and bypass attempts. Any needed runner enforcement is a separately approved, versioned, independently audited worker task; never expand a product/HA1 implementation into a worker refactor.
+
+## HA1 boundary
+
+`V3-23-HA1` is a separate post-human-audit correction. Preserve the original V3-23 history. Apply the four approved frontend corrections only, then obtain independent technical review and user visual acceptance before freezing. Do not launch an implementation stage merely because this workflow document is installed.

@@ -16,6 +16,22 @@ export function updateItem(id, payload) {
   return apiClient.patch(`planning/items/${id}/`, payload).then((res) => res.data)
 }
 
+export function listPrerequisites(id) {
+  return apiClient.get(`planning/items/${id}/prerequisites/`).then((res) => res.data)
+}
+
+export function getDependencyGraph(id) {
+  return apiClient.get(`planning/items/${id}/dependency_graph/`).then((res) => res.data)
+}
+
+export function addPrerequisite(id, prerequisiteId) {
+  return apiClient.post(`planning/items/${id}/prerequisites/`, { prerequisite_id: prerequisiteId }).then((res) => res.data)
+}
+
+export function removePrerequisite(id, prerequisiteId) {
+  return apiClient.delete(`planning/items/${id}/prerequisites/`, { data: { prerequisite_id: prerequisiteId } }).then((res) => res.data)
+}
+
 export function deleteItem(id) {
   return apiClient.delete(`planning/items/${id}/`).then((res) => res.data)
 }
@@ -198,16 +214,4 @@ export function updateTimelineOverload(payload) {
 
 export function rescheduleTimeline() {
   return apiClient.post('planning/timeline/reschedule/').then((res) => res.data)
-}
-
-export function getStudyPlan() {
-  return apiClient.get('planning/study-plans/').then((res) => res.data)
-}
-
-export function requestStudyPlan(payload) {
-  return apiClient.post('planning/study-plans/', payload).then((res) => res.data)
-}
-
-export function updateStudyPlan(payload) {
-  return apiClient.patch('planning/study-plans/', payload).then((res) => res.data)
 }

@@ -26,9 +26,6 @@ def focus_bucket_key(
     *,
     is_residual=False,
 ):
-    if is_residual:
-        return QUICK_WIN
-
     try:
         return _DURATION_BUCKETS[
             duration_category

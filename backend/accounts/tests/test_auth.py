@@ -6,9 +6,11 @@ turn a rejection test green.
 """
 
 import pytest
+from django.contrib.auth import get_user_model
 
 from accounts.tokens import MFAEnrolmentToken, MFAPendingToken
 from accounts.totp import verify
+from planning.models import SchedulingState
 
 from .conftest import PASSWORD, code_for, expired_token, login_through_mfa, make_user
 
@@ -38,7 +40,7 @@ def fields(response):
 # --------------------------------------------------------------------------
 
 def test_register_returns_a_qr_code_and_leaves_mfa_incomplete(api):
-    response = api.post(REGISTER, {'email': 'new@example.com', 'password': PASSWORD}, format='json')
+    response = api.post(REGISTER, {'email': 'new@example.com', 'password': PASSWORD, 'scheduler_flavour': 'monk'}, format='json')
 
     assert response.status_code == 201
     assert response.data['user']['email'] == 'new@example.com'
@@ -50,10 +52,62 @@ def test_register_returns_a_qr_code_and_leaves_mfa_incomplete(api):
 
 
 def test_register_never_exposes_the_stored_secret_field(api):
-    response = api.post(REGISTER, {'email': 'new@example.com', 'password': PASSWORD}, format='json')
+    response = api.post(REGISTER, {'email': 'new@example.com', 'password': PASSWORD, 'scheduler_flavour': 'monk'}, format='json')
     assert 'totp_secret_encrypted' not in response.data['user']
     assert 'password' not in response.data['user']
+@pytest.mark.parametrize('flavour', ['lock-in', 'monk'])
+def test_registration_saves_scheduler_flavour(api, api_for, flavour):
+    response = api.post(
+        REGISTER,
+        {
+            'email': 'new@example.com',
+            'password': PASSWORD,
+            'scheduler_flavour': flavour,
+        },
+        format='json',
+    )
 
+    assert response.status_code == 201
+
+    state = SchedulingState.objects.get(
+        user_id=response.data['user']['id']
+    )
+
+    assert state.scheduler_flavour == flavour
+    enrolment = api.post(
+        ENROL,
+        {
+            'enrolment_token': response.data['enrolment_token'],
+            'code': code_for(response.data['mfa']['secret']),
+        },
+        format='json',
+    )
+    assert enrolment.status_code == 200
+
+    settings_response = api_for(state.user).get(
+        '/api/planning/scheduler/settings/'
+    )
+
+    assert settings_response.status_code == 200
+    assert settings_response.json() == {
+        'flavour': flavour,
+        'configured': True,
+    }
+
+@pytest.mark.parametrize('flavour', [None, 'invalid'])
+def test_registration_rejects_missing_or_invalid_flavour(api, flavour):
+    payload = {
+        'email': 'new@example.com',
+        'password': PASSWORD,
+    }
+
+    if flavour is not None:
+        payload['scheduler_flavour'] = flavour
+
+    response = api.post(REGISTER, payload, format='json')
+
+    assert response.status_code == 400
+    assert 'scheduler_flavour' in fields(response)
 
 @pytest.mark.parametrize(
     'payload, bad_field',
@@ -76,9 +130,84 @@ def test_register_rejects_a_duplicate_email(api, user):
     assert 'email' in fields(response)
 
 
+def test_same_password_resumes_an_unfinished_signup(api):
+    first = api.post(
+        REGISTER,
+        {'email': 'new@example.com', 'password': PASSWORD, 'scheduler_flavour': 'monk'},
+        format='json',
+    )
+    assert first.status_code == 201
+
+    second = api.post(
+        REGISTER,
+        {'email': 'new@example.com', 'password': PASSWORD, 'scheduler_flavour': 'lock-in'},
+        format='json',
+    )
+
+    assert second.status_code == 201
+    assert second.data['user']['id'] == first.data['user']['id']
+    assert second.data['user']['mfa_enabled'] is False
+    assert get_user_model().objects.filter(email__iexact='new@example.com').count() == 1
+    assert SchedulingState.objects.get(user_id=first.data['user']['id']).scheduler_flavour == 'lock-in'
+
+
+def test_resumed_signup_can_finish_enrolment_and_reach_login(api):
+    first = api.post(
+        REGISTER,
+        {'email': 'new@example.com', 'password': PASSWORD, 'scheduler_flavour': 'monk'},
+        format='json',
+    )
+    resumed = api.post(
+        REGISTER,
+        {'email': 'new@example.com', 'password': PASSWORD, 'scheduler_flavour': 'monk'},
+        format='json',
+    )
+    assert resumed.status_code == 201
+
+    enrolled = api.post(
+        ENROL,
+        {
+            'enrolment_token': resumed.data['enrolment_token'],
+            'code': code_for(resumed.data['mfa']['secret']),
+        },
+        format='json',
+    )
+    assert enrolled.status_code == 200
+    assert enrolled.data['user']['mfa_enabled'] is True
+
+    login = api.post(LOGIN, {'email': 'new@example.com', 'password': PASSWORD}, format='json')
+    assert login.status_code == 200
+    assert login.data['mfa_required'] is True
+    assert first.data['mfa']['secret'] != resumed.data['mfa']['secret']
+
+
+def test_a_different_password_cannot_take_over_an_unfinished_signup(api):
+    api.post(
+        REGISTER,
+        {'email': 'new@example.com', 'password': PASSWORD, 'scheduler_flavour': 'monk'},
+        format='json',
+    )
+
+    response = api.post(
+        REGISTER,
+        {
+            'email': 'new@example.com',
+            'password': 'different-horse-battery',
+            'scheduler_flavour': 'lock-in',
+        },
+        format='json',
+    )
+
+    assert response.status_code == 400
+    assert 'email' in fields(response)
+    user = get_user_model().objects.get(email='new@example.com')
+    assert user.mfa_enabled is False
+    assert SchedulingState.objects.get(user=user).scheduler_flavour == 'monk'
+
+
 def test_enrolment_stores_the_secret(api):
     registered = api.post(
-        REGISTER, {'email': 'new@example.com', 'password': PASSWORD}, format='json'
+        REGISTER, {'email': 'new@example.com', 'password': PASSWORD, 'scheduler_flavour': 'monk'}, format='json'
     ).data
     secret = registered['mfa']['secret']
 
@@ -95,7 +224,7 @@ def test_enrolment_stores_the_secret(api):
 
 def test_enrolment_rejects_a_wrong_code(api):
     registered = api.post(
-        REGISTER, {'email': 'new@example.com', 'password': PASSWORD}, format='json'
+        REGISTER, {'email': 'new@example.com', 'password': PASSWORD, 'scheduler_flavour': 'monk'}, format='json'
     ).data
 
     response = api.post(
@@ -139,10 +268,71 @@ def test_login_rejects_a_wrong_password(api, user):
     assert code(response) == 'invalid_credentials'
 
 
+def test_login_cooldown_after_five_failed_passwords(api, user):
+    from django.core.cache import cache
+
+    cache.clear()
+
+    payload = {
+        'email': user.email,
+        'password': 'incorrect-password',
+    }
+
+    # First four failed attempts return 401.
+    for _ in range(4):
+        response = api.post(LOGIN, payload, format='json')
+        assert response.status_code == 401
+        assert code(response) == 'invalid_credentials'
+
+    # Fifth failure triggers the temporary cool-down.
+    response = api.post(LOGIN, payload, format='json')
+    assert response.status_code == 429
+
+    # Even the correct password is blocked during cool-down.
+    response = api.post(
+        LOGIN,
+        {'email': user.email, 'password': PASSWORD},
+        format='json',
+    )
+    assert response.status_code == 429
+
+
 def test_login_rejects_an_unknown_email(api, db):
     response = api.post(LOGIN, {'email': 'nobody@example.com', 'password': PASSWORD}, format='json')
     assert response.status_code == 401
     assert code(response) == 'invalid_credentials'
+
+
+def test_unknown_email_cooldown_does_not_reveal_accounts(api, user):
+    from django.core.cache import cache
+
+    cache.clear()
+
+    known = api.post(
+        LOGIN,
+        {'email': user.email, 'password': 'wrong-password'},
+        format='json',
+    )
+
+    unknown_payload = {
+        'email': 'nonexistent@example.com',
+        'password': 'wrong-password',
+    }
+
+    unknown = api.post(LOGIN, unknown_payload, format='json')
+
+    # Unknown and existing emails produce identical credential errors.
+    assert known.status_code == unknown.status_code == 401
+    assert code(known) == code(unknown) == 'invalid_credentials'
+
+    # Unknown emails receive the same failed-attempt protection.
+    for _ in range(3):
+        response = api.post(LOGIN, unknown_payload, format='json')
+        assert response.status_code == 401
+
+    # Fifth failure triggers cool-down.
+    response = api.post(LOGIN, unknown_payload, format='json')
+    assert response.status_code == 429
 
 
 def test_login_rejects_a_locked_account(api, user):
@@ -172,6 +362,7 @@ def test_login_refuses_an_account_that_never_finished_enrolment(api, unenrolled)
     response = api.post(LOGIN, {'email': unenrolled.email, 'password': PASSWORD}, format='json')
     assert response.status_code == 403
     assert code(response) == 'mfa_enrolment_required'
+    assert 'same email and password' in response.data['error']['message']
 
 
 # --------------------------------------------------------------------------
@@ -202,6 +393,48 @@ def test_mfa_step_rejects_a_wrong_code(api, user, secret):
 
     assert response.status_code == 401
     assert code(response) == 'invalid_totp'
+
+
+def test_mfa_cooldown_after_five_failed_codes(api, user, secret):
+    from django.core.cache import cache
+
+    cache.clear()
+
+    step_one = api.post(
+        LOGIN,
+        {'email': user.email, 'password': PASSWORD},
+        format='json',
+    )
+    assert step_one.status_code == 200
+
+    valid_code = code_for(secret)
+    wrong_code = '000000' if valid_code != '000000' else '111111'
+
+    payload = {
+        'mfa_token': step_one.data['mfa_token'],
+        'code': wrong_code,
+    }
+
+    # First four incorrect codes return 401.
+    for _ in range(4):
+        response = api.post(LOGIN_MFA, payload, format='json')
+        assert response.status_code == 401
+        assert code(response) == 'invalid_totp'
+
+    # Fifth incorrect code triggers cool-down.
+    response = api.post(LOGIN_MFA, payload, format='json')
+    assert response.status_code == 429
+
+    # Even the correct MFA code is blocked during cool-down.
+    response = api.post(
+        LOGIN_MFA,
+        {
+            'mfa_token': step_one.data['mfa_token'],
+            'code': valid_code,
+        },
+        format='json',
+    )
+    assert response.status_code == 429
 
 
 def test_mfa_step_rejects_a_replayed_code(api, user, secret):
@@ -319,6 +552,15 @@ def test_refreshing_preserves_the_full_scope(api, user, secret):
 def test_logout_blacklists_the_refresh_token(api, user, secret):
     body = login_through_mfa(api, user, secret)
     api.credentials(HTTP_AUTHORIZATION=f'Bearer {body["access"]}')
+
+    assert api.post(LOGOUT, {'refresh': body['refresh']}, format='json').status_code == 205
+    assert api.post(REFRESH, {'refresh': body['refresh']}, format='json').status_code == 401
+
+
+def test_logout_works_without_an_access_token(api, user, secret):
+    """Refresh is the credential — clients must be able to revoke after expiry."""
+    body = login_through_mfa(api, user, secret)
+    api.credentials()
 
     assert api.post(LOGOUT, {'refresh': body['refresh']}, format='json').status_code == 205
     assert api.post(REFRESH, {'refresh': body['refresh']}, format='json').status_code == 401

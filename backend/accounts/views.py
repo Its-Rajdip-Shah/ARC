@@ -5,30 +5,65 @@ short-lived mfa_pending token. That token names a real user and is validly
 signed, so the project-wide authentication class refuses it everywhere except
 the one endpoint below that expects it in the request body.
 """
-
+from django.db import transaction
 from django.contrib.auth import get_user_model
 from django.contrib.auth.signals import user_logged_in
 from drf_spectacular.utils import extend_schema, inline_serializer
 from rest_framework import serializers, status
-from rest_framework.exceptions import AuthenticationFailed, PermissionDenied
+from rest_framework.exceptions import APIException, AuthenticationFailed, PermissionDenied, ValidationError
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.tokens import RefreshToken
+from planning.models import SchedulingState
 
-from . import totp
+from . import password_reset, totp
+from .login_protection import (
+    check_login_cooldown,
+    record_failed_login,
+    clear_failed_logins,
+)
 from .serializers import (
     LoginSerializer,
     LogoutSerializer,
+    PasswordChangeSerializer,
+    PasswordResetConfirmSerializer,
+    PasswordResetRequestSerializer,
+    AuthenticatorRecoveryConfirmSerializer,
     MFAEnrolConfirmSerializer,
     MFAVerifySerializer,
     RegisterSerializer,
+    TimeZoneUpdateSerializer,
     UserSerializer,
 )
 from .tokens import FULL_ACCESS_SCOPE, MFAEnrolmentToken, MFAPendingToken
 
 User = get_user_model()
+
+
+def _enrolment_body(user):
+    secret = totp.generate_secret()
+    enrolment = MFAEnrolmentToken.for_user(user)
+    enrolment['secret'] = secret
+    uri = totp.provisioning_uri(user.email, secret)
+    return {
+        'enrolment_token': str(enrolment),
+        'mfa': {
+            'secret': secret,
+            'provisioning_uri': uri,
+            'qr_png_base64': totp.qr_png_base64(uri),
+        },
+    }
+
+
+class ResetNotReadyResponse(APIException):
+    status_code = 400
+    default_detail = (
+        'This reset is not ready. Ask an administrator to approve it, or start again.'
+    )
+    default_code = 'reset_not_ready'
 
 
 def _issue_token_pair(user):
@@ -62,6 +97,8 @@ class PublicAuthView(APIView):
 
     permission_classes = [AllowAny]
     authentication_classes = []
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'auth'
 
     def get_authenticate_header(self, request):
         return 'Bearer realm="api"'
@@ -93,29 +130,28 @@ class RegisterView(PublicAuthView):
     def post(self, request):
         serializer = RegisterSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        email = serializer.validated_data['email']
+        password = serializer.validated_data['password']
+        flavour = serializer.validated_data['scheduler_flavour']
 
-        user = User.objects.create_user(
-            email=serializer.validated_data['email'],
-            password=serializer.validated_data['password'],
-        )
+        with transaction.atomic():
+            user = User.objects.filter(email__iexact=email).first()
+            if user is None:
+                user = User.objects.create_user(email=email, password=password)
+            elif user.mfa_enabled or not user.check_password(password):
+                raise serializers.ValidationError({
+                    'email': 'An account with this email already exists.',
+                })
+            SchedulingState.objects.update_or_create(
+                user=user,
+                defaults={'scheduler_flavour': flavour},
+            )
 
-        # Held in the signed token, not the database, until the user proves
-        # they scanned it. An abandoned registration therefore cannot log in.
-        secret = totp.generate_secret()
-        enrolment = MFAEnrolmentToken.for_user(user)
-        enrolment['secret'] = secret
-        uri = totp.provisioning_uri(user.email, secret)
-
+        # The secret stays in the signed token until the authenticator is
+        # confirmed. Submitting the same email and password again replaces
+        # that token, so closing the tab does not burn the address.
         return Response(
-            {
-                'user': UserSerializer(user).data,
-                'enrolment_token': str(enrolment),
-                'mfa': {
-                    'secret': secret,
-                    'provisioning_uri': uri,
-                    'qr_png_base64': totp.qr_png_base64(uri),
-                },
-            },
+            {'user': UserSerializer(user).data, **_enrolment_body(user)},
             status=status.HTTP_201_CREATED,
         )
 
@@ -160,6 +196,7 @@ class LoginView(PublicAuthView):
     """POST /api/auth/login/ - step one (FR-02)."""
 
     require_admin = False
+    throttle_scope = 'auth_strict'
 
     @extend_schema(
         request=LoginSerializer,
@@ -174,16 +211,21 @@ class LoginView(PublicAuthView):
     def post(self, request):
         serializer = LoginSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-
         email = User.objects.normalize_email(serializer.validated_data['email'])
+
+        # Block further attempts during the temporary cool-down.
+        check_login_cooldown(email)
+
         user = User.objects.filter(email__iexact=email).first()
 
-        # Credentials are checked before anything else, so that a wrong
-        # password cannot be used to discover whether an account exists or
-        # whether it is locked.
+        # Count failed attempts for both existing and unknown email addresses.
+        # Return the same error to avoid revealing whether an account exists.
         if user is None or not user.check_password(serializer.validated_data['password']):
-            raise AuthenticationFailed('Incorrect email address or password.',
-                                       code='invalid_credentials')
+            record_failed_login(email)
+            raise AuthenticationFailed(
+                'Incorrect email address or password.',
+                code='invalid_credentials',
+            )
 
         if self.require_admin and not user.is_admin:
             raise PermissionDenied('This account is not an administrator.',
@@ -194,8 +236,11 @@ class LoginView(PublicAuthView):
                                    code='account_locked')
 
         if not user.mfa_enabled:
-            raise PermissionDenied('Finish setting up multi-factor authentication first.',
-                                   code='mfa_enrolment_required')
+            raise PermissionDenied(
+                'Finish setting up multi-factor authentication first. '
+                'Sign up again with the same email and password.',
+                code='mfa_enrolment_required',
+            )
 
         pending = MFAPendingToken.for_user(user)
         pending['admin_login'] = self.require_admin
@@ -213,6 +258,7 @@ class MFAVerifyView(PublicAuthView):
     """POST /api/auth/login/mfa/ - step two (FR-02)."""
 
     require_admin = False
+    throttle_scope = 'auth_strict'
 
     @extend_schema(
         request=MFAVerifySerializer,
@@ -237,6 +283,7 @@ class MFAVerifyView(PublicAuthView):
         user = User.objects.filter(pk=token.get('user_id')).first()
         if user is None:
             raise AuthenticationFailed('User not found.', code='user_not_found')
+        check_login_cooldown(user.email)
 
         # An administrator token must not be redeemable on the ordinary
         # endpoint, or the other way round.
@@ -255,8 +302,13 @@ class MFAVerifyView(PublicAuthView):
                                    code='account_locked')
 
         if not totp.verify(user.totp_secret_encrypted, serializer.validated_data['code'], user.pk):
-            raise AuthenticationFailed('That code is not valid.', code='invalid_totp')
+            record_failed_login(user.email)
+            raise AuthenticationFailed(
+                'That code is not valid.',
+                code='invalid_totp',
+            )
 
+        clear_failed_logins(user.email)
         # Updates last_login, which FR-16's active-user count reads.
         user_logged_in.send(sender=user.__class__, request=request, user=user)
 
@@ -269,10 +321,14 @@ class AdminMFAVerifyView(MFAVerifyView):
     require_admin = True
 
 
-class LogoutView(APIView):
-    """POST /api/auth/logout/ - blacklists the refresh token."""
+class LogoutView(PublicAuthView):
+    """POST /api/auth/logout/ - blacklists the refresh token.
 
-    permission_classes = [IsAuthenticated]
+    The refresh token is the credential: logout must work even when the access
+    token has already expired, otherwise a client cannot revoke a session.
+    """
+
+    throttle_scope = 'auth'
 
     @extend_schema(request=LogoutSerializer, responses={205: None})
     def post(self, request):
@@ -287,10 +343,103 @@ class LogoutView(APIView):
 
 
 class MeView(APIView):
-    """GET /api/auth/me/ - the signed-in account."""
+    """GET/PATCH /api/auth/me/ - the signed-in account."""
 
     permission_classes = [IsAuthenticated]
 
     @extend_schema(responses=UserSerializer)
     def get(self, request):
         return Response(UserSerializer(request.user).data)
+
+    @extend_schema(request=TimeZoneUpdateSerializer, responses=UserSerializer)
+    def patch(self, request):
+        serializer = TimeZoneUpdateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        request.user.time_zone = serializer.validated_data['time_zone']
+        request.user.save(update_fields=['time_zone'])
+        return Response(UserSerializer(request.user).data)
+
+
+class PasswordChangeView(APIView):
+    """POST /api/auth/password/change/ — the signed-in account's own password."""
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(request=PasswordChangeSerializer, responses={200: None})
+    def post(self, request):
+        serializer = PasswordChangeSerializer(data=request.data, context={'request': request})
+        serializer.is_valid(raise_exception=True)
+        password_reset.change_password(request.user, serializer.validated_data['new_password'])
+        return Response({
+            'detail': 'Password updated.',
+            **_issue_token_pair(request.user),
+        })
+
+
+class PasswordResetRequestView(PublicAuthView):
+    """POST /api/auth/password-reset/ — ask an administrator to approve a reset."""
+
+    purpose = 'password'
+
+    @extend_schema(request=PasswordResetRequestSerializer, responses={200: None})
+    def post(self, request):
+        serializer = PasswordResetRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        token = password_reset.request_reset(
+            serializer.validated_data['email'],
+            purpose=self.purpose,
+        )
+        return Response({
+            'detail': password_reset.REQUEST_DETAIL,
+            'request_token': token,
+        })
+
+
+class AuthenticatorRecoveryRequestView(PasswordResetRequestView):
+    """POST /api/auth/mfa/recover/ — same queue, for a lost authenticator."""
+
+    purpose = 'authenticator'
+
+
+class PasswordResetStatusView(PublicAuthView):
+    """GET /api/auth/password-reset/status/<token>/ — pending, approved, or finished."""
+
+    throttle_scope = 'password_reset'
+
+    def get(self, request, token):
+        return Response({'status': password_reset.status_for(token)})
+
+
+class PasswordResetConfirmView(PublicAuthView):
+    """POST /api/auth/password-reset/confirm/ — the approved browser sets the password."""
+
+    @extend_schema(request=PasswordResetConfirmSerializer, responses={200: None})
+    def post(self, request):
+        serializer = PasswordResetConfirmSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            password_reset.confirm_reset(
+                serializer.validated_data['request_token'],
+                serializer.validated_data['new_password'],
+            )
+        except password_reset.ResetNotReady:
+            raise ResetNotReadyResponse()
+        except password_reset.PasswordRejected as exc:
+            raise ValidationError({'new_password': exc.messages})
+        return Response({'detail': 'Password updated.'})
+
+
+class AuthenticatorRecoveryConfirmView(PublicAuthView):
+    """POST /api/auth/mfa/recover/confirm/ — approved browser receives a new QR."""
+
+    @extend_schema(request=AuthenticatorRecoveryConfirmSerializer, responses={200: None})
+    def post(self, request):
+        serializer = AuthenticatorRecoveryConfirmSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            user = password_reset.confirm_authenticator_recovery(
+                serializer.validated_data['request_token'],
+            )
+        except password_reset.ResetNotReady:
+            raise ResetNotReadyResponse()
+        return Response(_enrolment_body(user))

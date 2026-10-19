@@ -378,6 +378,11 @@ export default function MarksPage() {
       }
     }
 
+    if (entries.length === 0) {
+      simulation.reset();
+      return;
+    }
+
     try {
       await simulation.mutateAsync({ assessments: entries });
     } catch (err) {
@@ -389,6 +394,7 @@ export default function MarksPage() {
   }
 
   useEffect(() => {
+    if (viewMode !== "what-if") return;
     if (!Array.isArray(markGroups) || markGroups.length === 0) return;
 
     const timeoutId = setTimeout(() => {
@@ -396,7 +402,7 @@ export default function MarksPage() {
     }, 500);
 
     return () => clearTimeout(timeoutId);
-  }, [whatIfMarks, whatIfWeights, markGroups]);
+  }, [viewMode, whatIfMarks, whatIfWeights, markGroups]);
 
   function resetWhatIf() {
     const savedMarks = {};

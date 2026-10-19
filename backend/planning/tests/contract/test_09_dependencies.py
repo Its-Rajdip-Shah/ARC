@@ -309,7 +309,7 @@ def test_DP9_scheduler_cannot_place_dependant_before_incomplete_prerequisite(
 
     assert created, "DEP-009: dependency command has no supported domain signature"
 
-    scheduler = _scheduler_service() if "_scheduler_service" in globals() else None
+    scheduler = _scheduler_service() if "_scheduler_service" in globals() else None #noqa: F821
     if scheduler is None:
         for module_name in (
             "planning.services.scheduling",

@@ -222,11 +222,11 @@ def test_restore_cycle_via_actual_delete_history_rolls_back(user, make_item, api
 
 def test_expiry_retains_recovery_history_without_scheduler_authority(user, make_item):
     today = timezone.localdate()
-    item = make_item(user, 'Missed', manual_requested_date=today - timedelta(days=1))
+    item = make_item(user, 'Missed', manual_requested_date=today - timedelta(days=4))
     scheduling.daily_schedule(user, today)
     item.refresh_from_db()
     assert item.manual_requested_date is None
-    assert item.expired_manual_requested_date == today - timedelta(days=1)
+    assert item.expired_manual_requested_date == today - timedelta(days=4)
     before = item.expired_manual_requested_date
     scheduling.schedule(user, today)
     item.refresh_from_db()

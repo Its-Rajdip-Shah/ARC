@@ -1,5 +1,6 @@
 """ARC user accounts (FR-01, FR-02, FR-03, FR-15, FR-16)."""
 
+import uuid
 from datetime import timedelta
 
 from django.contrib.auth.base_user import AbstractBaseUser, BaseUserManager
@@ -65,6 +66,12 @@ class User(AbstractBaseUser):
 
     id = models.BigAutoField(primary_key=True, db_column='user_id')
     email = models.EmailField(max_length=255, unique=True)
+    time_zone = models.CharField(
+        max_length=64,
+        null=True,
+        blank=True,
+        default=None,
+    )
     # Widened from AbstractBaseUser's 128 to match the report's VARCHAR(255).
     password = models.CharField(max_length=255, db_column='password_hash')
     # NOT NULL per the report; empty until the user finishes TOTP enrolment,
@@ -111,3 +118,49 @@ class User(AbstractBaseUser):
 
     def has_module_perms(self, app_label):
         return self.is_admin
+
+
+class PasswordResetRequest(models.Model):
+    """A locked-out reset waiting for an administrator.
+
+    The raw token is returned once to the browser that asked. Only its digest
+    is stored. ``user`` is null for a decoy so an unknown email takes the same
+    path as a real one without appearing on the admin queue.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(
+        'accounts.User',
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name='password_reset_requests',
+    )
+    token_digest = models.CharField(max_length=64, unique=True)
+    purpose = models.CharField(max_length=20, default='password')
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+    approved_at = models.DateTimeField(null=True, blank=True)
+    approved_by = models.ForeignKey(
+        'accounts.User',
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='approved_password_resets',
+    )
+    consumed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = 'password_reset_requests'
+        ordering = ['created_at']
+
+
+class LoginAttempt(models.Model):
+    """Track failed authentication attempts for known and unknown emails."""
+
+    email_digest = models.CharField(max_length=64, unique=True)
+    failed_attempts = models.PositiveIntegerField(default=0)
+    locked_until = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = 'login_attempts'

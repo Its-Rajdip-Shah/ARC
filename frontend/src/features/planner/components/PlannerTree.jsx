@@ -1,6 +1,7 @@
 import { useEffect, useMemo } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 
+import { userDateKey } from '../../../lib/calendarDates'
 import { deleteItem, moveItem } from '../../../api/planning'
 import PlannerTreeItem from './PlannerTreeItem'
 import PlannerDnd from '../../../dnd/planner/PlannerDnd'
@@ -143,49 +144,122 @@ function searchPlanningTree(items, rawQuery) {
   }
 }
 
-function getLocalDateString() {
-  const now = new Date()
-  const year = now.getFullYear()
-  const month = String(now.getMonth() + 1).padStart(2, '0')
-  const day = String(now.getDate()).padStart(2, '0')
+export function filterOverdueTree(items, today) {
+  const deadlineIds = new Set()
+  const anchorIds = new Set()
 
-  return `${year}-${month}-${day}`
-}
+  function anchorAge(origin) {
+    if (!origin) return null
+    return Math.floor((Date.parse(`${today}T00:00:00Z`) - Date.parse(`${origin}T00:00:00Z`)) / 86400000)
+  }
 
-function filterOverdueTree(items, today) {
-  const matchedIds = new Set()
-
-  function filterBranch(item) {
+  function filterBranch(item, section) {
     const filteredChildren = (item.children ?? [])
-      .map(filterBranch)
+      .map((child) => filterBranch(child, section))
       .filter(Boolean)
 
-    const isOverdue =
-      !item.completed &&
-      Boolean(item.due_date) &&
-      item.due_date < today
+    const actionable = item.item_type === 'TASK' || item.item_type === 'ASSIGNMENT'
+    const deadlineOverdue = actionable && !item.is_completed && (
+      item.deadline_overdue === true || (Boolean(item.due_date) && item.due_date < today)
+    )
+    const carried = actionable && !item.is_completed && (
+      item.active_carried_anchor === true || (
+        Boolean(item.manual_requested_date && item.manual_anchor_origin_date) &&
+        anchorAge(item.manual_anchor_origin_date) >= 1 &&
+        anchorAge(item.manual_anchor_origin_date) <= 3
+      )
+    )
+    const expired = actionable && !item.is_completed && (
+      item.expired_anchor_history === true || Boolean(item.expired_manual_requested_date) ||
+      anchorAge(item.manual_anchor_origin_date) >= 4
+    )
+    const matches = section === 'deadline'
+      ? deadlineOverdue
+      : !deadlineOverdue && (carried || expired)
 
-    if (isOverdue) {
-      matchedIds.add(item.id)
+    if (matches) {
+      ;(section === 'deadline' ? deadlineIds : anchorIds).add(item.id)
     }
 
-    if (!isOverdue && filteredChildren.length === 0) {
+    if (!matches && filteredChildren.length === 0) {
       return null
     }
 
     return {
       ...item,
       children: filteredChildren,
+      overdue_sort_date: section === 'deadline'
+        ? item.due_date
+        : (item.manual_anchor_origin_date ?? item.expired_manual_requested_date ?? '9999-12-31'),
     }
   }
 
+  function sortBranches(branches, section) {
+    const sorted = branches.map((item) => ({
+      ...item,
+      children: sortBranches(item.children ?? [], section),
+    }))
+
+    function sortKey(item) {
+      const ownDate = item.overdue_sort_date ?? '9999-12-31'
+      const ownCarried = section === 'anchor' && (
+        item.active_carried_anchor === true || (
+          Boolean(item.manual_requested_date && item.manual_anchor_origin_date) &&
+          anchorAge(item.manual_anchor_origin_date) >= 1 &&
+          anchorAge(item.manual_anchor_origin_date) <= 3
+        )
+      )
+
+      const keys = [
+        [ownCarried ? 0 : 1, ownDate],
+        ...(item.children ?? []).map(sortKey),
+      ]
+
+      return keys.sort((left, right) =>
+        left[0] - right[0] || left[1].localeCompare(right[1])
+      )[0]
+    }
+
+    return sorted.sort((left, right) => {
+      const a = sortKey(left)
+      const b = sortKey(right)
+
+      return a[0] - b[0] ||
+        a[1].localeCompare(b[1]) ||
+        String(left.id).localeCompare(String(right.id), undefined, { numeric: true })
+    })
+  }
+
+  const deadlineItems = sortBranches(
+    items.map((item) => filterBranch(item, 'deadline')).filter(Boolean),
+    'deadline',
+  ).map((item) => ({ ...item, overdue_section: 'Deadline Overdue' }))
+
+  const anchorItems = sortBranches(
+    items.map((item) => filterBranch(item, 'anchor')).filter(Boolean),
+    'anchor',
+  ).map((item) => ({ ...item, overdue_section: 'Anchor Overdue' }))
+
   return {
-    items: items.map(filterBranch).filter(Boolean),
-    matchedIds,
+    items: [...deadlineItems, ...anchorItems],
+    matchedIds: new Set([...deadlineIds, ...anchorIds]),
   }
 }
 
+function OverdueSectionHeading({ section }) {
+  const id = section === 'Deadline Overdue' ? 'planner-overdue-deadline' : 'planner-overdue-anchor'
+  return (
+    <h2 id={id} className="my-8 flex scroll-mt-12 items-center gap-3 text-center text-xl font-bold text-arc-danger-light sm:text-2xl">
+      <span aria-hidden="true" className="h-px min-w-0 flex-1 bg-current opacity-50" />
+      <span className="shrink-0">{section}</span>
+      <span aria-hidden="true" className="h-px min-w-0 flex-1 bg-current opacity-50" />
+    </h2>
+  )
+}
+
 export default function PlannerTree({
+  editLocked = false,
+  saveStatuses = {},
   items,
   selectedItemId,
   panelOwnerId,
@@ -199,7 +273,9 @@ export default function PlannerTree({
   onHoverItem,
   onSelectItem,
   onEditItem,
+  onCreateDependency,
   onCreateNested,
+  onResidualEstimatePrompt,
 }) {
   const queryClient = useQueryClient()
 
@@ -222,7 +298,7 @@ export default function PlannerTree({
     if (showOverdue) {
       return filterOverdueTree(
         items,
-        getLocalDateString(),
+        userDateKey(),
       )
     }
 
@@ -321,7 +397,17 @@ export default function PlannerTree({
   }
 
 
+  function findNode(nodes, id) {
+    for (const node of nodes) {
+      if (node.id === id) return node
+      const child = findNode(node.children ?? [], id)
+      if (child) return child
+    }
+    return null
+  }
+
   function requestDelete(itemId) {
+    if (findNode(currentPlanningTree(), itemId)?.is_provisional) return
     /*
      * Deletion is visually immediate. The server remains canonical and the
      * authoritative tree is refreshed after all queued structural actions.
@@ -406,6 +492,10 @@ export default function PlannerTree({
   function persistPlannerMove(
     intent,
   ) {
+    const tree = currentPlanningTree()
+    if (findNode(tree, intent.itemId)?.is_provisional
+      || findNode(tree, intent.parentId)?.is_provisional
+      || (intent.adoptChildIds ?? []).some((id) => findNode(tree, id)?.is_provisional)) return
     /*
      * dnd-kit removes its transform immediately after DragEnd. Write the
      * projected hierarchy into React Query before that frame can render the
@@ -679,7 +769,7 @@ export default function PlannerTree({
 
   return (
     <PlannerDnd
-      items={flattenedItems}
+      items={showOverdue ? [] : flattenedItems.filter((item) => !item.is_provisional)}
       onMove={persistPlannerMove}
     >
       {({
@@ -691,6 +781,12 @@ export default function PlannerTree({
           new Set(
             dragDescendantIds,
           )
+
+        for (const row of flattenedItems) {
+          if (row.is_provisional && (row.parentId === activeId || dragDescendantSet.has(row.parentId))) {
+            dragDescendantSet.add(row.id)
+          }
+        }
 
         /*
          * Descendants disappear visually while their parent is dragged, as
@@ -716,8 +812,11 @@ export default function PlannerTree({
           aria-label="Planning hierarchy"
           className="m-0 list-none p-0"
         >
-          {visibleRows.map((item) => (
-            <div
+          {showOverdue && !visibleRows.some((row) => row.overdue_section === 'Deadline Overdue') && (
+            <li className="list-none"><OverdueSectionHeading section="Deadline Overdue" /></li>
+          )}
+          {visibleRows.map((item, rowIndex) => (
+            <div key={`${item.overdue_section ?? 'tree'}-${item.id}`}
 
               data-arc-tree-row
 
@@ -727,8 +826,6 @@ export default function PlannerTree({
 
               data-item-id={item.id}
 
-              key={item.id}
-
               className={
                 item.depth === 0 &&
                 flattenedItems[0]?.id !== item.id
@@ -737,9 +834,16 @@ export default function PlannerTree({
               }
 
             >
+              {item.overdue_section && item.depth === 0 && !visibleRows
+                .slice(0, rowIndex)
+                .some((row) => row.overdue_section === item.overdue_section) && (
+                <OverdueSectionHeading section={item.overdue_section} />
+              )}
 
               <PlannerTreeItem
               item={item}
+              editLocked={editLocked}
+              saveStatus={saveStatuses[String(item.id)] ?? null}
               /*
                * Never mutate the active sortable row's layout depth during
                * pointer movement.
@@ -768,13 +872,18 @@ export default function PlannerTree({
               onHoverItem={onHoverItem}
               onSelectItem={onSelectItem}
               onEditItem={onEditItem}
+              onCreateDependency={onCreateDependency}
               onCreateNested={onCreateNested}
-              dndEnabled
+              onResidualEstimatePrompt={onResidualEstimatePrompt}
+              dndEnabled={!showOverdue && !item.is_provisional}
               flat
             />
 
             </div>
           ))}
+          {showOverdue && !visibleRows.some((row) => row.overdue_section === 'Anchor Overdue') && (
+            <li className="list-none"><OverdueSectionHeading section="Anchor Overdue" /></li>
+          )}
         </ul>
         )
       }}

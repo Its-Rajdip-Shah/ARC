@@ -1,8 +1,11 @@
 """Request and response shapes for the authentication endpoints."""
 
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
 from django.contrib.auth import get_user_model
 from django.contrib.auth.password_validation import validate_password
 from rest_framework import serializers
+from planning.models import SchedulingState
 
 User = get_user_model()
 
@@ -14,8 +17,30 @@ class UserSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
-        fields = ['id', 'email', 'is_admin', 'is_locked', 'mfa_enabled', 'created_at', 'last_login']
+        fields = ['id', 'email', 'is_admin', 'is_locked', 'mfa_enabled', 'created_at', 'last_login', 'time_zone']
         read_only_fields = fields
+
+
+class TimeZoneUpdateSerializer(serializers.Serializer):
+    """Only the authenticated account's geographical timezone is writable."""
+
+    time_zone = serializers.CharField(max_length=64, allow_null=True, trim_whitespace=False)
+
+    def to_internal_value(self, data):
+        if isinstance(data, dict):
+            unknown = set(data) - {'time_zone'}
+            if unknown:
+                raise serializers.ValidationError({key: 'This field is not writable.' for key in unknown})
+        return super().to_internal_value(data)
+
+    def validate_time_zone(self, value):
+        if value is None:
+            return None
+        try:
+            ZoneInfo(value)
+        except (ZoneInfoNotFoundError, ValueError):
+            raise serializers.ValidationError('Enter a valid IANA timezone identifier.')
+        return value
 
 
 class RegisterSerializer(serializers.Serializer):
@@ -25,9 +50,17 @@ class RegisterSerializer(serializers.Serializer):
     email = serializers.EmailField(max_length=255)
     password = serializers.CharField(write_only=True, style={'input_type': 'password'})
 
+    scheduler_flavour = serializers.ChoiceField(
+    choices=SchedulingState.SchedulerFlavour.choices,
+    required=True,
+    )
+
     def validate_email(self, value):
         value = User.objects.normalize_email(value)
-        if User.objects.filter(email__iexact=value).exists():
+        # An unfinished signup (no TOTP yet) may be submitted again. The view
+        # checks the password before it reuses that row.
+        existing = User.objects.filter(email__iexact=value).first()
+        if existing is not None and existing.mfa_enabled:
             raise serializers.ValidationError('An account with this email already exists.')
         return value
 
@@ -53,3 +86,37 @@ class MFAVerifySerializer(serializers.Serializer):
 
 class LogoutSerializer(serializers.Serializer):
     refresh = serializers.CharField()
+
+
+class PasswordChangeSerializer(serializers.Serializer):
+    current_password = serializers.CharField(write_only=True, style={'input_type': 'password'})
+    new_password = serializers.CharField(write_only=True, style={'input_type': 'password'})
+
+    def validate_new_password(self, value):
+        validate_password(value, self.context['request'].user)
+        return value
+
+    def validate(self, data):
+        user = self.context['request'].user
+        if not user.check_password(data['current_password']):
+            raise serializers.ValidationError({
+                'current_password': 'The current password is incorrect.',
+            })
+        if data['current_password'] == data['new_password']:
+            raise serializers.ValidationError({
+                'new_password': 'Choose a different password.',
+            })
+        return data
+
+
+class PasswordResetRequestSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+
+
+class PasswordResetConfirmSerializer(serializers.Serializer):
+    request_token = serializers.CharField()
+    new_password = serializers.CharField(write_only=True, style={'input_type': 'password'})
+
+
+class AuthenticatorRecoveryConfirmSerializer(serializers.Serializer):
+    request_token = serializers.CharField()

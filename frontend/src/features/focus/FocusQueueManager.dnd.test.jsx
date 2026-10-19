@@ -2,6 +2,8 @@ import React from 'react'
 
 import {
   act,
+  fireEvent,
+  screen,
   render,
 } from '@testing-library/react'
 
@@ -760,6 +762,11 @@ describe(
           'A',
           'B',
         ])
+        await act(async () => vi.advanceTimersByTime(180))
+        expect(harness.mutationCalls[0].variables.changes).toEqual([
+          { item_id: 3, date: '2026-10-01', order: 1 },
+        ])
+
       },
     )
   },
@@ -1344,3 +1351,237 @@ test(
 
   },
 )
+
+
+describe('B1.5 direct drag intent', () => {
+  beforeEach(() => {
+    harness.mutationCalls.length = 0
+    vi.useFakeTimers()
+  })
+  afterEach(() => {
+    act(() => vi.runOnlyPendingTimers())
+    vi.useRealTimers()
+  })
+
+  async function drop(id, overId, initialTop = 100, translatedTop = -25) {
+    const active = activeEvent({ id, initialTop, translatedTop })
+    await act(async () => {
+      harness.dndProps.onDragStart({ active })
+      harness.dndProps.onDragEnd({ active, over: overEvent({ id: overId, top: 0 }) })
+    })
+  }
+  async function save() {
+    await act(async () => vi.advanceTimersByTime(180))
+  }
+
+  test('dragging C across A and B anchors only C and accepts canonical refresh', async () => {
+    const rows = [candidate(1, 'A', 1), candidate(2, 'B', 2), candidate(3, 'C', 3)]
+    const before = structuredClone(rows)
+    const { container, rerender } = renderManager(rows)
+    await drop(3, 1)
+    expect(queueTitles(container)).toEqual(['C', 'A', 'B'])
+    await save()
+    expect(harness.mutationCalls[0].variables.changes).toEqual([
+      { item_id: 3, date: '2026-10-01', order: 1 },
+    ])
+    expect(rows).toEqual(before)
+    await act(async () => harness.mutationCalls[0].callbacks.onSuccess())
+    rerender(<FocusQueueManager bucketId="boss"
+      data={{ today: '2026-10-01', candidates: [rows[2], rows[1], rows[0]] }}
+      globalFind={null} pinnedItemIds={new Set()} onTogglePinned={() => {}}
+      onSetCurrent={() => {}} onComplete={() => {}} onClose={() => {}} onAutomatic={() => {}}
+      currentBusy={false} completionBusy={false} planningBusy={false} />)
+    expect(queueTitles(container)).toEqual(['C', 'B', 'A'])
+  })
+
+  test('occupied destination anchors retain dates and origins while their orders change atomically', async () => {
+    const rows = [candidate(1, 'A', 1), candidate(2, 'B', 2), candidate(3, 'C', 3)]
+    for (const row of rows.slice(0, 2)) Object.assign(row, {
+      manual_requested_date: '2026-10-01', manual_requested_order: row.item_id,
+      manual_anchor_origin_date: '2026-09-30',
+    })
+    const before = structuredClone(rows)
+    const { container } = renderManager(rows)
+    await drop(3, 1)
+    await save()
+    expect(harness.mutationCalls[0].variables.changes).toEqual([
+      { item_id: 3, date: '2026-10-01', order: 1 },
+      { item_id: 1, date: '2026-10-01', order: 2, order_only: true },
+      { item_id: 2, date: '2026-10-01', order: 3, order_only: true },
+    ])
+    expect(queueTitles(container)).toEqual(['C', 'A', 'B'])
+    expect(rows).toEqual(before)
+  })
+
+  test('cross-date drag persists only the directly dragged task', async () => {
+    const rows = [candidate(1, 'A', 1), candidate(2, 'B', 2), {
+      ...candidate(3, 'C', 3), scheduled_date: '2026-10-02',
+    }]
+    renderManager(rows)
+    await drop(3, 'date-boundary:2026-10-01')
+    await save()
+    expect(harness.mutationCalls[0].variables.changes).toEqual([
+      { item_id: 3, date: '2026-10-01', order: 1 },
+    ])
+  })
+
+  test('no-op release sends no API mutation', async () => {
+    renderManager([candidate(1, 'A', 1), candidate(2, 'B', 2)])
+    await drop(2, 2, 60, 60)
+    await save()
+    expect(harness.mutationCalls).toHaveLength(0)
+  })
+
+  test('in-flight drags serialize only direct intents without incidental A', async () => {
+    renderManager([candidate(1, 'A', 1), candidate(2, 'B', 2), candidate(3, 'C', 3)])
+    await drop(3, 1)
+    await save()
+    await drop(2, 3)
+    await save()
+    expect(harness.mutationCalls).toHaveLength(1)
+    await act(async () => harness.mutationCalls[0].callbacks.onSuccess())
+    expect(harness.mutationCalls).toHaveLength(2)
+    expect(harness.mutationCalls[1].variables.changes).toEqual([
+      { item_id: 2, date: '2026-10-01', order: 1 },
+      { item_id: 3, date: '2026-10-01', order: 2 },
+    ])
+  })
+
+  test('failed save rolls back the visual projection and discards direct intent', async () => {
+    const { container } = renderManager([candidate(1, 'A', 1), candidate(2, 'B', 2), candidate(3, 'C', 3)])
+    await drop(3, 1)
+    await save()
+    await act(async () => harness.mutationCalls[0].callbacks.onError({ response: { status: 500 } }))
+    expect(queueTitles(container)).toEqual(['A', 'B', 'C'])
+    await drop(2, 1)
+    await save()
+    expect(harness.mutationCalls[1].variables.changes).toEqual([
+      { item_id: 2, date: '2026-10-01', order: 1 },
+    ])
+  })
+
+  function anchored(count) {
+    return Array.from({ length: count }, (_, index) => ({
+      ...candidate(index + 1, `Task ${index + 1}`, index + 1),
+      manual_requested_date: '2026-10-01', manual_requested_order: index + 1,
+      manual_anchor_origin_date: '2026-09-30',
+    }))
+  }
+
+  test('up on anchored position 6 swaps 5 and 6; repeated arrows preserve the exact latest order', async () => {
+    const rows = anchored(6)
+    const { container } = renderManager(rows)
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Move Task 6 up' })))
+    expect(queueTitles(container)).toEqual(['Task 1', 'Task 2', 'Task 3', 'Task 4', 'Task 6', 'Task 5'])
+    await save()
+    expect(harness.mutationCalls[0].variables.changes).toEqual([
+      { item_id: 6, date: '2026-10-01', order: 5, order_only: true },
+      { item_id: 5, date: '2026-10-01', order: 6, order_only: true },
+    ])
+    // New intent while the first request is in flight must survive its ack.
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Move Task 6 up' })))
+    await act(async () => harness.mutationCalls[0].callbacks.onSuccess())
+    expect(queueTitles(container)[3]).toBe('Task 6')
+    await save()
+    expect(harness.mutationCalls[1].variables.expectedQueue.map(row => row.item_id)).toEqual([1, 2, 3, 6, 4, 5])
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Move Task 6 down' })))
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Move Task 6 down' })))
+    await save()
+    await act(async () => harness.mutationCalls[1].callbacks.onSuccess())
+    expect(harness.mutationCalls[2].variables.expectedQueue.map(row => row.item_id)).toEqual([1, 2, 3, 4, 5, 6])
+    expect(queueTitles(container)[5]).toBe('Task 6')
+    expect(rows[5].manual_anchor_origin_date).toBe('2026-09-30')
+  })
+
+  test('anchored drag from 4 above 2 sends the complete final permutation', async () => {
+    const { container } = renderManager(anchored(4))
+    await drop(4, 2)
+    expect(queueTitles(container)).toEqual(['Task 1', 'Task 4', 'Task 2', 'Task 3'])
+    await save()
+    expect(harness.mutationCalls[0].variables.changes).toEqual([
+      { item_id: 4, date: '2026-10-01', order: 2, order_only: true },
+      { item_id: 2, date: '2026-10-01', order: 3, order_only: true },
+      { item_id: 3, date: '2026-10-01', order: 4, order_only: true },
+    ])
+  })
+
+  test('canonical conflict restores the queue, explains the constraint and cancels queued saves', async () => {
+    const { container } = renderManager(anchored(4))
+    await drop(4, 2)
+    await save()
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Move Task 4 up' })))
+    await act(async () => harness.mutationCalls[0].callbacks.onError({ response: {
+      status: 409, data: { conflicts: [{ item_id: 4, code: 'queue_order_unrepresentable' }], decisions: [] },
+    } }))
+    expect(queueTitles(container)).toEqual(['Task 1', 'Task 2', 'Task 3', 'Task 4'])
+    expect(screen.getByText('Queue order cannot be saved')).toBeTruthy()
+    await save()
+    expect(harness.mutationCalls).toHaveLength(1)
+  })
+
+
+  test('failure of a queued save restores its actual prior canonical response', async () => {
+    const rows = [candidate(1, 'A', 1), candidate(2, 'B', 2), candidate(3, 'C', 3)]
+    const { container } = renderManager(rows)
+    await drop(3, 1)
+    await save()
+    await drop(2, 3)
+    await save()
+    await act(async () => harness.mutationCalls[0].callbacks.onSuccess())
+    const previous = { today: '2026-10-01', candidates: [rows[2], rows[0], rows[1]] }
+    await act(async () => harness.mutationCalls[1].callbacks.onError(
+      { response: { status: 409, data: { conflicts: [{ item_id: 2, code: 'queue_order_unrepresentable' }], decisions: [] } } }, harness.mutationCalls[1].variables, { previous },
+    ))
+    expect(queueTitles(container)).toEqual(['C', 'A', 'B'])
+    await act(async () => fireEvent.click(screen.getAllByRole('button', { name: 'Cancel' })[0]))
+    expect(queueTitles(container)).toEqual(['C', 'A', 'B'])
+
+  })
+
+
+  test('cross-date anchored drop into an occupied slot preserves neighbouring date anchors', async () => {
+    const rows = anchored(3)
+    rows[1].scheduled_date = '2026-10-02'
+    rows[1].manual_requested_date = '2026-10-02'
+    rows[1].manual_requested_order = 1
+    rows[2].manual_requested_date = null
+    rows[2].manual_requested_order = null
+    const { container, unmount } = renderManager(rows)
+    await drop(1, 2, 0, 100)
+    await save()
+    expect(harness.mutationCalls[0].variables.changes).toEqual([
+      { item_id: 1, date: '2026-10-02', order: 1 },
+      { item_id: 2, date: '2026-10-02', order: 2, order_only: true },
+    ])
+    expect(queueTitles(container)).toEqual(['Task 3', 'Task 1', 'Task 2'])
+    const canonical = [rows[2], { ...rows[0], scheduled_date: '2026-10-02', manual_requested_date: '2026-10-02', manual_requested_order: 1 },
+      { ...rows[1], manual_requested_order: 2 }]
+    unmount()
+    const refreshed = renderManager(canonical)
+    expect(queueTitles(refreshed.container)).toEqual(['Task 3', 'Task 1', 'Task 2'])
+    await drop(2, 1)
+    await save()
+    expect(harness.mutationCalls[1].variables.changes).toEqual([
+      { item_id: 2, date: '2026-10-02', order: 1, order_only: true },
+      { item_id: 1, date: '2026-10-02', order: 2, order_only: true },
+    ])
+  })
+
+  test('cancelling after a canonical refresh uses the latest queue', async () => {
+    const rows = anchored(3)
+    const { container, rerender } = renderManager(rows)
+    await drop(3, 1)
+    await save()
+    await act(async () => harness.mutationCalls[0].callbacks.onError({ response: {
+      status: 409, data: { conflicts: [{ item_id: 3, code: 'capacity_exceeded' }], decisions: [] },
+    } }, {}, { previous: { today: '2026-10-01', candidates: rows } }))
+    rerender(<FocusQueueManager bucketId="boss"
+      data={{ today: '2026-10-01', candidates: [rows[1], rows[2], rows[0]] }}
+      globalFind={null} pinnedItemIds={new Set()} onTogglePinned={() => {}}
+      onSetCurrent={() => {}} onComplete={() => {}} onClose={() => {}} onAutomatic={() => {}}
+      currentBusy={false} completionBusy={false} planningBusy={false} />)
+    await act(async () => fireEvent.click(screen.getAllByRole('button', { name: 'Cancel' })[0]))
+    expect(queueTitles(container)).toEqual(['Task 2', 'Task 3', 'Task 1'])
+  })
+
+})

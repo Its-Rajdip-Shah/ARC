@@ -186,6 +186,9 @@ class PlanningItem(OwnedModel, TimestampedModel):
     sibling_order = models.PositiveIntegerField(default=1)
     start_date = models.DateField(null=True, blank=True)
     due_date = models.DateField(null=True, blank=True)
+    # True only when this date follows the direct parent's deadline.  A null
+    # inherited value is meaningful: a later parent deadline must propagate.
+    due_date_inherited = models.BooleanField(default=False)
     # Planned execution date, independent of release/deadline constraints.
     scheduled_date = models.DateField(null=True, blank=True)
     execution_rank = models.PositiveIntegerField(null=True, blank=True)
@@ -205,6 +208,8 @@ class PlanningItem(OwnedModel, TimestampedModel):
     # This is deliberately distinct from
     # scheduled_date, which is a disposable scheduler proposal.
     manual_requested_date = models.DateField(null=True, blank=True)
+    # Original commitment date; automatic carry-forward never restarts it.
+    manual_anchor_origin_date = models.DateField(null=True, blank=True)
 
     # Optional canonical within-day ordering intent paired with
     # manual_requested_date. This is user intent, NOT scheduler output.
@@ -641,8 +646,8 @@ class SchedulingState(OwnedModel):
         default=0,
     )
 
-    # Last successful study-plan suggestion. Kept off scheduler_runtime
-    # because a flavour change wipes that field, and planner undo restores it.
+    # Retained so existing databases keep the column. Nothing reads or writes it
+    # now that the study-plan API is gone. A flavour change still must not wipe it.
     study_plan = models.JSONField(default=dict, blank=True)
     study_preferences = models.JSONField(default=dict, blank=True)
 

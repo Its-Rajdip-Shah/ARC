@@ -5,6 +5,8 @@ import { createServer } from 'vite'
 import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import {
+  addDays,
+  todayKey,
   makeScale,
   packLanes,
   colourZones,
@@ -21,6 +23,7 @@ import {
 
 let server
 let Board
+let Navigator
 
 before(async () => {
   server = await createServer({
@@ -32,6 +35,7 @@ before(async () => {
   })
   const mod = await server.ssrLoadModule('/src/features/timeline/TimelineBoard.jsx')
   Board = mod.default
+  Navigator = (await server.ssrLoadModule('/src/features/timeline/TimelineTaskNavigator.jsx')).default
 })
 
 after(async () => {
@@ -707,19 +711,21 @@ test('offscreen execution plus visible deadline keeps a real clipped line and en
 
 
 test('date headers surface explicit overload and engine infeasible states', () => {
+  const future = addDays(todayKey(), 7)
   const html = render(
     {},
     {
+      scale: makeScale(future, 'day'),
       data: {
         timezones: [],
         overload_dates: [
-          '2026-09-20',
+          future,
         ],
         scheduler: {
           daily_load: [
             {
               scheduled_date:
-                '2026-09-21',
+                addDays(future, 1),
               hours:
                 '9.0000',
               status:
@@ -740,4 +746,166 @@ test('date headers surface explicit overload and engine infeasible states', () =
     html,
     /timeline-date-infeasible/,
   )
+})
+
+test('historical scheduling indicators are hidden while task cards remain visible', (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-10-11T12:00:00Z') })
+  const today = todayKey()
+
+  for (const offset of [-1, 0, 1]) {
+    const date = addDays(today, offset)
+
+    for (const status of ['overloaded', 'infeasible']) {
+      const title = `Task on ${date} with ${status}`
+      const html = render(
+        {
+          title,
+          scheduled_date: date,
+          start_date: null,
+          due_date: null,
+        },
+        {
+          scale: makeScale(date, 'day'),
+          data: {
+            timezones: [],
+            overload_dates: [date],
+            scheduler: {
+              daily_load: [{ scheduled_date: date, hours: '9.0000', status }],
+            },
+          },
+        },
+      )
+
+      if (offset < 0) {
+        assert.doesNotMatch(html, /timeline-date-overloaded/)
+        assert.doesNotMatch(html, /timeline-date-infeasible/)
+      } else {
+        assert.match(html, /timeline-date-overloaded/)
+        if (status === 'infeasible') {
+          assert.match(html, /timeline-date-infeasible/)
+        }
+      }
+
+      assert.match(html, /timeline-card-position/)
+      assert.ok(html.includes(title))
+    }
+  }
+})
+
+
+test('default board keeps its geometry and has no selected-date modifiers', () => {
+  const html = render()
+  assert.doesNotMatch(html, /timeline-(?:card|row)-selected-date/)
+  assert.match(html, /timeline-card-position" style="left:224px"/)
+  assert.match(render({ start_date: base.scheduled_date, due_date: base.scheduled_date }), /timeline-row-constrained/)
+  assert.match(html, /data-timeline-task-id="1"/)
+})
+
+test('all rows top-align while selected-date anchor expansion rules stay scoped', () => {
+  const css = readFileSync(new URL('./Timeline.css', import.meta.url), 'utf8')
+  assert.match(css.match(/\.timeline-row \{([^}]+)\}/)[1], /align-items: start/)
+  assert.doesNotMatch(css, /\.timeline-row-selected-date \{ align-items:/)
+  assert.match(css, /\.timeline-card-expanded \.timeline-anchor-button,\s*\.timeline-anchor-visible \{/)
+  const selectedDateStart = css.indexOf(
+    '/* Selected-date emphasis and intentional-hover anchor visibility. */',
+  )
+  const selectedDateEnd = css.indexOf('.timeline-root-navigation {', selectedDateStart)
+  assert.ok(selectedDateStart >= 0)
+  assert.ok(selectedDateEnd > selectedDateStart)
+
+  const scoped = css.slice(selectedDateStart, selectedDateEnd)
+  assert.doesNotMatch(scoped, /!important|scaleY|translateY|position: absolute/)
+  assert.match(scoped, /\.timeline-card-selected-date\.timeline-card-hover-intent/)
+  assert.doesNotMatch(scoped, /\.timeline-card-selected-date:hover/)
+})
+
+
+test('compact root controller and navigator scroll constraints stay feature-scoped', () => {
+  const css = readFileSync(new URL('./Timeline.css', import.meta.url), 'utf8')
+  assert.match(css.match(/\.timeline-root-navigation \{([^}]+)\}/)[1], /flex-wrap: nowrap/)
+  assert.match(css.match(/\.timeline-root-navigation-count \{([^}]+)\}/)[1], /white-space: nowrap/)
+  assert.match(css.match(/\.timeline-root-navigation-arrow \{([^}]+)\}/)[1], /flex: 0 0 22px/)
+  const navigator = css.match(/\.timeline-task-navigator \{([^}]+)\}/)[1]
+  assert.match(navigator, /max-height: max\(var\(--timeline-navigator-min-height, 96px\), min\(68dvh, calc\(100dvh - var\(--timeline-navigator-top/)
+  const list = css.match(/\.timeline-task-navigator-list \{([^}]+)\}/)[1]
+  assert.match(list, /min-height: 0/)
+  assert.match(list, /overflow-y: auto/)
+  assert.match(css, /\.timeline-task-navigator-header \{ flex-shrink: 0/)
+})
+
+test('browser keeps ordinary card tops and popped markers stationary during details and description expansion', { skip: process.env.TIMELINE_BROWSER_TESTS !== '1' }, async () => {
+  const { chromium } = await import('@playwright/test')
+  const browser = await chromium.launch({ executablePath: process.env.CHROME_BIN })
+  try {
+    const page = await browser.newPage({ viewport: { width: 1200, height: 800 } })
+    const css = readFileSync(new URL('./Timeline.css', import.meta.url), 'utf8')
+    const items = [
+      { ...base, id: 1, start_date: null, due_date: null, scheduled_date: '2026-09-19', description: 'Description\n'.repeat(60) },
+      { ...base, id: 2, title: 'Neighbor', start_date: null, due_date: null, scheduled_date: '2026-09-24' },
+    ]
+    const ordinary = render({}, { items })
+    const marked = render({ start_date: base.scheduled_date, due_date: '2026-09-22' })
+    await page.setContent(`<style>${css}</style><div style="display:flex;align-items:flex-start"><div id="ordinary">${ordinary}</div><div id="marked">${marked}</div></div>`)
+    const positions = () => page.evaluate(() => ({
+      cards: [...document.querySelectorAll('#ordinary article')].map((node) => ({ top: node.getBoundingClientRect().top, height: node.getBoundingClientRect().height })),
+      markedTop: document.querySelector('#marked article').getBoundingClientRect().top,
+      markers: [...document.querySelectorAll('#marked .timeline-card-marker')].map((node) => ({ top: node.getBoundingClientRect().top, left: node.getBoundingClientRect().left })),
+    }))
+    const before = await positions()
+    await page.evaluate(() => document.querySelectorAll('article').forEach((node) => node.classList.add('timeline-card-expanded')))
+    const expanded = await positions()
+    assert.equal(expanded.cards[0].top, before.cards[0].top)
+    assert.equal(expanded.cards[1].top, before.cards[1].top)
+    assert.ok(expanded.cards[0].height > before.cards[0].height)
+    assert.equal(expanded.markedTop, before.markedTop)
+    assert.deepEqual(expanded.markers, before.markers)
+    assert.equal(before.markers.length, 2)
+    assert.ok(expanded.markers.every((marker) => marker.top < expanded.markedTop))
+    await page.evaluate(() => {
+      document.querySelector('#ordinary .timeline-description p').textContent = 'Full description\n'.repeat(60)
+    })
+    const full = await positions()
+    assert.equal(full.cards[0].top, before.cards[0].top)
+    assert.equal(full.cards[1].top, before.cards[1].top)
+    assert.ok(full.cards[0].height > expanded.cards[0].height)
+    assert.deepEqual(full.markers, before.markers)
+    const navigatorProps = {
+      selectedRoots: [base.root], activeRootId: base.root.id, currentLeafByRoot: {},
+      rootLeafIndex: new Map([[base.root.id, Array.from({ length: 100 }, (_, id) => ({ id, title: `Task ${id}`, date: '2026-09-21' }))]]),
+      position: { x: 700, y: 600 }, minimized: false,
+    }
+    await page.setContent(`<style>${css}</style>${renderToStaticMarkup(React.createElement(Navigator, navigatorProps))}`)
+    const panelGeometry = await page.evaluate(() => {
+      const panel = document.querySelector('.timeline-task-navigator')
+      const list = document.querySelector('.timeline-task-navigator-list')
+      return { bottom: panel.getBoundingClientRect().bottom, height: panel.getBoundingClientRect().height, listHeight: list.clientHeight, scrollHeight: list.scrollHeight }
+    })
+    assert.ok(panelGeometry.bottom <= 800)
+    assert.ok(panelGeometry.height <= 200)
+    assert.ok(panelGeometry.listHeight > 0)
+    assert.ok(panelGeometry.scrollHeight > panelGeometry.listHeight)
+    await page.setContent(`<style>${css}</style>${renderToStaticMarkup(React.createElement(Navigator, { ...navigatorProps, minimized: true }))}`)
+    assert.ok(await page.locator('.timeline-task-navigator').evaluate((node) => node.getBoundingClientRect().height) < 120)
+  } finally { await browser.close() }
+})
+
+
+test('deadline-overdue tasks suppress both ordinary and card-attached release/due markers', () => {
+  const scale = makeScale('2026-09-19', 'day')
+  for (const scheduled_date of ['2026-09-21', '2026-09-20']) {
+    const item = { ...base, scheduled_date, deadline_overdue: true }
+    const geometry = taskGeometry(item, scale)
+    assert.ok(geometry?.card)
+    assert.equal(geometry.constraint, null)
+    assert.deepEqual(geometry.markers, [])
+    const html = render(item)
+    assert.doesNotMatch(html, /timeline-constraint-line|timeline-card-marker|timeline-marker /)
+  }
+})
+
+test('anchor-overdue-only tasks preserve canonical release and due markers', () => {
+  const item = { ...base, deadline_overdue: false, active_carried_anchor: true }
+  const geometry = taskGeometry(item, makeScale('2026-09-19', 'day'))
+  assert.ok(geometry.constraint)
+  assert.equal(geometry.markers.length, 2)
 })

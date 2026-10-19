@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { ChevronLeft, ChevronRight, Eye, EyeOff } from 'lucide-react'
 
 import arcLogo from '../../assets/brand/arc-logo.svg'
 import { subjectLabel } from '../../lib/subjectLabel'
@@ -9,11 +10,22 @@ export default function TimelineSidebar({
   roots,
   selected,
   toggle,
+  navigatorVisible = false,
+  toggleNavigatorPanel,
   loading,
   error,
   retry,
   schedulerRuntime,
   actions,
+  rootLeafIndex = new Map(),
+  currentLeafByRoot = {},
+  navigateRoot,
+  deselectRoots,
+  overdueActive = false,
+  overdueSections = [],
+  toggleOverdue,
+  toggleOverdueSection,
+  overdueNavigation = { count: 0, index: -1, navigate() {} },
 }) {
   const [
     subjectsOpen,
@@ -25,8 +37,8 @@ export default function TimelineSidebar({
       className={`
         timeline-sidebar
         fixed left-0 top-0 z-30
-        flex h-screen w-arc-sidebar
-        flex-col overflow-y-auto
+        flex h-dvh min-h-0 w-arc-sidebar
+        flex-col overflow-hidden
         overscroll-contain
         border-r border-white/10
         bg-arc-surface
@@ -47,7 +59,7 @@ export default function TimelineSidebar({
           mb-3 flex min-h-11 w-full
           items-center justify-between
           px-3 py-2 text-left
-          text-[22px] font-bold
+          text-[26.4px] font-bold
           tracking-[0.12em]
           text-arc-text-secondary
           md:hidden
@@ -60,7 +72,7 @@ export default function TimelineSidebar({
           )
         }
       >
-        Subjects
+        Roots
         <span
           aria-hidden="true"
           className="text-sm tracking-normal"
@@ -71,23 +83,114 @@ export default function TimelineSidebar({
 
       <nav
         aria-label="Filter by root goal"
-        className="md:mt-20"
+        className="flex min-h-0 flex-1 flex-col md:mt-20"
       >
-        <div className="mb-3 hidden px-3 md:block">
+        <div className="mb-[6px] hidden items-center justify-between md:flex">
           <h2
             className="
-              text-[22px] font-bold
+              pl-3 text-[22px] font-bold leading-tight
               tracking-[0.12em]
               text-arc-text-secondary
             "
           >
-            Subjects
+            Roots
           </h2>
+          <div className="flex shrink-0 items-center gap-1">
+            {selected.length > 0 && (
+              <button
+                type="button"
+                aria-label={navigatorVisible ? 'Hide Root Tasks panel' : 'Show Root Tasks panel'}
+                title={navigatorVisible ? 'Hide Root Tasks panel' : 'Show Root Tasks panel'}
+                aria-pressed={navigatorVisible}
+                onClick={toggleNavigatorPanel}
+                className="grid h-7 w-7 place-items-center rounded-arc-sm text-arc-text-secondary hover:bg-white/10"
+              >
+                {navigatorVisible ? <Eye size={17} /> : <EyeOff size={17} />}
+              </button>
+            )}
+            {selected.length > 1 && selected.length < roots.length && (
+              <button
+                type="button"
+                aria-label="Deselect all"
+                title="Deselect all roots"
+                className="timeline-roots-clear"
+                onClick={deselectRoots}
+              >
+                ×
+              </button>
+            )}
+          </div>
+        </div>
+
+        <div className="mb-[6px]">
+          <div className="grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-2">
+          <button
+            type="button"
+            aria-pressed={overdueActive}
+            onClick={toggleOverdue}
+            className={`block min-w-0 w-full whitespace-nowrap rounded-arc-sm px-3 py-2 text-left text-sm text-arc-danger-light transition-colors hover:bg-white/5 ${
+              overdueActive ? 'bg-white/10 font-semibold' : ''
+            }`}
+          >
+            Overdue
+          </button>
+          {overdueActive && (
+              <div
+                className="timeline-root-navigation !m-0 !p-0 !w-auto !max-w-none flex items-center justify-end gap-0"
+                role="group"
+                aria-label="Overdue task navigation"
+              >
+                <button
+                  type="button"
+                  className="timeline-root-navigation-arrow"
+                  aria-label="Previous overdue task"
+                  disabled={!overdueNavigation.count}
+                  onClick={() => overdueNavigation.navigate(-1)}
+                >
+                  <ChevronLeft size={14} />
+                </button>
+                <span className="timeline-root-navigation-count">
+                  {overdueNavigation.count
+                    ? `${Math.max(1, overdueNavigation.index + 1)}/${overdueNavigation.count}`
+                    : '0/0'}
+                </span>
+                <button
+                  type="button"
+                  className="timeline-root-navigation-arrow"
+                  aria-label="Next overdue task"
+                  disabled={!overdueNavigation.count}
+                  onClick={() => overdueNavigation.navigate(1)}
+                >
+                  <ChevronRight size={14} />
+                </button>
+              </div>
+          )}
+          </div>
+          {overdueActive && (
+              <div role="group" aria-label="Timeline overdue types" className="ml-4 mt-3 space-y-1">
+              {[
+                ['deadline', 'Deadline'],
+                ['anchor', 'Anchored'],
+              ].map(([section, label]) => (
+                <button
+                  key={section}
+                  type="button"
+                  aria-pressed={overdueSections.includes(section)}
+                  onClick={() => toggleOverdueSection(section)}
+                  className={`block w-full rounded-arc-sm px-3 py-1.5 text-left text-sm text-arc-danger-light hover:bg-white/5 ${
+                    overdueSections.includes(section) ? 'bg-white/10 font-semibold' : ''
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+              </div>
+          )}
         </div>
 
         <div
           id="timeline-subjects"
-          className="timeline-subject-list space-y-1"
+          className="timeline-subject-list min-h-0 flex-1 space-y-1 overflow-y-auto overscroll-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         >
           {loading && (
             <p
@@ -119,8 +222,8 @@ export default function TimelineSidebar({
                 )
 
               return (
+                <div key={root.id}>
                 <button
-                  key={root.id}
                   type="button"
                   aria-pressed={
                     active
@@ -160,13 +263,14 @@ export default function TimelineSidebar({
                     )}
                   </span>
                 </button>
+                </div>
               )
             },
           )}
         </div>
       </nav>
 
-      <div className="timeline-sidebar-scheduler">
+      <div className="timeline-sidebar-scheduler relative z-10 shrink-0">
         <SchedulerRunButton
           runtime={
             schedulerRuntime

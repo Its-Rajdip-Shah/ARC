@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { getAdminStats, listAdminUsers, lockUser, unlockUser } from '../api/admin'
+import { approvePasswordReset, getAdminStats, listAdminUsers, listPasswordResets, lockUser, unlockUser } from '../api/admin'
 
 export function useAdminStats() {
   return useQuery({
@@ -31,6 +31,24 @@ export function useUnlockUser() {
     mutationFn: unlockUser,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin'] })
+    },
+  })
+}
+
+export function usePasswordResets() {
+  return useQuery({
+    queryKey: ['admin', 'password-resets'],
+    queryFn: listPasswordResets,
+    refetchInterval: 4000,
+  })
+}
+
+export function useApprovePasswordReset() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: approvePasswordReset,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin', 'password-resets'] })
     },
   })
 }

@@ -6,6 +6,9 @@ import loginBackground from '../../assets/auth/login-background.png'
 import { useAuthStore } from '../../stores/authStore'
 import { errorMessage } from '../../lib/errors'
 
+const fieldClass =
+  'h-[55px] w-full bg-[#1D4074] px-4 text-lg text-white outline-none placeholder:text-[#B7A6EC] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white sm:px-12'
+
 export default function StudentLoginPage() {
   const navigate = useNavigate()
   const setSession = useAuthStore((state) => state.setSession)
@@ -76,37 +79,53 @@ export default function StudentLoginPage() {
     }
   }
 
+  function handleCodePaste(event) {
+    const digits = event.clipboardData.getData('text').replace(/\D/g, '').slice(0, 6).split('')
+    if (!digits.length) return
+    event.preventDefault()
+    const next = Array(6).fill('')
+    digits.forEach((digit, index) => {
+      next[index] = digit
+    })
+    setCode(next)
+    codeRefs.current[Math.min(digits.length, 5)]?.focus()
+  }
+
   return (
     <main
-      className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[#152C72] bg-cover bg-center"
+      className="relative flex min-h-screen items-center justify-center overflow-y-auto bg-[#152C72] bg-cover bg-center"
       style={{ backgroundImage: `url(${loginBackground})` }}
     >
-      <section className="relative w-[499px] max-w-[calc(100vw-32px)] bg-[#7D98D7]/40 px-[61px] py-[26px] text-white">
+      <section className="relative my-6 w-[499px] max-w-[calc(100vw-32px)] bg-[#7D98D7]/40 px-6 py-6 text-white sm:px-[61px]">
         <h1 className="text-center text-[32px] font-semibold tracking-wide">
           WELCOME
         </h1>
 
         {!mfaToken ? (
           <form className="mt-8" onSubmit={submitCredentials}>
-            <input
-              type="email"
-              required
-              autoComplete="username"
-              placeholder="email..."
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
-              className="h-[55px] w-full bg-[#1D4074] px-12 text-lg text-white outline-none placeholder:text-[#B7A6EC]"
-            />
+            <label className="block text-sm font-medium">
+              Email
+              <input
+                type="email"
+                required
+                autoComplete="username"
+                value={email}
+                onChange={(event) => setEmail(event.target.value)}
+                className={`mt-2 ${fieldClass}`}
+              />
+            </label>
 
-            <input
-              type="password"
-              required
-              autoComplete="current-password"
-              placeholder="password..."
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              className="mt-[17px] h-[55px] w-full bg-[#1D4074] px-12 text-lg text-white outline-none placeholder:text-[#B7A6EC]"
-            />
+            <label className="mt-[17px] block text-sm font-medium">
+              Password
+              <input
+                type="password"
+                required
+                autoComplete="current-password"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                className={`mt-2 ${fieldClass}`}
+              />
+            </label>
 
             <button
               type="submit"
@@ -134,7 +153,8 @@ export default function StudentLoginPage() {
                   value={digit}
                   onChange={(event) => updateCode(index, event.target.value)}
                   onKeyDown={(event) => handleCodeKeyDown(index, event)}
-                  className="h-[55px] w-[59px] bg-[#1D4074] text-center text-2xl text-[#B7A6EC] outline-none"
+                  onPaste={index === 0 ? handleCodePaste : undefined}
+                  className="h-[55px] w-[59px] bg-[#1D4074] text-center text-2xl text-[#B7A6EC] outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
                 />
               ))}
             </div>
@@ -162,16 +182,23 @@ export default function StudentLoginPage() {
         )}
 
         {error && (
-          <p className="mt-4 text-center text-sm text-red-200">{error}</p>
+          <p role="alert" className="mt-4 text-center text-sm text-red-200">{error}</p>
         )}
 
         {!mfaToken && (
-          <p className="mt-3 text-center text-lg text-[#D8CDF8]">
-            New to ARC?{' '}
-            <Link to="/register" className="underline">
-              Create an account
-            </Link>
-          </p>
+          <>
+            <p className="mt-3 text-center text-sm text-[#D8CDF8]">
+              <Link to="/forgot-password" className="underline">
+                Forgot your password?
+              </Link>
+            </p>
+            <p className="mt-3 text-center text-lg text-[#D8CDF8]">
+              New to ARC?{' '}
+              <Link to="/register" className="underline">
+                Create an account
+              </Link>
+            </p>
+          </>
         )}
       </section>
     </main>

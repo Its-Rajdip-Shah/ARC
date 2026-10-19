@@ -1,0 +1,12 @@
+[run]
+source =
+    accounts
+    planning
+    canvas_integration
+    analytics
+    core
+omit =
+    */migrations/*
+    */tests/*
+    */tests.py
+    */management/*

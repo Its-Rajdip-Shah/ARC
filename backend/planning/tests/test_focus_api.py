@@ -1841,8 +1841,8 @@ def test_focus_projection_exposes_scheduler_canonical_bucket_for_residual(
     """
     A schedulable parent with only completed children is a residual task.
 
-    Its raw duration may still be UNDER_4_HOURS, but canonical Focus/scheduler
-    semantics place residual work in QUICK WINS.
+    Its actual duration determines its Focus bucket, just like other
+    actionable work.
     """
 
     today = timezone.localdate()
@@ -1912,7 +1912,7 @@ def test_focus_projection_exposes_scheduler_canonical_bucket_for_residual(
         rows[
             residual.pk
         ]["focus_bucket"]
-        == "quick"
+        == "boss"
     )
 
     assert (
@@ -1921,3 +1921,503 @@ def test_focus_projection_exposes_scheduler_canonical_bucket_for_residual(
         ]["focus_bucket"]
         == "boss"
     )
+
+
+@pytest.mark.parametrize('flavour', [None, 'lock-in'])
+@pytest.mark.parametrize('anchored', [False, True])
+def test_single_drag_batch_preserves_other_anchor_facts_and_history(user, make_item, api_for, flavour, anchored):
+    from datetime import date
+    from freezegun import freeze_time
+    from planning.models import SchedulingState
+    from planning.services import history, scheduler_v1
+
+    today = date(2026, 10, 1)
+    with freeze_time('2026-10-01T12:00:00Z'):
+        SchedulingState.objects.create(user=user, scheduler_flavour=flavour)
+        others = [make_item(user, title, duration_category=DurationCategory.UNDER_4_HOURS,
+                            manual_requested_date=today if anchored else None,
+                            manual_requested_order=index if anchored else None,
+                            manual_anchor_origin_date=today - timedelta(days=1) if anchored else None)
+                  for index, title in enumerate(['A', 'B'], 1)]
+        dragged = make_item(user, 'C', duration_category=DurationCategory.UNDER_4_HOURS)
+        scheduling.daily_schedule(user, today=today)
+
+        def anchor_facts(item):
+            item.refresh_from_db()
+            return item.manual_requested_date, item.manual_requested_order, item.manual_anchor_origin_date
+
+        before = [anchor_facts(item) for item in others]
+        client = api_for(user)
+        if anchored:
+            duplicate = client.post('/api/planning/focus/anchor/batch/', {'changes': [
+                {'item_id': dragged.pk, 'date': today.isoformat(), 'order': 1},
+            ]}, format='json')
+            assert duplicate.status_code == 409
+            assert any(row['code'] == 'anchor_order_taken' for row in duplicate.data['conflicts'])
+            assert anchor_facts(dragged) == (None, None, None)
+        order = 3 if anchored else 1
+        response = client.post('/api/planning/focus/anchor/batch/', {'changes': [
+            {'item_id': dragged.pk, 'date': today.isoformat(), 'order': order},
+        ]}, format='json')
+        assert response.status_code == 200, response.data
+        assert anchor_facts(dragged) == (today, order, today)
+        assert [anchor_facts(item) for item in others] == before
+        saved = next(row for row in response.data['focus']['candidates'] if row['item_id'] == dragged.pk)
+        assert saved['manual_requested_order'] == order
+        request = scheduler_v1.build_scheduler_input(user, flavour='lock-in', today=today)
+        slots = [(row.anchor_date, row.anchor_order) for row in request.tasks if row.anchor_date is not None]
+        assert len(slots) == len(set(slots))
+        history.undo(user)
+        assert anchor_facts(dragged) == (None, None, None)
+        assert [anchor_facts(item) for item in others] == before
+        history.redo(user)
+        assert anchor_facts(dragged) == (today, order, today)
+        assert [anchor_facts(item) for item in others] == before
+
+
+
+def test_focus_monk_boss_reorder_with_residual_parent(
+    user, make_item, api_for,
+):
+    """Same-day Boss reorder must support an actionable residual parent."""
+    from planning.models import SchedulingState
+
+    today = timezone.localdate()
+
+    SchedulingState.objects.create(
+        user=user,
+        scheduler_flavour='monk',
+    )
+
+    w1 = make_item(
+        user,
+        'W1',
+        duration_category=DurationCategory.UNDER_4_HOURS,
+        manual_requested_date=today,
+        manual_requested_order=1,
+        manual_anchor_origin_date=today - timedelta(days=1),
+        priority_position=1,
+    )
+
+    revamp = make_item(
+        user,
+        'Revamp Everything',
+        duration_category=DurationCategory.UNDER_8_HOURS,
+        manual_requested_date=today,
+        manual_requested_order=2,
+        manual_anchor_origin_date=today - timedelta(days=1),
+        priority_position=2,
+    )
+
+    make_item(
+        user,
+        'Completed Revamp child',
+        parent=revamp,
+        is_completed=True,
+        duration_category=DurationCategory.UNDER_20_MINUTES,
+    )
+
+    dependency = make_item(
+        user,
+        'Dependency',
+        duration_category=DurationCategory.UNDER_8_HOURS,
+        manual_requested_date=today,
+        manual_requested_order=3,
+        manual_anchor_origin_date=today - timedelta(days=1),
+        priority_position=3,
+    )
+
+    SchedulingOverload.objects.create(
+        user=user,
+        date=today,
+        allowed=True,
+    )
+
+    scheduling.daily_schedule(user, today=today)
+
+    client = api_for(user)
+    initial = client.get('/api/planning/focus/')
+    assert initial.status_code == 200
+
+    ids = [w1.pk, revamp.pk, dependency.pk]
+
+    initial_order = [
+        row['item_id']
+        for row in initial.data['candidates']
+        if row['item_id'] in ids
+    ]
+
+    assert initial_order == ids, (
+        'Fixture must begin in W1, Revamp, Dependency order: '
+        f'{initial_order}'
+    )
+
+    response = client.post(
+        '/api/planning/focus/anchor/batch/',
+        {
+            'changes': [
+                {
+                    'item_id': dependency.pk,
+                    'date': today.isoformat(),
+                    'order': 2,
+                    'order_only': True,
+                },
+                {
+                    'item_id': revamp.pk,
+                    'date': today.isoformat(),
+                    'order': 3,
+                    'order_only': True,
+                },
+            ],
+            'expected_queue': [
+                {
+                    'item_id': item.pk,
+                    'date': today.isoformat(),
+                }
+                for item in [w1, dependency, revamp]
+            ],
+        },
+        format='json',
+    )
+
+    assert response.status_code == 200, response.data
+
+    after = client.get('/api/planning/focus/')
+    assert after.status_code == 200
+
+    actual_order = [
+        row['item_id']
+        for row in after.data['candidates']
+        if row['item_id'] in ids
+    ]
+
+    assert actual_order == [
+        w1.pk,
+        dependency.pk,
+        revamp.pk,
+    ]
+
+    dependency.refresh_from_db()
+    revamp.refresh_from_db()
+
+    assert dependency.manual_requested_order == 2
+    assert revamp.manual_requested_order == 3
+
+
+def _focus_reorder_fixture(user, make_item):
+    from planning.models import SchedulingState
+    today = timezone.localdate()
+    SchedulingState.objects.create(user=user, scheduler_flavour='lock-in')
+    tasks = [make_item(
+        user, f'Queue task {index}', duration_category=DurationCategory.UNDER_20_MINUTES,
+        manual_requested_date=today, manual_requested_order=index,
+        manual_anchor_origin_date=today - timedelta(days=1),
+        priority_position=index,
+    ) for index in range(1, 7)]
+    neighbour = make_item(user, 'Automatic neighbour', duration_category=DurationCategory.UNDER_1_HOUR)
+    SchedulingOverload.objects.create(user=user, date=today, allowed=True)
+    scheduling.daily_schedule(user, today=today)
+    return today, tasks, neighbour
+
+
+def _post_focus_order(client, today, tasks, positions):
+    return client.post('/api/planning/focus/anchor/batch/', {
+        'changes': [
+            {'item_id': tasks[number - 1].pk, 'date': today.isoformat(), 'order': index, 'order_only': True}
+            for index, number in enumerate(positions, 1)
+            if tasks[number - 1].manual_requested_order != index
+        ],
+        'expected_queue': [{'item_id': tasks[number - 1].pk, 'date': today.isoformat()} for number in positions],
+    }, format='json')
+
+
+@pytest.mark.parametrize('positions', [[1, 2, 3, 4, 6, 5], [1, 4, 2, 3, 5, 6]])
+def test_focus_atomic_reorder_preserves_anchor_origin_and_scheduler_order(user, make_item, api_for, positions):
+    from planning.services import history
+    today, tasks, neighbour = _focus_reorder_fixture(user, make_item)
+    response = _post_focus_order(api_for(user), today, tasks, positions)
+    assert response.status_code == 200, response.data
+    ids = [tasks[number - 1].pk for number in positions]
+    assert [row['item_id'] for row in response.data['focus']['candidates'] if row['item_id'] in ids] == ids
+    scheduling.daily_schedule(user, today=today)
+    rows = api_for(user).get('/api/planning/focus/').data['candidates']
+    assert [row['item_id'] for row in rows if row['item_id'] in ids] == ids
+    for index, number in enumerate(positions, 1):
+        task = tasks[number - 1]
+        task.refresh_from_db()
+        assert (task.manual_requested_date, task.manual_requested_order, task.manual_anchor_origin_date) == (
+            today, index, today - timedelta(days=1),
+        )
+    neighbour.refresh_from_db()
+    assert neighbour.manual_requested_date is None
+    assert neighbour.manual_requested_order is None
+    history.undo(user)
+    for index, task in enumerate(tasks, 1):
+        task.refresh_from_db()
+        assert task.manual_requested_order == index
+        assert task.manual_anchor_origin_date == today - timedelta(days=1)
+    history.redo(user)
+    assert [row['item_id'] for row in api_for(user).get('/api/planning/focus/').data['candidates'] if row['item_id'] in ids] == ids
+
+
+def test_focus_repeated_atomic_nudges_reach_beginning_and_end(user, make_item, api_for):
+    today, tasks, _ = _focus_reorder_fixture(user, make_item)
+    positions = [1, 2, 3, 4, 5, 6]
+    for destination in [4, 3, 2, 1, 0, 1, 2, 3, 4, 5]:
+        positions.remove(6)
+        positions.insert(destination, 6)
+        response = _post_focus_order(api_for(user), today, tasks, positions)
+        assert response.status_code == 200, response.data
+        for task in tasks:
+            task.refresh_from_db()
+        assert sorted(task.manual_requested_order for task in tasks) == [1, 2, 3, 4, 5, 6]
+
+
+@pytest.mark.parametrize('constraint', ['dependency', 'release', 'deadline', 'anchor_changed'])
+def test_focus_reorder_conflicts_roll_back_all_order_changes(user, make_item, api_for, constraint):
+    today, tasks, _ = _focus_reorder_fixture(user, make_item)
+    if constraint == 'dependency':
+        prerequisite = make_item(user, 'Unfinished prerequisite')
+        PlanningDependency.objects.create(prerequisite=prerequisite, dependent=tasks[5])
+        code = 'blocked_dependency'
+    elif constraint == 'release':
+        PlanningItem.objects.filter(pk=tasks[5].pk).update(start_date=today + timedelta(days=1))
+        code = 'before_release'
+    elif constraint == 'deadline':
+        PlanningItem.objects.filter(pk=tasks[5].pk).update(due_date=today - timedelta(days=1))
+        code = 'after_deadline'
+    else:
+        PlanningItem.objects.filter(pk=tasks[5].pk).update(manual_requested_date=today + timedelta(days=1))
+        code = 'anchor_changed'
+    response = _post_focus_order(api_for(user), today, tasks, [1, 2, 3, 4, 6, 5])
+    assert response.status_code == 409, response.data
+    assert code in {row['code'] for row in response.data['conflicts']}
+    for index, task in enumerate(tasks, 1):
+        task.refresh_from_db()
+        assert task.manual_requested_order == index
+        assert task.manual_anchor_origin_date == today - timedelta(days=1)
+
+
+def test_focus_reorder_rejects_scheduler_mismatch_without_persisting_intent(user, make_item, api_for):
+    today, tasks, neighbour = _focus_reorder_fixture(user, make_item)
+    # The batch requests a swap, but the visible postcondition requests a
+    # different order. Neither canonical nor disposable changes may survive.
+    before = list(PlanningItem.objects.filter(user=user).order_by('pk').values_list(
+        'pk', 'manual_requested_order', 'manual_anchor_origin_date', 'scheduled_date', 'execution_rank'))
+    response = api_for(user).post('/api/planning/focus/anchor/batch/', {
+        'changes': [
+            {'item_id': tasks[4].pk, 'date': today.isoformat(), 'order': 6, 'order_only': True},
+            {'item_id': tasks[5].pk, 'date': today.isoformat(), 'order': 5, 'order_only': True},
+        ],
+        'expected_queue': [{'item_id': task.pk, 'date': today.isoformat()} for task in tasks],
+    }, format='json')
+    assert response.status_code == 409, response.data
+    assert response.data['conflicts'][0]['code'] == 'queue_order_unrepresentable'
+    assert list(PlanningItem.objects.filter(user=user).order_by('pk').values_list(
+        'pk', 'manual_requested_order', 'manual_anchor_origin_date', 'scheduled_date', 'execution_rank')) == before
+
+
+@pytest.mark.parametrize('occupied', [False, True])
+def test_focus_cross_date_move_preserves_unrelated_anchors_and_automatic_tasks(user, make_item, api_for, occupied):
+    from planning.models import SchedulingState
+    today = timezone.localdate()
+    tomorrow = today + timedelta(days=1)
+    SchedulingState.objects.create(user=user, scheduler_flavour='lock-in')
+    source = make_item(user, 'Source anchor', duration_category=DurationCategory.UNDER_20_MINUTES,
+                       manual_requested_date=today, manual_requested_order=1,
+                       manual_anchor_origin_date=today - timedelta(days=1))
+    destination = make_item(user, 'Destination neighbour', duration_category=DurationCategory.UNDER_20_MINUTES,
+                            start_date=tomorrow, manual_requested_date=tomorrow if occupied else None,
+                            manual_requested_order=1 if occupied else None,
+                            manual_anchor_origin_date=today if occupied else None)
+    moved = make_item(user, 'Moved automatic task', duration_category=DurationCategory.UNDER_20_MINUTES)
+    scheduling.daily_schedule(user, today=today)
+    before = (destination.manual_requested_date, destination.manual_requested_order, destination.manual_anchor_origin_date)
+    response = api_for(user).post('/api/planning/focus/anchor/batch/', {
+        'changes': [{'item_id': moved.pk, 'date': tomorrow.isoformat(), 'order': 1}],
+        'expected_queue': [
+            {'item_id': source.pk, 'date': today.isoformat()},
+            {'item_id': moved.pk, 'date': tomorrow.isoformat()},
+            {'item_id': destination.pk, 'date': tomorrow.isoformat()},
+        ],
+    }, format='json')
+    assert response.status_code == (409 if occupied else 200), response.data
+    moved.refresh_from_db()
+    assert moved.manual_requested_date == (None if occupied else tomorrow)
+    if occupied:
+        assert response.data['conflicts'][0]['code'] == 'anchor_order_taken'
+    source.refresh_from_db()
+    destination.refresh_from_db()
+    assert source.manual_requested_date == today
+    assert source.manual_requested_order == 1
+    assert source.manual_anchor_origin_date == today - timedelta(days=1)
+    assert (destination.manual_requested_date, destination.manual_requested_order, destination.manual_anchor_origin_date) == before
+
+
+def test_focus_mixed_reorder_anchors_only_selected_automatic_task(user, make_item, api_for):
+    from planning.models import SchedulingState
+    today = timezone.localdate()
+    SchedulingState.objects.create(user=user, scheduler_flavour='lock-in')
+    tasks = [make_item(user, f'Mixed {index}', duration_category=DurationCategory.UNDER_20_MINUTES)
+             for index in range(1, 5)]
+    PlanningItem.objects.filter(pk=tasks[1].pk).update(manual_requested_date=today, manual_requested_order=2,
+                                                    manual_anchor_origin_date=today - timedelta(days=1))
+    scheduling.daily_schedule(user, today=today)
+    response = api_for(user).post('/api/planning/focus/anchor/batch/', {
+        'changes': [
+            {'item_id': tasks[3].pk, 'date': today.isoformat(), 'order': 2},
+            {'item_id': tasks[1].pk, 'date': today.isoformat(), 'order': 3, 'order_only': True},
+        ],
+        'expected_queue': [{'item_id': tasks[index].pk, 'date': today.isoformat()} for index in [0, 3, 1, 2]],
+    }, format='json')
+    assert response.status_code == 200, response.data
+    for task in tasks:
+        task.refresh_from_db()
+    assert tasks[0].manual_requested_date is None
+    assert tasks[2].manual_requested_date is None
+    assert tasks[1].manual_anchor_origin_date == today - timedelta(days=1)
+    assert tasks[3].manual_anchor_origin_date == today
+    assert [row['item_id'] for row in response.data['focus']['candidates']] == [tasks[index].pk for index in [0, 3, 1, 2]]
+
+
+def test_focus_expected_queue_rejects_foreign_tasks_without_mutating_anchors(user, other_user, make_item, api_for):
+    today, tasks, _ = _focus_reorder_fixture(user, make_item)
+    foreign = make_item(other_user, 'Foreign task')
+    response = api_for(user).post('/api/planning/focus/anchor/batch/', {
+        'changes': [{'item_id': tasks[0].pk, 'date': today.isoformat(), 'order': 1, 'order_only': True}],
+        'expected_queue': [{'item_id': foreign.pk, 'date': today.isoformat()}],
+    }, format='json')
+    assert response.status_code == 400
+    tasks[0].refresh_from_db()
+    assert tasks[0].manual_anchor_origin_date == today - timedelta(days=1)
+
+
+def test_focus_reorder_reports_unrepresentable_legacy_output_instead_of_silent_success(user, make_item, api_for):
+    from planning.models import SchedulingState
+    today, tasks, _ = _focus_reorder_fixture(user, make_item)
+    SchedulingState.objects.filter(user=user).update(scheduler_flavour=None)
+    response = _post_focus_order(api_for(user), today, tasks, [1, 2, 3, 4, 6, 5])
+    assert response.status_code == 409, response.data
+    assert response.data['conflicts'][0]['code'] == 'queue_order_unrepresentable'
+    for index, task in enumerate(tasks, 1):
+        task.refresh_from_db()
+        assert task.manual_requested_order == index
+        assert task.manual_anchor_origin_date == today - timedelta(days=1)
+
+
+def test_focus_cross_date_anchor_accepts_unrelated_scheduler_changes(user, make_item, api_for):
+    today, tasks, automatic = _focus_reorder_fixture(user, make_item)
+    tomorrow = today + timedelta(days=1)
+    later = today + timedelta(days=5)
+    automatic = make_item(user, 'Automatic quick proposal', duration_category=DurationCategory.UNDER_20_MINUTES,
+                          scheduled_date=later, execution_rank=1)
+    before_origin = tasks[1].manual_anchor_origin_date
+    response = api_for(user).post('/api/planning/focus/anchor/batch/', {
+        'changes': [{'item_id': tasks[0].pk, 'date': tomorrow.isoformat(), 'order': 1}],
+        # These are the old visible dates/order of unrelated tasks, not
+        # promises that a cross-date anchor makes about the new schedule.
+        'expected_queue': [*({'item_id': task.pk, 'date': today.isoformat()} for task in tasks[1:]),
+                           {'item_id': tasks[0].pk, 'date': tomorrow.isoformat()},
+                           {'item_id': automatic.pk, 'date': later.isoformat()}],
+    }, format='json')
+    assert response.status_code == 200, response.data
+    tasks[0].refresh_from_db()
+    tasks[1].refresh_from_db()
+    automatic.refresh_from_db()
+    assert tasks[0].manual_requested_date == tomorrow
+    assert tasks[1].manual_requested_date == today
+    assert tasks[1].manual_anchor_origin_date == before_origin
+    assert automatic.manual_requested_date is None
+    assert automatic.scheduled_date != later
+    from planning.services import history
+    history.undo(user)
+    tasks[0].refresh_from_db()
+    assert tasks[0].manual_requested_date == today
+    history.redo(user)
+    rows = api_for(user).get('/api/planning/focus/').data['candidates']
+    assert next(row for row in rows if row['item_id'] == tasks[0].pk)['manual_requested_date'] == tomorrow.isoformat()
+
+
+def test_focus_same_date_reorder_ignores_unrelated_queue_postconditions(user, make_item, api_for):
+    today, tasks, automatic = _focus_reorder_fixture(user, make_item)
+    later = today + timedelta(days=5)
+    automatic = make_item(user, 'Automatic quick proposal', duration_category=DurationCategory.UNDER_20_MINUTES,
+                          scheduled_date=later, execution_rank=1)
+    response = api_for(user).post('/api/planning/focus/anchor/batch/', {
+        'changes': [
+            {'item_id': tasks[4].pk, 'date': today.isoformat(), 'order': 6, 'order_only': True},
+            {'item_id': tasks[5].pk, 'date': today.isoformat(), 'order': 5, 'order_only': True},
+        ],
+        'expected_queue': [
+            {'item_id': tasks[index].pk, 'date': today.isoformat()}
+            for index in [0, 1, 2, 3, 5, 4]
+        ] + [{'item_id': automatic.pk, 'date': later.isoformat()}],
+    }, format='json')
+    assert response.status_code == 200, response.data
+    ids = [row['item_id'] for row in response.data['focus']['candidates']]
+    assert ids.index(tasks[5].pk) < ids.index(tasks[4].pk)
+    automatic.refresh_from_db()
+    assert automatic.manual_requested_date is None
+    assert automatic.scheduled_date != later
+
+
+def test_focus_cross_date_occupied_anchor_batch_survives_refresh_and_history(user, make_item, api_for):
+    from planning.models import SchedulingState
+    from planning.services import history
+    today = timezone.localdate()
+    tomorrow = today + timedelta(days=1)
+    origin = today - timedelta(days=1)
+    SchedulingState.objects.create(user=user, scheduler_flavour='lock-in')
+    first = make_item(user, 'Moved anchor', duration_category=DurationCategory.UNDER_20_MINUTES,
+                      manual_requested_date=today, manual_requested_order=1, manual_anchor_origin_date=origin)
+    source = make_item(user, 'Source anchor', duration_category=DurationCategory.UNDER_20_MINUTES,
+                       manual_requested_date=today, manual_requested_order=2, manual_anchor_origin_date=origin)
+    automatic = make_item(user, 'Automatic neighbour', duration_category=DurationCategory.UNDER_20_MINUTES)
+    destination = make_item(user, 'Destination anchor', duration_category=DurationCategory.UNDER_20_MINUTES,
+                            start_date=tomorrow, manual_requested_date=tomorrow,
+                            manual_requested_order=1, manual_anchor_origin_date=today)
+    scheduling.daily_schedule(user, today=today)
+    client = api_for(user)
+    response = client.post('/api/planning/focus/anchor/batch/', {
+        'changes': [
+            {'item_id': first.pk, 'date': tomorrow.isoformat(), 'order': 1},
+            {'item_id': source.pk, 'date': today.isoformat(), 'order': 1, 'order_only': True},
+            {'item_id': destination.pk, 'date': tomorrow.isoformat(), 'order': 2, 'order_only': True},
+        ],
+        'expected_queue': [{'item_id': task.pk, 'date': day.isoformat()}
+                           for task, day in [(source, today), (automatic, today), (first, tomorrow), (destination, tomorrow)]],
+    }, format='json')
+    assert response.status_code == 200, response.data
+    scheduling.daily_schedule(user, today=today)
+    fresh = api_for(user).get('/api/planning/focus/').data['candidates']
+    assert [row['item_id'] for row in fresh if str(row['scheduled_date']) == tomorrow.isoformat()] == [first.pk, destination.pk]
+    for task in [first, source, automatic, destination]:
+        task.refresh_from_db()
+    assert (first.manual_requested_date, first.manual_requested_order, first.manual_anchor_origin_date) == (tomorrow, 1, tomorrow)
+    assert (source.manual_requested_date, source.manual_requested_order, source.manual_anchor_origin_date) == (today, 1, origin)
+    assert (destination.manual_requested_date, destination.manual_requested_order, destination.manual_anchor_origin_date) == (tomorrow, 2, today)
+    assert automatic.manual_requested_date is None
+    history.undo(user)
+    first.refresh_from_db()
+    assert first.manual_requested_date == today
+    history.redo(user)
+    first.refresh_from_db()
+    assert first.manual_requested_date == tomorrow
+
+
+def test_focus_same_date_single_task_reports_unsupported_order_without_anchoring_neighbours(user, make_item, api_for):
+    from planning.models import SchedulingState
+    today = timezone.localdate()
+    SchedulingState.objects.create(user=user, scheduler_flavour=None)
+    tasks = [make_item(user, f'Automatic {index}', duration_category=DurationCategory.UNDER_20_MINUTES,
+                       priority_position=index) for index in range(1, 4)]
+    scheduling.daily_schedule(user, today=today)
+    response = api_for(user).post('/api/planning/focus/anchor/batch/', {
+        'changes': [{'item_id': tasks[2].pk, 'date': today.isoformat(), 'order': 1}],
+        'expected_queue': [{'item_id': tasks[index].pk, 'date': today.isoformat()} for index in [2, 0, 1]],
+    }, format='json')
+    assert response.status_code == 409, response.data
+    assert response.data['conflicts'][0]['code'] == 'queue_order_unrepresentable'
+    for task in tasks:
+        task.refresh_from_db()
+        assert task.manual_requested_date is None

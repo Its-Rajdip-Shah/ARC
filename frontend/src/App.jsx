@@ -1,10 +1,11 @@
-import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
+import { BrowserRouter, Route, Routes } from 'react-router-dom'
 import AdminRoute from './components/AdminRoute'
 import SessionHydrator from './components/SessionHydrator'
 import StudentRoute from './components/StudentRoute'
 import AdminLayout from './components/admin/AdminLayout'
 import StudentLayout from './components/student/StudentLayout'
 import ConnectionStatus from './pages/ConnectionStatus'
+import LandingPage from './pages/LandingPage'
 import AdminDashboardPage from './pages/admin/AdminDashboardPage'
 import AdminLoginPage from './pages/admin/AdminLoginPage'
 import ForgotPasswordPage from './pages/student/ForgotPasswordPage'
@@ -23,7 +24,7 @@ export default function App() {
     <BrowserRouter>
       <SessionHydrator>
         <Routes>
-          <Route path="/" element={<Navigate to="/login" replace />} />
+          <Route path="/" element={<LandingPage />} />
 
           <Route path="/login" element={<StudentLoginPage />} />
           <Route path="/forgot-password" element={<ForgotPasswordPage />} />

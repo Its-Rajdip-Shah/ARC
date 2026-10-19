@@ -1,15 +1,20 @@
 # ARC Testing Infrastructure
 
-ARC uses centralized test orchestration while retaining colocated tests.
+ARC uses centralized test orchestration while retaining colocated tests. The suite matrix is [`contracts/regression_matrix.md`](contracts/regression_matrix.md). The repository documentation map is [`../docs/README.md`](../docs/README.md).
 
 ## Commands
 
-- `make smoke`: Node-native and Vitest suites.
-- `make regression`: Frontend suites and frozen backend contracts.
-- `make integration`: Complete backend pytest suite.
-- `make certify`: Frontend, frozen contracts, complete backend suite,
-  and PostgreSQL configuration verification.
-- `make browser`: Optional Playwright browser verification.
+Each level adds a kind of proof. A higher level does not replace reading the one under it.
+
+| Command | What it verifies |
+| --- | --- |
+| `make smoke` | Node-native and Vitest frontend tests |
+| `make regression` | Frontend tests and frozen backend contracts |
+| `make integration` | Complete backend pytest suite |
+| `make certify` | All frontend tests, frozen contracts, the complete backend suite, and the PostgreSQL preflight |
+| `make browser` | Optional Playwright end-to-end tests |
+
+`make smoke`, `make regression`, `make integration`, and `make certify` run the frontend discovery guard before any suite. A broken inventory stops the gate. `make certify` records browser verification as not run. Playwright stays on `make browser`, and that harness uses SQLite, so it is not PostgreSQL certification.
 
 ## Certification scope
 

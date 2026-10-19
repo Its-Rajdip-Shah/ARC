@@ -71,6 +71,10 @@ and `AGENTS.md` (strict per-user isolation).
 
 ---
 
+## Later product changes
+
+Password change and admin-approved reset shipped after this matrix. The behavior is in `ARCHITECTURE.md`: the admin queue id is not the student token, unknown emails get the same response as known ones, and the reset token stays in the browser that requested it. Study-plan UI and `/api/planning/study-plans/` are removed. `SchedulingState.study_plan` stays in the database and is unused.
+
 ## Local vs production deploy check
 
 | Check | Local (`DEBUG=True`, HTTP) | Production |

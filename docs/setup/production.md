@@ -8,7 +8,7 @@ Its goal is to answer:
 
 > Can a clean machine obtain the intended ARC revision, install it from committed files only, create the required database state, start both application layers, and exercise the implementation successfully?
 
-For active feature work, use `docs/developer_setup_guide.md`.
+For active feature work, use `docs/setup/developer.md`.
 
 ---
 
@@ -487,8 +487,8 @@ A passing UI is not enough if the implementation violates architectural ownershi
 
 For Timeline/scheduler work, review:
 
-    docs/scheduler_contract.md
-    docs/timeline_contract.md
+    docs/contracts/scheduler.md
+    docs/contracts/timeline.md
 
 Confirm the live behavior still respects the documented boundaries.
 

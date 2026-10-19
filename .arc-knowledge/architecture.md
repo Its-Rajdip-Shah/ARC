@@ -21,9 +21,9 @@ The planning scheduler adapter (`backend/planning/services/scheduler_v1.py`) bri
 - Cross-tenant access must never leak user data.
 - Backend owns business rules; frontend does not invent them.
 - No invented Canvas deadlines, marks, or course weights.
-- Study-plan LLM keys and calls remain server-side.
+- Study-plan UI, API, and service are removed. `SchedulingState.study_plan` stays unused. Do not remount `/api/planning/study-plans/`.
 - Preserve planning contract tests and scheduling invariants.
-- `docs/FRONTEND_ARCHITECTURE.md` specifies `MVP arc` Figma page, not `ARC FULL`, as UI source of truth.
+- `docs/architecture/frontend.md` specifies `MVP arc` Figma page, not `ARC FULL`, as UI source of truth.
 
 ## Evidence and limitations
 

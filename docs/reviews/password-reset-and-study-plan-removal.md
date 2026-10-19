@@ -1,5 +1,7 @@
 # Password recovery and study-plan removal
 
+**Status:** Implemented. Merged as the password-reset and study-plan removal change. The notes below are the design that shipped, not an open proposal. Signed-in change is `POST /api/auth/password/change/`. Locked-out reset is requested, approved on `GET /api/admin/password-resets/`, then confirmed in the same browser. `SchedulingState.study_plan` remains unused and `/api/planning/study-plans/` is not mounted.
+
 ## Problem Statement
 How might a student who cannot sign in get back into ARC, and how might staff do that for them, without weakening TOTP or letting an admin learn a student's password — while the study-plan suggestion disappears from the product?
 

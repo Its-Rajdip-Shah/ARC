@@ -186,23 +186,28 @@ Paths: `frontend/src/dnd/timeline/timelineDragPayload.js` … `frontend/src/dnd/
 - `frontend/src/dnd/timeline/timelineProjection.js`
 - `frontend/src/dnd/timeline/timelineProjection.test.js`
 
-### documentation — 16 files (0 test-like)
-Paths: `AGENTS.md` … `frontend/README.md`
+### documentation
+Paths: `AGENTS.md` … `frontend/README.md`. Start at `docs/README.md`.
 - `AGENTS.md`
 - `ARCHITECTURE.md`
 - `FR_TRACEABILITY.md`
 - `README.md`
-- `docs/A2_SECURITY_GAP_ANALYSIS.md`
-- `docs/FRONTEND_ARCHITECTURE.md`
-- `docs/PLANNER_IMPLEMENTATION_REPORT.md`
-- `docs/developer_setup_guide.md`
-- `docs/production_setup_guide.md`
+- `docs/README.md`
+- `docs/architecture/frontend.md`
+- `docs/contracts/scheduler.md`
+- `docs/contracts/timeline.md`
+- `docs/governance/constitution.md`
+- `docs/governance/workflow.md`
+- `docs/guides/scheduler.md`
+- `docs/guides/timeline.md`
+- `docs/security/a2-gap-analysis.md`
+- `docs/setup/developer.md`
+- `docs/setup/production.md`
 - `docs/reviews/ARC_PR_DESCRIPTION.md`
 - `docs/reviews/ARC_PR_FREEZE_REVIEW.md`
-- `docs/scheduler.md`
-- `docs/scheduler_contract.md`
-- `docs/timeline_contract.md`
-- `docs/timelineview.md`
+- `docs/reviews/ARC_V3_SIX_TASKS_REPORT.md`
+- `docs/reviews/PLANNER_IMPLEMENTATION_REPORT.md`
+- `docs/reviews/password-reset-and-study-plan-removal.md`
 - `frontend/README.md`
 
 ### frontend:App.css — 1 files (0 test-like)
@@ -313,9 +318,12 @@ Paths: `tests/README.md` … `tests/runners/reporting.py`
 - `tests/runners/reporting.py`
 
 ## Existing reference documents
-- `docs/scheduler_contract.md`, `docs/timeline_contract.md`: contract boundaries.
-- `docs/FRONTEND_ARCHITECTURE.md`: MVP Figma source, UI naming and ownership.
-- `docs/PLANNER_IMPLEMENTATION_REPORT.md`: historical implementation notes, verify against code.
+- `docs/README.md`: which document to read, and which ones stay separate.
+- `docs/contracts/scheduler.md`, `docs/contracts/timeline.md`: contract boundaries.
+- `docs/guides/scheduler.md`, `docs/guides/timeline.md`: current implementation, not normative.
+- `docs/architecture/frontend.md`: MVP Figma source, UI naming and ownership.
+- `docs/governance/constitution.md`: product and domain draft. `docs/governance/workflow.md`: process.
+- `docs/reviews/PLANNER_IMPLEMENTATION_REPORT.md`: historical implementation notes, verify against code.
 - `tests/contracts/regression_matrix.md`: regression expectations.
 
 ## Index freshness
@@ -334,7 +342,7 @@ Run `.arc-knowledge/validate_index.py` after each Codex task. Changed file hashe
 - HA1 navigation integration regression:
   `PlannerPage.overdueNavigation.test.jsx`.
 - Development authority:
-  `docs/implementation/ARC_DEVELOPMENT_WORKFLOW.md`.
+  `docs/governance/workflow.md`.
 - Verification: 209 frontend unit tests passed, 2 skipped;
   167 Node tests passed, 2 skipped; production build passed.
 - Human HA-01–HA-04 acceptance: 17 October 2026.
@@ -397,3 +405,12 @@ Run `.arc-knowledge/validate_index.py` after each Codex task. Changed file hashe
 - `DependencyGraphModal.test.jsx` covers layout, portal positioning, resize persistence,
   viewport constraints, graph interactions, modal lifecycle, and malformed cyclic data;
   Vitest registers the focused test.
+
+## Incremental update — documentation layout (2026-10-18)
+
+- Living map: `docs/README.md`.
+- Setup procedures are unified in `docs/setup/developer.md`. Clean-clone validation stays in `docs/setup/production.md`.
+- Frozen contracts are `docs/contracts/scheduler.md` and `docs/contracts/timeline.md`. Implementation guides are `docs/guides/scheduler.md` and `docs/guides/timeline.md`.
+- Product draft and process stay separate: `docs/governance/constitution.md`, `docs/governance/workflow.md`.
+- A2 evidence is `docs/security/a2-gap-analysis.md`. Historical audits and the shipped password-reset note are under `docs/reviews/`.
+- `SchedulingState.study_plan` remains unused. Priority is the `/priority` route of `PlannerPage`.

@@ -1,5 +1,7 @@
 # ARC V3 six active tasks report
 
+Historical snapshot from before those tasks landed on the planning branch. The dirty-work notes at the end describe that working tree, not the current one.
+
 ## 1. Timeline Today cards — IMPLEMENTED
 
 Changed: `frontend/src/features/timeline/Timeline.css`, `frontend/src/features/timeline/TimelineWorkflows.test.jsx`.

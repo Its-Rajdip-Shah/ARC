@@ -1,5 +1,7 @@
 # ARC Regression Coverage Matrix
 
+How to run these gates is in [`../README.md`](../README.md). This matrix stays separate from that runbook.
+
 | Suite | Smoke | Regression | Integration | Certify | Browser |
 |---|---|---|---|---|---|
 | Node-native frontend | Yes | Yes | No | Yes | No |

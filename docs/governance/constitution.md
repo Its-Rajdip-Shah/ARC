@@ -1,6 +1,6 @@
 # ARC — Product and Domain Constitution
 
-**Status:** REVIEW DRAFT — not yet approved or installed in the ARC repository.
+**Status:** REVIEW DRAFT — not yet approved or installed in the ARC repository. Path references below were updated when this file moved to `docs/governance/constitution.md`. The draft's behavioral claims were not re-approved by that move. It stays separate from [`docs/governance/workflow.md`](workflow.md), which governs process.
 **Evidence baseline:** repository documentation snapshot at `6b9b99b01c0f18856f01c894996b6d8c6e3959be`, supplied in `ARC-domain-spec-audit.zip`, plus the separately supplied ARC domain-design documents.
 **Purpose:** make ARC's established behavior discoverable before any agent proposes a change. This document is a *navigation and behavioral summary*, not a replacement for frozen contracts or current source/tests.
 
@@ -8,21 +8,21 @@
 
 When sources disagree, **do not silently resolve the disagreement**. Report the competing claims, their provenance, and a proposed resolution to the product owner before implementation.
 
-1. **Explicitly approved product decisions** and deliberately versioned normative contracts govern intended behavior. In this snapshot, `docs/scheduler_contract.md` and `docs/timeline_contract.md` explicitly declare themselves normative.
+1. **Explicitly approved product decisions** and deliberately versioned normative contracts govern intended behavior. In this snapshot, `docs/contracts/scheduler.md` and `docs/contracts/timeline.md` explicitly declare themselves normative.
 2. **Domain-design references** (`general_rules.md`, `invariants.md`, `canonical_state.md`, `state_transitions.md`, `conflict_resolution.md`, `domain_commands.md`) capture substantial design intent; `general_rules.md` calls itself an *architecture freeze candidate*, so its rules are not automatically all frozen.
-3. **Implementation documentation** (`docs/scheduler.md`, `docs/timelineview.md`) describes a particular production snapshot; it is not proof that every branch currently behaves that way.
+3. **Implementation documentation** (`docs/guides/scheduler.md`, `docs/guides/timeline.md`) describes a particular production snapshot; it is not proof that every branch currently behaves that way.
 4. **Code and regression tests** establish observed behavior, not automatic permission to override approved product intent.
-5. **Historical reports** (`docs/PLANNER_IMPLEMENTATION_REPORT.md`) are snapshots, not live current-state authority.
+5. **Historical reports** (`docs/reviews/PLANNER_IMPLEMENTATION_REPORT.md`) are snapshots, not live current-state authority.
 
 Rule status vocabulary: `FROZEN` = explicitly normative/approved; `ACCEPTED` = agreed product direction without a frozen contract; `PROPOSED` = not yet approved; `UNRESOLVED` = genuinely undecided; `IMPLEMENTATION GAP` = approved behavior missing from current code, supported by inspection/test evidence. **Never label a gap without inspecting code/tests.**
 
 ## 2. Product principle
 
-**ARC automates what the user leaves unspecified and preserves what the user explicitly specifies.** All views operate on one planning domain; automatic scheduling produces replaceable proposals rather than changing the user's canonical facts. Valid but infeasible plans must be represented honestly, not made apparently feasible by silently changing constraints. [Domain-design references: `general_rules.md`, `canonical_state.md`; frozen authority boundary: `docs/scheduler_contract.md`, `docs/timeline_contract.md`.]
+**ARC automates what the user leaves unspecified and preserves what the user explicitly specifies.** All views operate on one planning domain; automatic scheduling produces replaceable proposals rather than changing the user's canonical facts. Valid but infeasible plans must be represented honestly, not made apparently feasible by silently changing constraints. [Domain-design references: `general_rules.md`, `canonical_state.md`; frozen authority boundary: `docs/contracts/scheduler.md`, `docs/contracts/timeline.md`.]
 
 ## 3. Canonical state versus projections — FROZEN at scheduler/Timeline boundary
 
-Canonical facts include task identity and hierarchy, explicit dependencies, user priority, release/start date, deadline/due date, manual anchor intent, completion and confirmed progress. The scheduler may replace `scheduled_date`, `execution_rank`, `SchedulerAllocation` and runtime/diagnostic state, **not** canonical facts. The Timeline is a view/editor of the same domain, not an independent planning database. Confirmed progress is not inferred from a future proposed allocation. [Sources: `docs/scheduler_contract.md` §§1–3, 11–14, 22; `docs/timeline_contract.md` §§1–3, 17–18.]
+Canonical facts include task identity and hierarchy, explicit dependencies, user priority, release/start date, deadline/due date, manual anchor intent, completion and confirmed progress. The scheduler may replace `scheduled_date`, `execution_rank`, `SchedulerAllocation` and runtime/diagnostic state, **not** canonical facts. The Timeline is a view/editor of the same domain, not an independent planning database. Confirmed progress is not inferred from a future proposed allocation. [Sources: `docs/contracts/scheduler.md` §§1–3, 11–14, 22; `docs/contracts/timeline.md` §§1–3, 17–18.]
 
 ## 4. Hierarchy, priority, dependencies — mixed status
 
@@ -63,7 +63,7 @@ Canonical facts include task identity and hierarchy, explicit dependencies, user
 - **FROZEN Timeline boundary:** date-only arithmetic and timezone handling must not shift canonical date meaning; completed items retain historical Timeline presentation as defined by the Timeline contract. Planner/Timeline/Focus must not create competing planning truth. [Timeline contract §§14–15, 21, 27, 35.]
 - **FROZEN scheduler boundary:** identical reconciled input, flavour and engine/version policy produce deterministic proposals. Scheduler runtime cache is disposable. Explicit reschedule is a deliberate action. [Scheduler contract §§24, 26, 28; scheduler.md §§11, 15–16.]
 - **Current documented integration:** frozen external engine `c11.15.9`, V1 input/output contracts, `lock-in` and `monk` flavours. These are snapshot facts, not a mandate to change engine internals for V3 #23. [Scheduler contract Status; scheduler.md Version.]
-- **FROZEN frontend boundary:** Figma `MVP arc` root `2690:432` is the implementation design source, not `ARC FULL`; the user-facing view is named Planner, route `/planner`; admin is separate from student shell. [docs/FRONTEND_ARCHITECTURE.md.]
+- **FROZEN frontend boundary:** Figma `MVP arc` root `2690:432` is the implementation design source, not `ARC FULL`; the user-facing view is named Planner, route `/planner`; admin is separate from student shell. [docs/architecture/frontend.md.]
 
 ## 10. Product approval gate — development operating rule
 
@@ -98,12 +98,12 @@ These examples specify the intended product outcome; implementation details rema
 
 ## 13. Reference map
 
-**Normative current repository contracts:** `docs/scheduler_contract.md`, `docs/timeline_contract.md`.
-**Documented implementation:** `docs/scheduler.md`, `docs/timelineview.md`.
-**Frontend contract:** `docs/FRONTEND_ARCHITECTURE.md`.
+**Normative current repository contracts:** `docs/contracts/scheduler.md`, `docs/contracts/timeline.md`.
+**Documented implementation:** `docs/guides/scheduler.md`, `docs/guides/timeline.md`.
+**Frontend contract:** `docs/architecture/frontend.md`.
 **Repository workflow:** `AGENTS.md`, `.arc-knowledge/repo_index.md` (not included in this audit ZIP).
 **Domain-design corpus (separately supplied):** `general_rules.md`, `invariants.md`, `canonical_state.md`, `states.md`, `state_transitions.md`, `conflict_resolution.md`, `domain_commands.md`, `arc_guaranteed.md`, `algorithm_manages.md`.
-**Historical audit, not current truth:** `docs/PLANNER_IMPLEMENTATION_REPORT.md`.
+**Historical audit, not current truth:** `docs/reviews/PLANNER_IMPLEMENTATION_REPORT.md`.
 
 
 ## Approved V3 #23 behavior — 17 October 2026

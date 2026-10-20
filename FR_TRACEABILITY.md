@@ -22,7 +22,7 @@ The TOTP secret is held in the enrolment token until the first valid code is sub
 | Implementation | `accounts/views.py` (`LoginView`, `MFAVerifyView`, `LogoutView`, `MeView`); `accounts/authentication.py` (`ArcJWTAuthentication` rejects `mfa_pending` tokens and re-reads `is_locked`); `accounts/tokens.py` (`MFAPendingToken`); frontend `src/stores/authStore.js`, `src/lib/apiClient.js` |
 | Tests | `accounts/tests/test_auth.py`; frontend ping in `frontend/src/pages/ConnectionStatus.jsx` |
 
-Password and TOTP are separate requests. The only link is a five-minute `mfa_pending` token that `ArcJWTAuthentication` refuses everywhere except the MFA verify view.
+Password and TOTP are separate requests. The only link is a five-minute `mfa_pending` token that `ArcJWTAuthentication` refuses everywhere except the MFA verify view. Logout blacklists the refresh token and revokes the access token presented on that request.
 
 ## FR-03 — User data isolation
 

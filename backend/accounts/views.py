@@ -5,9 +5,11 @@ short-lived mfa_pending token. That token names a real user and is validly
 signed, so the project-wide authentication class refuses it everywhere except
 the one endpoint below that expects it in the request body.
 """
+from django.core.cache import cache
 from django.db import transaction
 from django.contrib.auth import get_user_model
 from django.contrib.auth.signals import user_logged_in
+from django.utils import timezone
 from drf_spectacular.utils import extend_schema, inline_serializer
 from rest_framework import serializers, status
 from rest_framework.exceptions import APIException, AuthenticationFailed, PermissionDenied, ValidationError
@@ -16,10 +18,12 @@ from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 from rest_framework_simplejwt.exceptions import TokenError
+from rest_framework_simplejwt.settings import api_settings
 from rest_framework_simplejwt.tokens import RefreshToken
 from planning.models import SchedulingState
 
 from . import password_reset, totp
+from .authentication import revoke_access_token
 from .login_protection import (
     check_login_cooldown,
     record_failed_login,
@@ -43,18 +47,51 @@ from .tokens import FULL_ACCESS_SCOPE, MFAEnrolmentToken, MFAPendingToken
 User = get_user_model()
 
 
-def _enrolment_body(user):
-    secret = totp.generate_secret()
-    enrolment = MFAEnrolmentToken.for_user(user)
-    enrolment['secret'] = secret
-    uri = totp.provisioning_uri(user.email, secret)
+def _enrolment_payload(email, secret, token):
+    uri = totp.provisioning_uri(email, secret)
     return {
-        'enrolment_token': str(enrolment),
+        'enrolment_token': str(token),
         'mfa': {
             'secret': secret,
             'provisioning_uri': uri,
             'qr_png_base64': totp.qr_png_base64(uri),
         },
+    }
+
+
+def _enrolment_body(user):
+    secret = totp.generate_secret()
+    enrolment = MFAEnrolmentToken.for_user(user)
+    enrolment['secret'] = secret
+    # Confirm will only store a secret when this row exists. A lookalike
+    # response for an unknown password has no row, so it cannot attach.
+    cache.set(
+        f'arc:enrol-bind:{enrolment["jti"]}',
+        user.pk,
+        timeout=int(MFAEnrolmentToken.lifetime.total_seconds()),
+    )
+    return _enrolment_payload(user.email, secret, enrolment)
+
+
+def _decoy_registration(email):
+    """Same shape as a new signup, bound to no account."""
+    secret = totp.generate_secret()
+    last_pk = User.objects.order_by('-pk').values_list('pk', flat=True).first() or 0
+    token = MFAEnrolmentToken()
+    token[api_settings.USER_ID_CLAIM] = last_pk + 1
+    token['secret'] = secret
+    return {
+        'user': {
+            'id': last_pk + 1,
+            'email': email,
+            'is_admin': False,
+            'is_locked': False,
+            'mfa_enabled': False,
+            'created_at': serializers.DateTimeField().to_representation(timezone.now()),
+            'last_login': None,
+            'time_zone': None,
+        },
+        **_enrolment_payload(email, secret, token),
     }
 
 
@@ -134,14 +171,18 @@ class RegisterView(PublicAuthView):
         password = serializer.validated_data['password']
         flavour = serializer.validated_data['scheduler_flavour']
 
+        existing = User.objects.filter(email__iexact=email).first()
+        if existing is not None and not existing.check_password(password):
+            return Response(_decoy_registration(email), status=status.HTTP_201_CREATED)
+        if existing is not None and existing.mfa_enabled:
+            raise serializers.ValidationError({
+                'email': 'Sign in instead. This account is already set up.',
+            })
+
         with transaction.atomic():
-            user = User.objects.filter(email__iexact=email).first()
+            user = existing
             if user is None:
                 user = User.objects.create_user(email=email, password=password)
-            elif user.mfa_enabled or not user.check_password(password):
-                raise serializers.ValidationError({
-                    'email': 'An account with this email already exists.',
-                })
             SchedulingState.objects.update_or_create(
                 user=user,
                 defaults={'scheduler_flavour': flavour},
@@ -175,15 +216,34 @@ class MFAEnrolConfirmView(PublicAuthView):
             serializer.validated_data['enrolment_token'],
             'enrolment_token_invalid',
         )
-        user = User.objects.filter(pk=token.get('user_id')).first()
+        bound_pk = cache.get(f'arc:enrol-bind:{token["jti"]}')
+        secret = token.get('secret')
+        code = serializer.validated_data['code']
+        if bound_pk is None:
+            if not totp.verify(secret, code, user_id=token['jti']):
+                raise AuthenticationFailed('That code is not valid.', code='invalid_totp')
+            return Response({
+                'enrolled': True,
+                'user': {
+                    'id': token.get(api_settings.USER_ID_CLAIM),
+                    'email': None,
+                    'is_admin': False,
+                    'is_locked': False,
+                    'mfa_enabled': True,
+                    'created_at': None,
+                    'last_login': None,
+                    'time_zone': None,
+                },
+            })
+
+        user = User.objects.filter(pk=bound_pk).first()
         if user is None:
-            raise AuthenticationFailed('User not found.', code='user_not_found')
+            raise AuthenticationFailed('That code is not valid.', code='invalid_totp')
         if user.mfa_enabled:
             raise PermissionDenied('MFA is already set up for this account.',
                                    code='mfa_already_enrolled')
 
-        secret = token.get('secret')
-        if not totp.verify(secret, serializer.validated_data['code'], user.pk):
+        if not totp.verify(secret, code, user.pk):
             raise AuthenticationFailed('That code is not valid.', code='invalid_totp')
 
         user.totp_secret_encrypted = secret
@@ -339,6 +399,9 @@ class LogoutView(PublicAuthView):
         except TokenError:
             raise AuthenticationFailed('That refresh token is not valid.',
                                        code='invalid_refresh_token')
+        header = request.META.get('HTTP_AUTHORIZATION', '')
+        if header.lower().startswith('bearer '):
+            revoke_access_token(header.split(' ', 1)[1].strip())
         return Response(status=status.HTTP_205_RESET_CONTENT)
 
 

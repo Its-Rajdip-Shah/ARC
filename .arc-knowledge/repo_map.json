@@ -63,8 +63,8 @@
     "FR_TRACEABILITY.md": {
       "area": "documentation",
       "role_hint": "ARC functional-requirement traceability",
-      "sha256": "407bedd5766fa82673d4f1aa1a631d152eb16941f88a776add063c01910974b7",
-      "bytes": 12302,
+      "sha256": "a506fe875d04b00980d53e35c84694056b33dd541b5138af85214794d59bd8cb",
+      "bytes": 12570,
       "imports": [],
       "local_imports": [],
       "top_level_symbols": [],
@@ -135,17 +135,23 @@
     "backend/accounts/authentication.py": {
       "area": "backend:accounts",
       "role_hint": "\"\"\"Project-wide JWT authentication (FR-02, FR-03, FR-16).\"\"\"",
-      "sha256": "37ba3cde1b6c9bd3b273199046893da1b1f138f6e649e09e585ed228123f36e4",
-      "bytes": 1973,
+      "sha256": "7c49ebdbe924db7decfc801b2eac81064190ef716d4f87ab402a6da1cfd84ed7",
+      "bytes": 2959,
       "imports": [
         ".tokens",
+        "django.core.cache",
         "rest_framework.exceptions",
         "rest_framework_simplejwt.authentication",
         "rest_framework_simplejwt.exceptions",
-        "rest_framework_simplejwt.settings"
+        "rest_framework_simplejwt.settings",
+        "rest_framework_simplejwt.tokens",
+        "time"
       ],
       "local_imports": [],
       "top_level_symbols": [
+        "REVOKED_ACCESS_PREFIX",
+        "revoke_access_token",
+        "access_token_revoked",
         "ArcJWTAuthentication"
       ],
       "is_test": false,
@@ -275,8 +281,8 @@
     "backend/accounts/serializers.py": {
       "area": "backend:accounts",
       "role_hint": "\"\"\"Request and response shapes for the authentication endpoints.\"\"\"",
-      "sha256": "d8da44c6236b6e6a6546d884b5586cad04cf5b33211143ce6f80821e03c67c4b",
-      "bytes": 4392,
+      "sha256": "e86c2c876106922814e5bce239948828693cdc67d98b41b866d6e0fcb9b2ffed",
+      "bytes": 4280,
       "imports": [
         "django.contrib.auth",
         "django.contrib.auth.password_validation",
@@ -341,8 +347,8 @@
     "backend/accounts/tests/test_auth.py": {
       "area": "backend:accounts",
       "role_hint": "\"\"\"Authentication flow tests (FR-01, FR-02, FR-03, FR-15, FR-16).",
-      "sha256": "f17c466565a712873e871a76f9a82da8750337605c86f3779000b0ea22c4f9f5",
-      "bytes": 18888,
+      "sha256": "ea654ab29e93718e4804843388a04312ab7e71f786b77a045c98b2ee831cf547",
+      "bytes": 24868,
       "imports": [
         ".conftest",
         "accounts.tokens",
@@ -487,8 +493,8 @@
     "backend/accounts/views.py": {
       "area": "backend:accounts",
       "role_hint": "\"\"\"The two-step authentication flow (FR-01, FR-02, FR-03, FR-15).",
-      "sha256": "7199adb8d840b336c140a10cb0c37b2d1ae82902f139f7bcfc96f73aa519d12d",
-      "bytes": 15982,
+      "sha256": "63d5740d88b04733e5b0079d0fd2118483b624b8909568be7e73e9b95fecc0a0",
+      "bytes": 19419,
       "imports": [
         ".",
         ".login_protection",
@@ -506,12 +512,19 @@
         "rest_framework.throttling",
         "rest_framework.views",
         "rest_framework_simplejwt.exceptions",
-        "rest_framework_simplejwt.tokens"
+        "rest_framework_simplejwt.tokens",
+        "django.core.cache",
+        "django.utils",
+        "rest_framework_simplejwt.settings",
+        ".authentication"
       ],
       "local_imports": [],
       "top_level_symbols": [
         "ResetNotReadyResponse",
         "_issue_token_pair",
+        "_decoy_registration",
+        "_enrolment_body",
+        "_enrolment_payload",
         "_parse",
         "PublicAuthView",
         "RegisterView",
@@ -754,8 +767,8 @@
     "backend/arc_backend/settings.py": {
       "area": "backend:arc_backend",
       "role_hint": "\"\"\"",
-      "sha256": "6001faea7dd560cb6bac3b9bfc861325754d0be40c7d753e4be8d0c3ef8d4178",
-      "bytes": 7891,
+      "sha256": "42623dd488801fd32e0253d58fb068808aa53e7b02722c4e6f136ee39ede501d",
+      "bytes": 8126,
       "imports": [
         "datetime",
         "environ",
@@ -1112,8 +1125,8 @@
     "backend/conftest.py": {
       "area": "backend:conftest.py",
       "role_hint": "\"\"\"Fixtures available to every app's tests.\"\"\"",
-      "sha256": "1b3e786c79d58af6d86c2111911c3ff32da84a2b98f476aad31c3c26a9ce835e",
-      "bytes": 1542,
+      "sha256": "851dcf69cd944e0e02a8a80671dfe727ecebd6d1b701767ed15fbcc87fba048d",
+      "bytes": 1703,
       "imports": [
         "django.core.cache",
         "planning.models",
@@ -1394,8 +1407,8 @@
     "backend/core/tests/test_security.py": {
       "area": "backend:core",
       "role_hint": "\"\"\"Security hardening controls (A2 gap closure).\"\"\"",
-      "sha256": "16d2dd8a37cf02e24a6cdd6ef7af9716df2e88cbbb6cd7cabf1acc469622ab44",
-      "bytes": 2569,
+      "sha256": "874a66a261182ac7601056f78268efb58acaa7b947e1be1f4d95df5c1af7f59c",
+      "bytes": 3770,
       "imports": [
         "accounts.views",
         "arc_backend.urls",
@@ -4300,8 +4313,8 @@
     "docs/security/a2-gap-analysis.md": {
       "area": "documentation",
       "role_hint": "A2 security gap analysis",
-      "sha256": "2f6f375c53a153a54f7a014b458be3de6824f5f12f2e46d0e13d4ced643fcf62",
-      "bytes": 5983,
+      "sha256": "6938d2d8f139a4a2d785102965f214150f9dea282c6b6387385b57f1da72df7c",
+      "bytes": 5986,
       "imports": [],
       "local_imports": [],
       "top_level_symbols": [],
@@ -4823,7 +4836,8 @@
       ],
       "is_test": false,
       "imported_by": [
-        "frontend/src/App.jsx"
+        "frontend/src/App.jsx",
+        "frontend/src/components/RouteGuards.test.jsx"
       ]
     },
     "frontend/src/components/SessionHydrator.jsx": {
@@ -4906,7 +4920,8 @@
       ],
       "is_test": false,
       "imported_by": [
-        "frontend/src/App.jsx"
+        "frontend/src/App.jsx",
+        "frontend/src/components/RouteGuards.test.jsx"
       ]
     },
     "frontend/src/components/admin/AdminLayout.jsx": {
@@ -9169,7 +9184,8 @@
         "frontend/src/pages/student/SettingsPage.jsx",
         "frontend/src/pages/student/SettingsPage.timezone.test.jsx",
         "frontend/src/pages/student/StudentLoginPage.jsx",
-        "frontend/src/pages/student/StudentRegisterPage.jsx"
+        "frontend/src/pages/student/StudentRegisterPage.jsx",
+        "frontend/src/components/RouteGuards.test.jsx"
       ]
     },
     "frontend/src/styles/theme.css": {
@@ -9201,8 +9217,8 @@
     "frontend/vitest.config.js": {
       "area": "configuration",
       "role_hint": "vitest.config",
-      "sha256": "ba5e39f427101ba9da01203e8ec247086b4f05669adb2f4075c6a96a4f519f28",
-      "bytes": 2401,
+      "sha256": "e718fe0e56e22c2cd5cbcf7e1930150ac15c649075a6d5681b3e97083d33dc1f",
+      "bytes": 2447,
       "imports": [
         "@vitejs/plugin-react",
         "vitest/config"
@@ -9885,6 +9901,48 @@
       "imported_by": [
         "frontend/src/features/marks/MarksPage.test.jsx"
       ]
+    },
+    "backend/accounts/migrations/0006_arc_cache.py": {
+      "area": "backend:accounts",
+      "role_hint": "Shared database cache table for TOTP replay, throttles, and access revocation.",
+      "sha256": "6e1982be30d5b4b2f4c672997a7b4c15fdcabd961d5bc9cedb39ea8faf7ba997",
+      "bytes": 616,
+      "imports": [
+        "django.core.management",
+        "django.db"
+      ],
+      "local_imports": [],
+      "top_level_symbols": [
+        "create_arc_cache",
+        "drop_arc_cache",
+        "Migration"
+      ],
+      "is_test": false,
+      "imported_by": []
+    },
+    "frontend/src/components/RouteGuards.test.jsx": {
+      "area": "frontend:components",
+      "role_hint": "Student and staff route gates.",
+      "sha256": "79ecd41e685f974ec56325a56c477415e2a7019ac0d462ea67533ea583dfcd86",
+      "bytes": 2787,
+      "imports": [
+        "@testing-library/react",
+        "vitest",
+        "react-router-dom",
+        "./AdminRoute",
+        "./StudentRoute",
+        "../stores/authStore"
+      ],
+      "local_imports": [
+        "frontend/src/components/AdminRoute.jsx",
+        "frontend/src/components/StudentRoute.jsx",
+        "frontend/src/stores/authStore.js"
+      ],
+      "top_level_symbols": [
+        "mount"
+      ],
+      "is_test": true,
+      "imported_by": []
     }
   }
 }

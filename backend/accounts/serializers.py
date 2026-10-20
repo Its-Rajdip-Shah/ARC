@@ -56,13 +56,9 @@ class RegisterSerializer(serializers.Serializer):
     )
 
     def validate_email(self, value):
-        value = User.objects.normalize_email(value)
-        # An unfinished signup (no TOTP yet) may be submitted again. The view
-        # checks the password before it reuses that row.
-        existing = User.objects.filter(email__iexact=value).first()
-        if existing is not None and existing.mfa_enabled:
-            raise serializers.ValidationError('An account with this email already exists.')
-        return value
+        # Existence is decided in the view. Rejecting here tells a caller who
+        # does not know the password that the address is registered.
+        return User.objects.normalize_email(value)
 
     def validate_password(self, value):
         validate_password(value)

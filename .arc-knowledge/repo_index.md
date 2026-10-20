@@ -40,6 +40,13 @@ Generated from 358 source/config/docs files; not a test run. Read exact source b
 - Timeline Today-card detail visibility is hover/focus driven like every other date. Planner uses its existing derived `deadline_overdue` fact for a non-interactive card marker.
 - `StudentLayout` owns the multi-origin radial page background; its fixed header is transparent so the navbar retains background continuity.
 
+## Incremental update — auth mark recovery (2026-10-20)
+
+- A wrong password on an existing email gets the same registration shape as a new address. Confirming it does not change that account. The correct password on a finished account is told to sign in.
+- Logout revokes the access token sent with the request, in `accounts/authentication.py`.
+- TOTP replay and auth throttles use the `arc_cache` database table from accounts migration `0006`.
+- Student and staff route gates have direct tests in `frontend/src/components/RouteGuards.test.jsx`.
+
 ## Incremental update — audit bug fixes (2026-10-20)
 
 - Planner task details show duration estimates as words (`Under 4 hours`) through `frontend/src/lib/durationLabel.js`, not the stored enum.

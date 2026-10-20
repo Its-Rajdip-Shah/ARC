@@ -40,6 +40,11 @@ Generated from 358 source/config/docs files; not a test run. Read exact source b
 - Timeline Today-card detail visibility is hover/focus driven like every other date. Planner uses its existing derived `deadline_overdue` fact for a non-interactive card marker.
 - `StudentLayout` owns the multi-origin radial page background; its fixed header is transparent so the navbar retains background continuity.
 
+## Incremental update — public FAQ (2026-10-19)
+
+- `/faq` is public. The sign-in page and the student menu both link to it. `/` is the landing page. Marks stays a page at `/marks`, and the menu lists it beside FAQ.
+- The page explains student pages and walks through creating a University of Sydney Canvas personal access token, then links to Canvas account settings and to `/settings?tab=integration`.
+
 ## Incremental update — password reset, study plan removed (2026-10-18)
 
 - Signed-in password change: `POST /api/auth/password/change/`. Locked-out reset is requested, approved on `GET /api/admin/password-resets/`, then confirmed by the same browser. The admin payload does not include the student token.
@@ -273,9 +278,11 @@ Paths: `frontend/src/lib/apiClient.js` … `frontend/src/lib/totp.js`
 Paths: `frontend/src/main.jsx`
 - `frontend/src/main.jsx`
 
-### frontend:pages — 8 files (1 test-like)
+### frontend:pages — 10 files (2 test-like)
 Paths: `frontend/src/pages/ConnectionStatus.jsx` … `frontend/src/pages/student/StudentRegisterPage.jsx`
 - `frontend/src/pages/ConnectionStatus.jsx`
+- `frontend/src/pages/student/FaqPage.jsx`
+- `frontend/src/pages/student/FaqPage.test.jsx`
 - `frontend/src/pages/admin/AdminDashboardPage.jsx`
 - `frontend/src/pages/admin/AdminLoginPage.jsx`
 - `frontend/src/pages/admin/AdminUsersPage.jsx`

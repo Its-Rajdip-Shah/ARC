@@ -4567,23 +4567,25 @@
     "frontend/src/App.jsx": {
       "area": "frontend:App.jsx",
       "role_hint": "App",
-      "sha256": "74445c483c69033145862c3ccd2bb45a9cf185514450e242aa2653cf02da7227",
-      "bytes": 2805,
+      "sha256": "a83aec69bba33b21ed839fc381db35b2caeb2932d93bbf4f1cd12107e366f5f3",
+      "bytes": 2749,
       "imports": [
         "./components/AdminRoute",
         "./components/SessionHydrator",
         "./components/StudentRoute",
         "./components/admin/AdminLayout",
-        "./components/student/MarksPanel",
         "./components/student/StudentLayout",
         "./features/focus/FocusPage",
+        "./features/marks/MarksPage",
         "./features/planner/PlannerPage",
         "./features/timeline/TimelinePage",
         "./pages/ConnectionStatus",
+        "./pages/LandingPage",
         "./pages/NotFoundPage",
         "./pages/admin/AdminDashboardPage",
         "./pages/admin/AdminLoginPage",
         "./pages/admin/AdminUsersPage",
+        "./pages/student/FaqPage",
         "./pages/student/ForgotPasswordPage",
         "./pages/student/SettingsPage",
         "./pages/student/StudentLoginPage",
@@ -4599,6 +4601,7 @@
         "frontend/src/pages/ConnectionStatus.jsx",
         "frontend/src/pages/admin/AdminDashboardPage.jsx",
         "frontend/src/pages/admin/AdminLoginPage.jsx",
+        "frontend/src/pages/student/FaqPage.jsx",
         "frontend/src/pages/student/ForgotPasswordPage.jsx",
         "frontend/src/pages/student/StudentLoginPage.jsx",
         "frontend/src/pages/student/StudentRegisterPage.jsx",
@@ -4607,7 +4610,8 @@
         "frontend/src/features/timeline/TimelinePage.jsx",
         "frontend/src/features/focus/FocusPage.jsx",
         "frontend/src/pages/student/SettingsPage.jsx",
-        "frontend/src/components/student/MarksPanel.jsx",
+        "frontend/src/features/marks/MarksPage.jsx",
+        "frontend/src/pages/LandingPage.jsx",
         "frontend/src/pages/NotFoundPage.jsx"
       ],
       "top_level_symbols": [
@@ -4975,8 +4979,8 @@
     "frontend/src/components/student/NavigationDrawer.jsx": {
       "area": "frontend:components",
       "role_hint": "NavigationDrawer",
-      "sha256": "7fa5e4f84d208f885c4be9ea476dc481eae5926c4b08a1482212b31e28955be7",
-      "bytes": 3255,
+      "sha256": "20e5292d8bfadd5687a36391a7400b28b8495a54d423c8249fa961d7b83e66a5",
+      "bytes": 3501,
       "imports": [
         "../../api/auth",
         "../../lib/queryClient",
@@ -8914,11 +8918,54 @@
       "is_test": true,
       "imported_by": []
     },
+    "frontend/src/pages/student/FaqPage.jsx": {
+      "area": "frontend:pages",
+      "role_hint": "Public FAQ, including how to create and link a Canvas access token",
+      "sha256": "40fcd747d1f4d51425c4b70c4094eafa06100b0f16e37afc56b011d130d8dfa4",
+      "bytes": 6984,
+      "imports": [
+        "../../stores/authStore",
+        "lucide-react",
+        "react-router-dom"
+      ],
+      "local_imports": [
+        "frontend/src/stores/authStore.js"
+      ],
+      "top_level_symbols": [
+        "CANVAS_SETTINGS_URL",
+        "linkClass",
+        "questions",
+        "FaqPage"
+      ],
+      "is_test": false,
+      "imported_by": [
+        "frontend/src/App.jsx",
+        "frontend/src/pages/student/FaqPage.test.jsx"
+      ]
+    },
+    "frontend/src/pages/student/FaqPage.test.jsx": {
+      "area": "frontend:pages",
+      "role_hint": "FAQ page links for Canvas token setup",
+      "sha256": "8267ce6d46f8d58b3c221b573c24097819a146f78c2f7b95df0eca36a413892a",
+      "bytes": 819,
+      "imports": [
+        "./FaqPage",
+        "@testing-library/react",
+        "react-router-dom",
+        "vitest"
+      ],
+      "local_imports": [
+        "frontend/src/pages/student/FaqPage.jsx"
+      ],
+      "top_level_symbols": [],
+      "is_test": true,
+      "imported_by": []
+    },
     "frontend/src/pages/student/StudentLoginPage.jsx": {
       "area": "frontend:pages",
       "role_hint": "StudentLoginPage",
-      "sha256": "f8c0fb3a70c8cb893686837dc41e824e2633386a2c367200f71539e1cc4e58d6",
-      "bytes": 6919,
+      "sha256": "8cb1ba3f2af6ad3560be8ffacbf7e38faa9de5be1e5d3071d0162b33db162f5a",
+      "bytes": 6914,
       "imports": [
         "../../api/auth",
         "../../assets/auth/login-background.png",
@@ -9094,6 +9141,7 @@
         "frontend/src/pages/ConnectionStatus.jsx",
         "frontend/src/pages/admin/AdminLoginPage.jsx",
         "frontend/src/pages/admin/AdminUsersPage.jsx",
+        "frontend/src/pages/student/FaqPage.jsx",
         "frontend/src/pages/student/SettingsPage.jsx",
         "frontend/src/pages/student/SettingsPage.timezone.test.jsx",
         "frontend/src/pages/student/StudentLoginPage.jsx",
@@ -9129,8 +9177,8 @@
     "frontend/vitest.config.js": {
       "area": "configuration",
       "role_hint": "vitest.config",
-      "sha256": "cc4e7325a1ca5b3c4f3dc4b4c6dbfaf9d605ede3f84901d2df1b10ac8490aadb",
-      "bytes": 2104,
+      "sha256": "79539b96101721c90aaa5c0543c40f238276217d1b37b4ea574796711aa9d46d",
+      "bytes": 2126,
       "imports": [
         "@vitejs/plugin-react",
         "vitest/config"

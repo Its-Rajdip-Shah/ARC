@@ -8,6 +8,7 @@ import ConnectionStatus from './pages/ConnectionStatus'
 import LandingPage from './pages/LandingPage'
 import AdminDashboardPage from './pages/admin/AdminDashboardPage'
 import AdminLoginPage from './pages/admin/AdminLoginPage'
+import FaqPage from './pages/student/FaqPage'
 import ForgotPasswordPage from './pages/student/ForgotPasswordPage'
 import StudentLoginPage from './pages/student/StudentLoginPage'
 import StudentRegisterPage from './pages/student/StudentRegisterPage'
@@ -29,6 +30,7 @@ export default function App() {
           <Route path="/login" element={<StudentLoginPage />} />
           <Route path="/forgot-password" element={<ForgotPasswordPage />} />
           <Route path="/register" element={<StudentRegisterPage />} />
+          <Route path="/faq" element={<FaqPage />} />
 
           <Route element={<StudentRoute />}>
             <Route element={<StudentLayout />}>

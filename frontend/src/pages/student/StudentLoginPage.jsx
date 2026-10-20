@@ -192,6 +192,11 @@ export default function StudentLoginPage() {
                 Forgot your password?
               </Link>
             </p>
+            <p className="mt-3 text-center text-sm text-[#D8CDF8]">
+              <Link to="/faq" className="underline">
+                How do I connect Canvas?
+              </Link>
+            </p>
             <p className="mt-3 text-center text-lg text-[#D8CDF8]">
               New to ARC?{' '}
               <Link to="/register" className="underline">

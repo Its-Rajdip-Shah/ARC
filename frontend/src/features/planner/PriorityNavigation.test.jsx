@@ -65,8 +65,8 @@ afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals(); client?.
 it('shows four accessible navigation links in order with Priority active', () => {
   open()
   const links = within(screen.getByRole('navigation', { name: 'Planning view' })).getAllByRole('link')
-  expect(links.map((link) => link.textContent)).toEqual(['Planner', 'Priority', 'Timeline', 'Focus'])
-  expect(links.map((link) => link.getAttribute('href'))).toEqual(['/planner', '/priority', '/timeline', '/focus'])
+  expect(links.map((link) => link.textContent)).toEqual(['Planner', 'Priority', 'Timeline', 'Focus', 'Marks'])
+  expect(links.map((link) => link.getAttribute('href'))).toEqual(['/planner', '/priority', '/timeline', '/focus', '/marks'])
   expect(links[1].getAttribute('aria-current')).toBe('page')
 })
 
@@ -80,7 +80,7 @@ it('retains one viewport-positioned navbar across all four views without remount
   for (const view of ['Planner', 'Priority', 'Timeline', 'Focus', 'Planner']) {
     switchTo(view)
     expect(screen.getAllByRole('navigation', { name: 'Planning view' })).toEqual([navbar])
-    expect(within(navbar).getAllByRole('link')).toHaveLength(4)
+    expect(within(navbar).getAllByRole('link')).toHaveLength(5)
     expect(within(navbar).getByRole('link', { name: view }).getAttribute('aria-current')).toBe('page')
     expect(navbar.closest('.student-view-nav')).toBe(sharedContainer)
     const position = getComputedStyle(sharedContainer)

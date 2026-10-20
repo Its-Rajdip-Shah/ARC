@@ -15,6 +15,7 @@ const menuItems = [
   { label: 'Timeline', to: '/timeline' },
   { label: 'Focus', to: '/focus' },
   { label: 'Marks', to: '/marks' },
+  { label: 'FAQ', to: '/faq' },
 ]
 
 export default function NavigationDrawer({ isOpen, onClose, onOpenDialog }) {

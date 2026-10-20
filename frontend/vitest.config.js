@@ -43,6 +43,7 @@ export default defineConfig({
       'src/features/focus/FocusQueueManager.race.test.jsx',
       'src/lib/plainText.test.js',
       'src/lib/errors.test.js',
+      'src/pages/student/FaqPage.test.jsx',
       'src/pages/student/StudentAuthForms.test.jsx',
       'src/pages/student/ForgotPasswordPage.test.jsx',
       'src/pages/NotFoundPage.test.jsx',

@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import React from 'react'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
@@ -28,6 +29,14 @@ function mount(count, props = {}) {
     </QueryClientProvider>,
   )
 }
+
+test('keeps Overdue outside the subject scroller so a short sidebar cannot cover it', () => {
+  const { container } = mount(3)
+  const list = container.querySelector('#planner-subjects')
+  expect(list.contains(screen.getByRole('button', { name: 'Overdue' }))).toBe(false)
+  const css = readFileSync('src/features/timeline/SchedulerAura.css', 'utf8').replace(/\r\n/g, '\n')
+  expect(css).toMatch(/@media \(max-height: 640px\)[\s\S]*--scheduler-footprint: 96px/)
+})
 
 test.each([2, 60])('keeps logo, Roots controls and Monk outside the root scroller (%s roots)', (count) => {
   const navigate = vi.fn()

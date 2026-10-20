@@ -71,14 +71,14 @@ export default function EditablePosition({
       return
     }
 
-    const nextPosition =
-      Math.max(
-        1,
-        Math.min(
-          count,
-          number,
-        ),
+    if (number < 1 || number > count) {
+      setError(
+        `Positions are limited to 1 through ${count}.`,
       )
+      return
+    }
+
+    const nextPosition = number
 
     close()
 

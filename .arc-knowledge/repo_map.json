@@ -4941,8 +4941,8 @@
     "frontend/src/components/student/EditablePosition.jsx": {
       "area": "frontend:components",
       "role_hint": "EditablePosition",
-      "sha256": "eea1696b67c57588a3967f5bfd28fcd825526636bd1a57229811c2adda2031d8",
-      "bytes": 3596,
+      "sha256": "598d8dc1ee227c90e828e6c7c818585ce8921f49dcb76edb2afb89c5ad4d2a5a",
+      "bytes": 3826,
       "imports": [
         "react"
       ],
@@ -6389,8 +6389,8 @@
     "frontend/src/features/planner/components/PlannerSidebar.jsx": {
       "area": "frontend:planner",
       "role_hint": "PlannerSidebar",
-      "sha256": "6cff1711fe5699f61c696856045586d3dc05b197d72a6203d75b8e0d42350272",
-      "bytes": 11065,
+      "sha256": "8f7de868db32508f0eed359f89d26091cfbcc22655b10e1f2b3ef3b87041ec6c",
+      "bytes": 11613,
       "imports": [
         "../../../api/planning",
         "../../../assets/brand/arc-logo.svg",
@@ -6431,8 +6431,8 @@
     "frontend/src/features/planner/components/PlannerSidebar.test.jsx": {
       "area": "frontend:planner",
       "role_hint": "PlannerSidebar.test",
-      "sha256": "5240cd51126648513d1448729974864e80a0d35c1dc296e702dd2a9b78fa31a2",
-      "bytes": 7719,
+      "sha256": "a9b3778abc4d929c1d83796bdc89f37d3cee14d904f86e1e1d12e766a00eb47c",
+      "bytes": 8383,
       "imports": [
         "./PlannerSidebar",
         "@playwright/test",
@@ -6562,10 +6562,11 @@
     "frontend/src/features/planner/components/PlannerTreeItem.jsx": {
       "area": "frontend:planner",
       "role_hint": "PlannerTreeItem",
-      "sha256": "72a64754c0a59e9d7b59013d764dc0c4ef09390c00f3c6bbc218707026674d5a",
-      "bytes": 21859,
+      "sha256": "973013cb20f027b0b484c756f0e58b66319c041354feccd873e7a4eef5841032",
+      "bytes": 22813,
       "imports": [
         "../../../api/planning",
+        "../../../lib/durationLabel",
         "../../../lib/latestIntentQueue",
         "../../../lib/plainText",
         "../../../lib/planningOptimistic",
@@ -6578,6 +6579,7 @@
       "local_imports": [
         "frontend/src/api/planning.js",
         "frontend/src/features/planner/residualEstimatePrompt.js",
+        "frontend/src/lib/durationLabel.js",
         "frontend/src/lib/latestIntentQueue.js",
         "frontend/src/lib/plainText.js",
         "frontend/src/lib/planningOptimistic.js"
@@ -6644,8 +6646,8 @@
     "frontend/src/features/planner/components/PriorityNumber.jsx": {
       "area": "frontend:planner",
       "role_hint": "PriorityNumber",
-      "sha256": "78f78d9e5d384c2c492ebff6db38a40df25afdc065590c70db0ace339614945b",
-      "bytes": 2263,
+      "sha256": "fab918c3ebe4b8561371378816f269e2b66aec03546e9f693a794d946c265511",
+      "bytes": 2387,
       "imports": [
         "react"
       ],
@@ -6662,7 +6664,8 @@
       ],
       "is_test": false,
       "imported_by": [
-        "frontend/src/features/planner/components/PriorityCard.jsx"
+        "frontend/src/features/planner/components/PriorityCard.jsx",
+        "frontend/src/features/planner/components/PriorityNumber.test.jsx"
       ]
     },
     "frontend/src/features/planner/components/PriorityPanel.css": {
@@ -6933,8 +6936,8 @@
     "frontend/src/features/timeline/SchedulerAura.css": {
       "area": "frontend:timeline",
       "role_hint": "SchedulerAura",
-      "sha256": "17cccd5e67b40c8795a040ab0bf704aadd87aab83e8120a8c3e89a2169293122",
-      "bytes": 3650,
+      "sha256": "011ce3f3ea6b04bc3d020282ca140849c36044f472886c47587e3052a706be8a",
+      "bytes": 4107,
       "imports": [],
       "local_imports": [],
       "top_level_symbols": [],
@@ -6982,8 +6985,8 @@
     "frontend/src/features/timeline/SchedulerMonk.test.jsx": {
       "area": "frontend:timeline",
       "role_hint": "SchedulerMonk.test",
-      "sha256": "02364fc32af61645cba361d74a075c5423cc9c218962535e7a5d2e58a159393d",
-      "bytes": 19774,
+      "sha256": "0dc4355d6aaa904a87e61ddbc3a10e2b1abd94ca52b8a71e700e071b92ce896d",
+      "bytes": 20226,
       "imports": [
         "../focus/FocusPage",
         "../focus/FocusSchedulerMascot",
@@ -9198,8 +9201,8 @@
     "frontend/vitest.config.js": {
       "area": "configuration",
       "role_hint": "vitest.config",
-      "sha256": "79539b96101721c90aaa5c0543c40f238276217d1b37b4ea574796711aa9d46d",
-      "bytes": 2126,
+      "sha256": "ba5e39f427101ba9da01203e8ec247086b4f05669adb2f4075c6a96a4f519f28",
+      "bytes": 2401,
       "imports": [
         "@vitejs/plugin-react",
         "vitest/config"
@@ -9794,6 +9797,94 @@
       "top_level_symbols": [],
       "is_test": true,
       "imported_by": []
+    },
+    "frontend/src/lib/durationLabel.js": {
+      "area": "frontend:lib",
+      "role_hint": "Human labels for duration estimates",
+      "sha256": "5b499cc75d3ab5edceceda00744ee7c09fde3b0e0fd032488c2ac8dc5497a827",
+      "bytes": 390,
+      "imports": [],
+      "local_imports": [],
+      "top_level_symbols": [
+        "durationEstimateLabel"
+      ],
+      "is_test": false,
+      "imported_by": [
+        "frontend/src/features/planner/components/PlannerTreeItem.jsx",
+        "frontend/src/lib/durationLabel.test.js"
+      ]
+    },
+    "frontend/src/lib/durationLabel.test.js": {
+      "area": "frontend:lib",
+      "role_hint": "Duration estimate label tests",
+      "sha256": "040c3290889ee44eb01099b9fab2be112536f44b1493f67e988cfc9a91630df6",
+      "bytes": 581,
+      "imports": [
+        "./durationLabel",
+        "vitest"
+      ],
+      "local_imports": [
+        "frontend/src/lib/durationLabel.js"
+      ],
+      "top_level_symbols": [],
+      "is_test": true,
+      "imported_by": []
+    },
+    "frontend/src/features/planner/components/PriorityNumber.test.jsx": {
+      "area": "frontend:planner",
+      "role_hint": "Priority number range tests",
+      "sha256": "f364603fd63f045fdd51bd2f08c9404511f4a26c70d9b2667556d77494c28ef0",
+      "bytes": 1419,
+      "imports": [
+        "./PriorityNumber",
+        "@testing-library/react",
+        "vitest"
+      ],
+      "local_imports": [
+        "frontend/src/features/planner/components/PriorityNumber.jsx"
+      ],
+      "top_level_symbols": [],
+      "is_test": true,
+      "imported_by": []
+    },
+    "frontend/src/features/marks/MarksPage.test.jsx": {
+      "area": "frontend:marks",
+      "role_hint": "Marks count pluralisation tests",
+      "sha256": "9b1c6e47d1eab1a49f7ebd9b022180f8b0f9b80bfa33e73b0aa31a5721618b71",
+      "bytes": 1780,
+      "imports": [
+        "./MarksPage",
+        "@testing-library/react",
+        "vitest"
+      ],
+      "local_imports": [
+        "frontend/src/features/marks/MarksPage.jsx"
+      ],
+      "top_level_symbols": [],
+      "is_test": true,
+      "imported_by": []
+    },
+    "frontend/src/features/marks/MarksPage.jsx": {
+      "area": "frontend:marks",
+      "role_hint": "Marks page",
+      "sha256": "ef1fa89d4fe9c1a5a3ed089bcf750df83ae961585fc7c5d1e3f6edba6c69d9b9",
+      "bytes": 46891,
+      "imports": [
+        "../../hooks/useMarks",
+        "../../hooks/useCanvas",
+        "@dnd-kit/core",
+        "@dnd-kit/sortable",
+        "@dnd-kit/utilities",
+        "react"
+      ],
+      "local_imports": [],
+      "top_level_symbols": [
+        "MarksPage"
+      ],
+      "is_test": false,
+      "imported_by": [
+        "frontend/src/features/marks/MarksPage.test.jsx"
+      ]
     }
   }
 }

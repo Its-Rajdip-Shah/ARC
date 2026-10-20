@@ -22,6 +22,7 @@ export default defineConfig({
 
     include: [
       'src/features/timeline/SchedulerMonk.test.jsx',
+      'src/features/timeline/timelineOverdue.test.js',
       'src/features/planner/PriorityNavigation.test.jsx',
       'src/features/planner/residualEstimatePrompt.test.js',
       'src/features/timeline/TimelineWorkflows.test.jsx',

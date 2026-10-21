@@ -124,10 +124,67 @@ def test_register_rejects_bad_input(api, payload, bad_field):
     assert bad_field in fields(response)
 
 
-def test_register_rejects_a_duplicate_email(api, user):
-    response = api.post(REGISTER, {'email': user.email, 'password': PASSWORD}, format='json')
+def test_wrong_password_on_a_taken_email_looks_like_a_new_signup(api, user):
+    """An unauthenticated probe must not learn that the email is registered.
+
+    Someone who already knows the password still gets a sign-in error once
+    enrolment is finished. A wrong password gets the same 201 shape as a
+    brand-new address, and confirming that response does not touch the
+    real account.
+    """
+    fresh = api.post(
+        REGISTER,
+        {'email': 'brand-new@example.com', 'password': PASSWORD, 'scheduler_flavour': 'monk'},
+        format='json',
+    )
+    probe = api.post(
+        REGISTER,
+        {
+            'email': user.email,
+            'password': 'another-correct-horse',
+            'scheduler_flavour': 'monk',
+        },
+        format='json',
+    )
+
+    assert fresh.status_code == 201
+    assert probe.status_code == 201
+    assert set(probe.data) == set(fresh.data)
+    assert set(probe.data['user']) == set(fresh.data['user'])
+    assert set(probe.data['mfa']) == set(fresh.data['mfa'])
+    assert 'already exists' not in str(probe.data)
+    assert probe.data['user']['id'] != user.pk
+
+    secret_before = user.totp_secret_encrypted
+    user.refresh_from_db()
+    assert user.check_password(PASSWORD)
+    assert user.totp_secret_encrypted == secret_before
+    assert get_user_model().objects.filter(email__iexact=user.email).count() == 1
+
+    confirmed = api.post(
+        ENROL,
+        {
+            'enrolment_token': probe.data['enrolment_token'],
+            'code': code_for(probe.data['mfa']['secret']),
+        },
+        format='json',
+    )
+    assert confirmed.status_code == 200
+    user.refresh_from_db()
+    assert user.check_password(PASSWORD)
+    assert user.totp_secret_encrypted == secret_before
+
+
+def test_correct_password_on_a_finished_account_says_sign_in(api, user):
+    response = api.post(
+        REGISTER,
+        {'email': user.email, 'password': PASSWORD, 'scheduler_flavour': 'monk'},
+        format='json',
+    )
     assert response.status_code == 400
     assert 'email' in fields(response)
+    assert 'already exists' not in str(response.data)
+    assert 'enrolment_token' not in response.data
 
 
 def test_same_password_resumes_an_unfinished_signup(api):
@@ -198,11 +255,24 @@ def test_a_different_password_cannot_take_over_an_unfinished_signup(api):
         format='json',
     )
 
-    assert response.status_code == 400
-    assert 'email' in fields(response)
+    assert response.status_code == 201
+    assert 'already exists' not in str(response.data)
     user = get_user_model().objects.get(email='new@example.com')
+    assert user.check_password(PASSWORD)
     assert user.mfa_enabled is False
     assert SchedulingState.objects.get(user=user).scheduler_flavour == 'monk'
+
+    confirmed = api.post(
+        ENROL,
+        {
+            'enrolment_token': response.data['enrolment_token'],
+            'code': code_for(response.data['mfa']['secret']),
+        },
+        format='json',
+    )
+    assert confirmed.status_code == 200
+    user.refresh_from_db()
+    assert user.mfa_enabled is False
 
 
 def test_enrolment_stores_the_secret(api):
@@ -555,6 +625,16 @@ def test_logout_blacklists_the_refresh_token(api, user, secret):
 
     assert api.post(LOGOUT, {'refresh': body['refresh']}, format='json').status_code == 205
     assert api.post(REFRESH, {'refresh': body['refresh']}, format='json').status_code == 401
+
+
+def test_logout_rejects_the_access_token_that_was_presented(api, user, secret):
+    body = login_through_mfa(api, user, secret)
+    api.credentials(HTTP_AUTHORIZATION=f'Bearer {body["access"]}')
+    assert api.get(ME).status_code == 200
+
+    assert api.post(LOGOUT, {'refresh': body['refresh']}, format='json').status_code == 205
+
+    assert api.get(ME).status_code == 401
 
 
 def test_logout_works_without_an_access_token(api, user, secret):

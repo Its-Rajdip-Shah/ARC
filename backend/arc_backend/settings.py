@@ -120,14 +120,14 @@ DATABASES = {
 
 
 # Cache
-# LocMem is fine for single-process local/dev. TOTP replay protection and DRF
-# throttles share this cache — multi-worker production should point at Redis
-# (or another shared backend) via CACHES in an override if needed.
+# TOTP replay protection and DRF throttles share this cache. The table is
+# created in accounts migration 0006. Every worker and a process restart see
+# the same rows, which LocMem cannot do.
 
 CACHES = {
     'default': {
-        'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
-        'LOCATION': 'arc-default',
+        'BACKEND': 'django.core.cache.backends.db.DatabaseCache',
+        'LOCATION': 'arc_cache',
     },
 }
 

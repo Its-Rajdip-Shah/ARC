@@ -1,11 +1,37 @@
 """Project-wide JWT authentication (FR-02, FR-03, FR-16)."""
 
+import time
+
+from django.core.cache import cache
 from rest_framework.exceptions import AuthenticationFailed
 from rest_framework_simplejwt.authentication import JWTAuthentication
-from rest_framework_simplejwt.exceptions import InvalidToken
+from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
 from rest_framework_simplejwt.settings import api_settings
+from rest_framework_simplejwt.tokens import AccessToken
 
 from .tokens import FULL_ACCESS_SCOPE
+
+REVOKED_ACCESS_PREFIX = 'arc:access:revoked:'
+
+
+def revoke_access_token(raw_token):
+    """Remember a still-valid access token until it would have expired anyway."""
+    if not raw_token:
+        return
+    try:
+        token = AccessToken(raw_token)
+    except TokenError:
+        return
+    jti = token.get('jti')
+    if not jti:
+        return
+    ttl = max(int(token['exp']) - int(time.time()), 1)
+    cache.set(f'{REVOKED_ACCESS_PREFIX}{jti}', True, timeout=ttl)
+
+
+def access_token_revoked(token):
+    jti = token.get('jti')
+    return bool(jti and cache.get(f'{REVOKED_ACCESS_PREFIX}{jti}'))
 
 
 class ArcJWTAuthentication(JWTAuthentication):
@@ -26,6 +52,11 @@ class ArcJWTAuthentication(JWTAuthentication):
             raise InvalidToken({
                 'detail': 'This token cannot be used to access the API.',
                 'code': 'insufficient_token_scope',
+            })
+        if access_token_revoked(token):
+            raise InvalidToken({
+                'detail': 'This token has been revoked.',
+                'code': 'token_revoked',
             })
         return token
 

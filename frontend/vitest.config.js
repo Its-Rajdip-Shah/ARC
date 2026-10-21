@@ -38,6 +38,7 @@ export default defineConfig({
       'src/hooks/usePriorityOrder.test.jsx',
       'src/hooks/useFocus.test.js',
       'src/components/SessionHydrator.test.jsx',
+      'src/components/RouteGuards.test.jsx',
       'src/components/ArcDateCalendar.test.jsx',
       'src/components/ArcDateField.test.jsx',
       'src/pages/student/SettingsPage.timezone.test.jsx',

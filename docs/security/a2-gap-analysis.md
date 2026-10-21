@@ -22,7 +22,7 @@ and `AGENTS.md` (strict per-user isolation).
 | --- | --- | --- |
 | **FR-01** Register + TOTP enrol; secret not stored until confirm | Covered | `accounts/views.py`, `accounts/tokens.py`, `accounts/tests/test_auth.py` |
 | **FR-02** Two-step login; `mfa_pending` not usable as a session | Covered | `accounts/authentication.py` (`scope=full` only), auth tests |
-| **FR-02** Refresh rotate + blacklist; logout revokes refresh | Implemented (this PR) | Backend already blacklisted; student UI now calls `POST /api/auth/logout/` (`NavigationDrawer.jsx`). Logout accepts refresh without a live access token. |
+| **FR-02** Refresh rotate + blacklist; logout revokes refresh and the presented access token | Covered | Logout blacklists the refresh token and, when the browser sends its access token, revokes that access token immediately. Logout still works with only the refresh token. |
 | **FR-03** Users only see/mutate their own data | Covered | `UserScopedMixin`, `UserScopedPrimaryKeyRelatedField`, CTE `user_id`, `planning/tests/test_tenant_isolation.py` |
 | **FR-03** Object-level ownership backstop (`IsOwner`) | Implemented (this PR) | `IsOwner` on every `UserScopedMixin` viewset; nested `planning_item__user` supported |
 | **FR-15** Separate admin login + MFA; student tokens cannot use admin APIs | Covered | `AdminLoginView` / `AdminMFAVerifyView`, `IsAdminAccount`, `AdminRoute.jsx` |
@@ -31,7 +31,7 @@ and `AGENTS.md` (strict per-user isolation).
 | JWT access in memory; refresh persisted only | Covered | `frontend/src/stores/authStore.js` |
 | Student / admin route guards | Covered | `StudentRoute.jsx`, `AdminRoute.jsx` |
 | Anti-enumeration on login (credentials before lock/admin) | Covered | `LoginView` |
-| TOTP replay protection | Covered (Partial multi-worker) | Cache-backed in `accounts/totp.py`; default LocMem — see residual risks |
+| TOTP replay protection | Covered | Cache-backed in `accounts/totp.py`. The cache table is shared by every worker. |
 | Password validators | Covered | Django defaults in `settings.py` + register serializer |
 | Secrets not in repo | Covered | `.env` gitignored; `.env.example` placeholders only |
 | Auth brute-force / TOTP spraying limits | Implemented (this PR) | DRF `ScopedRateThrottle`: `auth` 30/min, `auth_strict` 10/min on login/MFA |
@@ -62,9 +62,8 @@ and `AGENTS.md` (strict per-user isolation).
 
 | Item | Severity | Notes |
 | --- | --- | --- |
-| Access JWT still valid until expiry after logout | Low | Standard bearer trade-off (30 min). Lock path still kills sessions via `is_locked`. |
-| LocMem cache for TOTP replay + throttles | Medium in multi-worker prod | Use a shared Redis (or similar) `CACHES` backend before horizontal scale. |
-| Register still reveals duplicate email | Low / waived for UX | Helps enrolment; login itself does not enumerate. |
+| A logout that does not send the access token leaves that token alive until expiry | Low | The browser sends it. A client that only has the refresh token can still revoke the refresh. |
+| Register with the correct password on a finished account says to sign in | Low | The caller has already proved the password. A wrong password gets the same 201 shape as a new address and cannot attach a secret. |
 | Full penetration test / third-party audit | Out of scope | Per issue; not claimed. |
 | Frontend unit suite for route guards | Low | Guards exist; coverage is manual / E2E ping, not a dedicated Jest suite. |
 | Production `.env` must flip TLS flags | Ops | `DEBUG=False`, `SECURE_SSL_REDIRECT=True`, HSTS > 0, secure cookies, real `SECRET_KEY`. |

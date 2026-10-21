@@ -8,9 +8,11 @@ from planning.models import ItemType, PlanningItem
 
 
 @pytest.fixture(autouse=True)
-def clear_cache():
-    """Two features keep state in the cache: the TOTP replay guard and the
-    once-a-day adaptive sweep. Neither should survive into the next test."""
+def clear_cache(db):
+    """TOTP replay, auth throttles, access-token revocation, and the adaptive
+    sweep keep state in the database cache. None of it should survive into
+    the next test. The fixture asks for the database because clearing that
+    cache is a query."""
     cache.clear()
     yield
     cache.clear()

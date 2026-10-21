@@ -4,6 +4,9 @@ from importlib import reload
 from types import SimpleNamespace
 
 import pytest
+from django.conf import settings
+from django.core.cache import cache
+from django.db import connection
 from django.test import override_settings
 from rest_framework.test import APIClient
 from rest_framework.throttling import ScopedRateThrottle
@@ -39,6 +42,18 @@ def test_is_owner_object_permission_uses_view_user_field():
 
     request.user = SimpleNamespace(pk=2, is_authenticated=True)
     assert IsOwner().has_object_permission(request, view, obj) is False
+
+
+def test_throttle_and_replay_state_is_a_database_row():
+    """LocMem dies on restart and is invisible to other workers."""
+    assert settings.CACHES['default']['BACKEND'].endswith('DatabaseCache')
+    cache.set('arc:probe', 'shared', timeout=60)
+    with connection.cursor() as cursor:
+        cursor.execute(
+            'SELECT COUNT(*) FROM arc_cache WHERE cache_key LIKE %s',
+            ['%arc:probe%'],
+        )
+        assert cursor.fetchone()[0] == 1
 
 
 def test_the_eleventh_login_attempt_in_a_minute_is_throttled(api):

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 
 import { confirmMfaEnrolment, login, register, verifyMfa } from '../../api/auth'
@@ -12,33 +12,6 @@ const inputClass =
   'h-[55px] w-full bg-[#1D4074] px-4 text-lg text-white outline-none placeholder:text-[#B7A6EC] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white sm:px-12'
 const buttonClass =
   'mx-auto mt-10 block h-[58px] w-[172px] bg-[#C3D19B] text-lg font-semibold text-black disabled:opacity-60'
-
-function LiveTotp({ secret }) {
-  const [value, setValue] = useState('')
-
-  useEffect(() => {
-    let cancelled = false
-
-    async function tick() {
-      const next = await totpNow(secret)
-      if (!cancelled) setValue(next)
-    }
-
-    tick()
-    const id = setInterval(tick, 1000)
-    return () => {
-      cancelled = true
-      clearInterval(id)
-    }
-  }, [secret])
-
-  return (
-    <p className="mt-2 text-center text-sm text-[#D8CDF8]">
-      Current code:{' '}
-      <span className="font-mono tracking-[0.3em] text-white">{value}</span>
-    </p>
-  )
-}
 
 export default function StudentRegisterPage() {
   const navigate = useNavigate()
@@ -276,7 +249,6 @@ export default function StudentRegisterPage() {
             <p className="mt-3 break-all text-center font-mono text-xs text-[#D8CDF8]">
               {enrolment.secret}
             </p>
-            <LiveTotp secret={enrolment.secret} />
             <p className="mt-4 mb-2 text-lg font-medium">ENTER CODE</p>
             <div className="flex justify-between">
               {code.map((digit, index) => (

@@ -4691,6 +4691,7 @@
         "frontend/src/pages/student/ForgotPasswordPage.jsx",
         "frontend/src/pages/student/ForgotPasswordPage.test.jsx",
         "frontend/src/pages/student/SettingsPage.jsx",
+        "frontend/src/pages/student/StudentAuthForms.test.jsx",
         "frontend/src/pages/student/StudentLoginPage.jsx",
         "frontend/src/pages/student/StudentRegisterPage.jsx"
       ]
@@ -8984,14 +8985,37 @@
       ],
       "is_test": false,
       "imported_by": [
-        "frontend/src/App.jsx"
+        "frontend/src/App.jsx",
+        "frontend/src/pages/student/StudentAuthForms.test.jsx"
       ]
+    },
+    "frontend/src/pages/student/StudentAuthForms.test.jsx": {
+      "area": "frontend:pages",
+      "role_hint": "Student login and signup form behaviour",
+      "sha256": "63ae2e87424ba5ef5d42c75f7dff50d3bbd979644de9417deba8434aa766949d",
+      "bytes": 4625,
+      "imports": [
+        "../../api/auth",
+        "./StudentLoginPage",
+        "./StudentRegisterPage",
+        "@testing-library/react",
+        "react-router-dom",
+        "vitest"
+      ],
+      "local_imports": [
+        "frontend/src/api/auth.js",
+        "frontend/src/pages/student/StudentLoginPage.jsx",
+        "frontend/src/pages/student/StudentRegisterPage.jsx"
+      ],
+      "top_level_symbols": [],
+      "is_test": true,
+      "imported_by": []
     },
     "frontend/src/pages/student/StudentRegisterPage.jsx": {
       "area": "frontend:pages",
       "role_hint": "StudentRegisterPage",
-      "sha256": "bd2976c931d534c9dc5dd5a3d7a4676e70ac8c7792d151b1f55e77119ef16ef4",
-      "bytes": 9937,
+      "sha256": "b7dfcdb64c05cb8fb9a5b7713430dca7674b4ada10f037eaa211149ee2b80db5",
+      "bytes": 10310,
       "imports": [
         "../../api/auth",
         "../../assets/auth/login-background.png",
@@ -9012,10 +9036,6 @@
       "top_level_symbols": [
         "inputClass",
         "buttonClass",
-        "LiveTotp",
-        "tick",
-        "next",
-        "id",
         "StudentRegisterPage",
         "navigate",
         "setSession",
@@ -9035,7 +9055,8 @@
       ],
       "is_test": false,
       "imported_by": [
-        "frontend/src/App.jsx"
+        "frontend/src/App.jsx",
+        "frontend/src/pages/student/StudentAuthForms.test.jsx"
       ]
     },
     "frontend/src/shared/search/SearchToolbar.jsx": {

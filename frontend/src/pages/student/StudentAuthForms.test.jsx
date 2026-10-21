@@ -104,4 +104,26 @@ describe('student signup', () => {
     expect(alert.textContent).toContain('too short')
     expect(alert.textContent).not.toContain('The submitted data is invalid.')
   })
+
+  it('does not show a live authenticator code after signup', async () => {
+    register.mockResolvedValue({
+      enrolment_token: 'enrol-token',
+      mfa: { secret: 'JBSWY3DPEHPK3PXP', qr_png_base64: 'qr' },
+    })
+
+    render(
+      <MemoryRouter>
+        <StudentRegisterPage />
+      </MemoryRouter>,
+    )
+
+    fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'new@example.com' } })
+    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'longenough' } })
+    fireEvent.change(screen.getByLabelText('Confirm password'), { target: { value: 'longenough' } })
+    fireEvent.click(screen.getByRole('radio', { name: /monk/i }))
+    fireEvent.click(screen.getByRole('button', { name: 'SIGN UP' }))
+
+    expect(await screen.findByRole('heading', { name: 'AUTHENTICATOR' })).toBeTruthy()
+    expect(screen.queryByText(/current code/i)).toBeNull()
+  })
 })

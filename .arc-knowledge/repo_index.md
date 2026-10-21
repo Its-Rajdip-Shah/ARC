@@ -278,7 +278,7 @@ Paths: `frontend/src/lib/apiClient.js` … `frontend/src/lib/totp.js`
 Paths: `frontend/src/main.jsx`
 - `frontend/src/main.jsx`
 
-### frontend:pages — 10 files (2 test-like)
+### frontend:pages — 11 files (3 test-like)
 Paths: `frontend/src/pages/ConnectionStatus.jsx` … `frontend/src/pages/student/StudentRegisterPage.jsx`
 - `frontend/src/pages/ConnectionStatus.jsx`
 - `frontend/src/pages/student/FaqPage.jsx`
@@ -288,6 +288,7 @@ Paths: `frontend/src/pages/ConnectionStatus.jsx` … `frontend/src/pages/student
 - `frontend/src/pages/admin/AdminUsersPage.jsx`
 - `frontend/src/pages/student/SettingsPage.jsx`
 - `frontend/src/pages/student/SettingsPage.timezone.test.jsx`
+- `frontend/src/pages/student/StudentAuthForms.test.jsx`
 - `frontend/src/pages/student/StudentLoginPage.jsx`
 - `frontend/src/pages/student/StudentRegisterPage.jsx`
 
@@ -421,3 +422,8 @@ Run `.arc-knowledge/validate_index.py` after each Codex task. Changed file hashe
 - Product draft and process stay separate: `docs/governance/constitution.md`, `docs/governance/workflow.md`.
 - A2 evidence is `docs/security/a2-gap-analysis.md`. Historical audits and the shipped password-reset note are under `docs/reviews/`.
 - `SchedulingState.study_plan` remains unused. Priority is the `/priority` route of `PlannerPage`.
+
+## Incremental update — signup authenticator code (2026-10-20)
+
+- Signup still enrols an authenticator and asks for a six-digit code. It no longer renders the live current code on that step.
+- `StudentAuthForms.test.jsx` covers that the authenticator step does not show "Current code".

@@ -400,7 +400,7 @@ it('anchors the sole Focus scheduler bottom-left outside the scrolling task area
     expect(getComputedStyle(page).height).toBe('100dvh')
     // jsdom drops min() sizing declarations, so retain this width contract
     // alongside the rendered page's auto margins and zero left reservation.
-    expect(stylesheet.textContent).toContain('.focus-content {\n  width: min(720px, calc(100% - 32px));')
+    expect(stylesheet.textContent.replace(/\r\n/g, '\n')).toContain('.focus-content {\n  width: min(720px, calc(100% - 32px));')
     expect(getComputedStyle(content).marginLeft).toBe('auto')
     expect(getComputedStyle(content).marginRight).toBe('auto')
     expect(content.contains(screen.getByRole('heading', { name: 'FOCUS' }))).toBe(true)

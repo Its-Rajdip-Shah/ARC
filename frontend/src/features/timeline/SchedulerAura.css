@@ -35,6 +35,18 @@
   cursor: pointer;
   color: #a9d8ff;
 }
+/* A short window used to let this 221px control cover Overdue. */
+@media (max-height: 640px) {
+  .planner-scheduler-mascot {
+    --scheduler-footprint: 96px;
+    min-height: 104px;
+    padding-top: 4px;
+    padding-bottom: 4px;
+  }
+  .planner-scheduler-mascot .scheduler-visual {
+    transform: translate(-50%, -50%) scale(0.6);
+  }
+}
 .timeline-scheduler-run:disabled { cursor: wait; }
 .timeline-scheduler-run:focus-visible { outline: 2px solid #b2dfff; outline-offset: 2px; }
 /* Both layers share one transform; animation coordinates stay unchanged. */

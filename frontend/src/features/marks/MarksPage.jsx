@@ -654,7 +654,8 @@ export default function MarksPage() {
                             </h3>
 
                             <p className="mt-2 text-xs text-white/60">
-                              {group.assessments.length} assessment
+                              {group.assessments.length}{' '}
+                              assessment{group.assessments.length === 1 ? '' : 's'}
                               {" · "}
                               {group.unmarked_count} unmarked
                             </p>

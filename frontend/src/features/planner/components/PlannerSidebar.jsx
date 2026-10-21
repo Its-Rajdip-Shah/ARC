@@ -350,10 +350,7 @@ export default function PlannerSidebar({
           </button>
         </div>
 
-        <div
-          id="planner-subjects"
-          className={`min-h-0 flex-1 overflow-y-auto overscroll-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden space-y-1 ${subjectsOpen ? '' : 'hidden md:block'}`}
-        >
+        <div className={`shrink-0 space-y-1 ${subjectsOpen ? '' : 'hidden md:block'}`}>
           <button
             type="button"
             aria-pressed={showOverdue}
@@ -385,7 +382,12 @@ export default function PlannerSidebar({
               ))}
             </div>
           )}
+        </div>
 
+        <div
+          id="planner-subjects"
+          className={`min-h-0 flex-1 overflow-y-auto overscroll-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden space-y-1 ${subjectsOpen ? '' : 'hidden md:block'}`}
+        >
           {isCreating && (
             <form onSubmit={handleSubmit} className="px-3 py-1">
               <input

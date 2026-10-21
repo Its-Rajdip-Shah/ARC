@@ -24,9 +24,12 @@ export default function PriorityNumber({ row, count, disabled, onMove }) {
       setError('Enter a whole number.')
       return
     }
-    const position = Math.max(1, Math.min(count, number))
+    if (number < 1 || number > count) {
+      setError(`Positions are limited to 1 through ${count}.`)
+      return
+    }
     close()
-    if (position !== row.position) onMove(row.item_id, position)
+    if (number !== row.position) onMove(row.item_id, number)
   }
 
   return (

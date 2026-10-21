@@ -19,6 +19,7 @@ import {
 import {
   patchPlanningTreeCompletion,
 } from '../../../lib/planningOptimistic'
+import { durationEstimateLabel } from '../../../lib/durationLabel'
 import { plainText } from '../../../lib/plainText'
 
 
@@ -110,6 +111,7 @@ export default function PlannerTreeItem({
     isSearchMatch
 
   const descriptionText = plainText(item.description)
+  const estimateLabel = durationEstimateLabel(item.duration_category)
 
   useEffect(() => {
     if (!isHovered) {
@@ -770,11 +772,11 @@ export default function PlannerTreeItem({
               </span>
             )}
 
-            {item.duration_category && (
+            {estimateLabel && (
               <span>
                 Estimate:{' '}
                 <span className="text-white/80">
-                  {item.duration_category}
+                  {estimateLabel}
                 </span>
               </span>
             )}

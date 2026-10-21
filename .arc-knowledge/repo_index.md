@@ -40,6 +40,14 @@ Generated from 358 source/config/docs files; not a test run. Read exact source b
 - Timeline Today-card detail visibility is hover/focus driven like every other date. Planner uses its existing derived `deadline_overdue` fact for a non-interactive card marker.
 - `StudentLayout` owns the multi-origin radial page background; its fixed header is transparent so the navbar retains background continuity.
 
+## Incremental update — audit bug fixes (2026-10-20)
+
+- Planner task details show duration estimates as words (`Under 4 hours`) through `frontend/src/lib/durationLabel.js`, not the stored enum.
+- Typing a priority outside 1…n on the priority number and the focus position editor reports the limit and does not move the task.
+- Marks counts use “1 assessment” and “2 assessments”.
+- Overdue sits above the scrolling subject list. Below 640px of window height the planner scheduler shrinks so it does not cover Overdue.
+- The Focus layout test compares CSS after normalising Windows line endings.
+
 ## Incremental update — public FAQ (2026-10-19)
 
 - `/faq` is public. The sign-in page and the student menu both link to it. `/` is the landing page. Marks stays a page at `/marks`, and the menu lists it beside FAQ.

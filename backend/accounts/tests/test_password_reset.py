@@ -184,6 +184,71 @@ def test_a_second_request_consumes_the_first_token(api, user):
     assert api.get(status_url(second)).data == {'status': 'pending'}
 
 
+def _approve_only_open_request(admin_user):
+    admin = APIClient()
+    admin.force_authenticate(user=admin_user)
+    request_id = admin.get(QUEUE).data[0]['id']
+    approved = admin.post(f'{QUEUE}{request_id}/approve/')
+    assert approved.status_code == 200, approved.data
+    return admin
+
+
+def test_a_second_password_reset_consumes_an_approved_password_token(api, user, admin_user):
+    first = api.post(REQUEST, {'email': user.email}, format='json').data['request_token']
+    _approve_only_open_request(admin_user)
+
+    second = api.post(REQUEST, {'email': user.email}, format='json').data['request_token']
+
+    assert api.get(status_url(first)).data == {'status': 'consumed'}
+    assert api.get(status_url(second)).data == {'status': 'pending'}
+
+
+def test_recovery_request_leaves_an_approved_password_reset(api, user, admin_user):
+    token = api.post(REQUEST, {'email': user.email}, format='json').data['request_token']
+    admin = _approve_only_open_request(admin_user)
+
+    recovered = api.post(RECOVER, {'email': user.email}, format='json')
+
+    assert recovered.status_code == 200, recovered.data
+    assert api.get(status_url(token)).data == {'status': 'approved'}
+    queue = admin.get(QUEUE).data
+    assert [(row['purpose'], row['status']) for row in queue] == [
+        ('password', 'approved'),
+        ('authenticator', 'pending'),
+    ]
+
+
+def test_password_reset_leaves_an_approved_recovery_token(api, user, admin_user):
+    token = api.post(RECOVER, {'email': user.email}, format='json').data['request_token']
+    _approve_only_open_request(admin_user)
+
+    reset = api.post(REQUEST, {'email': user.email}, format='json')
+
+    assert reset.status_code == 200, reset.data
+    assert api.get(status_url(token)).data == {'status': 'approved'}
+
+
+def test_second_recovery_leaves_an_approved_recovery_token(api, user, admin_user):
+    token = api.post(RECOVER, {'email': user.email}, format='json').data['request_token']
+    _approve_only_open_request(admin_user)
+
+    again = api.post(RECOVER, {'email': user.email}, format='json')
+
+    assert again.status_code == 200, again.data
+    assert api.get(status_url(token)).data == {'status': 'approved'}
+    confirmed = api.post(RECOVER_CONFIRM, {'request_token': token}, format='json')
+    assert confirmed.status_code == 200, confirmed.data
+    assert api.get(status_url(again.data['request_token'])).data == {'status': 'pending'}
+
+
+def test_second_recovery_consumes_a_pending_recovery_token(api, user):
+    first = api.post(RECOVER, {'email': user.email}, format='json').data['request_token']
+    second = api.post(RECOVER, {'email': user.email}, format='json').data['request_token']
+
+    assert api.get(status_url(first)).data == {'status': 'consumed'}
+    assert api.get(status_url(second)).data == {'status': 'pending'}
+
+
 def test_password_reset_does_not_disable_mfa(api, user, admin_user, secret):
     filed = api.post(REQUEST, {'email': user.email}, format='json')
     admin = APIClient()

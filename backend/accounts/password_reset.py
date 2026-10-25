@@ -56,16 +56,31 @@ def change_password(user, new_password):
     revoke_refresh_tokens(user)
 
 
+def _consume_open(user, now, purpose):
+    """Retire only the rows this new request is allowed to replace.
+
+    Recovery is public and knows only an email, so it must leave password-reset
+    tokens alone, and it must leave an authenticator recovery an administrator
+    has already approved. A new password reset still replaces earlier password
+    tokens. A second recovery still replaces one that has not been approved.
+    """
+    open_rows = PasswordResetRequest.objects.filter(
+        user=user,
+        consumed_at__isnull=True,
+        purpose=purpose,
+    )
+    if purpose == 'authenticator':
+        open_rows = open_rows.filter(approved_at__isnull=True)
+    open_rows.update(consumed_at=now)
+
+
 def request_reset(email, purpose='password'):
     now = timezone.now()
     PasswordResetRequest.objects.filter(expires_at__lte=now).delete()
     normalised = User.objects.normalize_email(email)
     user = User.objects.filter(email__iexact=normalised).first()
     if user is not None:
-        PasswordResetRequest.objects.filter(
-            user=user,
-            consumed_at__isnull=True,
-        ).update(consumed_at=now)
+        _consume_open(user, now, purpose)
     token = secrets.token_urlsafe(32)
     PasswordResetRequest.objects.create(
         user=user,

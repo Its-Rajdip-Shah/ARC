@@ -229,6 +229,7 @@ REST_FRAMEWORK = {
 # Local HTTP keeps the defaults False/0. Production .env should flip these on
 # together with DEBUG=False — see docs/security/a2-gap-analysis.md.
 
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 SECURE_SSL_REDIRECT = env('SECURE_SSL_REDIRECT')
 SESSION_COOKIE_SECURE = env('SESSION_COOKIE_SECURE')
 CSRF_COOKIE_SECURE = env('CSRF_COOKIE_SECURE')

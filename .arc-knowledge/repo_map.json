@@ -9610,8 +9610,8 @@
     "backend/accounts/password_reset.py": {
       "area": "backend:accounts",
       "role_hint": "Desk reset for a locked-out account, and a signed-in password change.",
-      "sha256": "ecbf31d034163cd5d5076a6c4cdee7d399f38e9eb91a590c7a5fd252e98b96f9",
-      "bytes": 4526,
+      "sha256": "3d238917a32a05a98f2568e83225d0d02b9e538d208fe781805df703dadab55d",
+      "bytes": 5557,
       "imports": [
         "accounts.models",
         "datetime",
@@ -9630,13 +9630,16 @@
         "_digest",
         "revoke_refresh_tokens",
         "change_password",
+        "_consume_open",
         "request_reset",
         "_row_for",
         "status_for",
         "open_requests",
         "present_request",
         "approve_reset",
-        "confirm_reset"
+        "_open_row",
+        "confirm_reset",
+        "confirm_authenticator_recovery"
       ],
       "is_test": false,
       "imported_by": []
@@ -9661,8 +9664,8 @@
     "backend/accounts/tests/test_password_reset.py": {
       "area": "backend:accounts",
       "role_hint": "Signed-in password change and admin-approved reset.",
-      "sha256": "dbe323579319de80ba08794c5d057298bb8d8bc7bead92a973f09ebe5debbc07",
-      "bytes": 6686,
+      "sha256": "d8e03ec1c4f682350bb818a7c833fa33d84a0e2ae36ad149c639c42bc0bac41b",
+      "bytes": 11634,
       "imports": [
         ".conftest",
         "accounts.models",
@@ -9687,6 +9690,13 @@
         "test_confirm_before_approval_keeps_the_password",
         "test_approval_lets_the_same_token_set_a_new_password",
         "test_a_second_request_consumes_the_first_token",
+        "test_a_second_password_reset_consumes_an_approved_password_token",
+        "test_recovery_request_leaves_an_approved_password_reset",
+        "test_password_reset_leaves_an_approved_recovery_token",
+        "test_second_recovery_leaves_an_approved_recovery_token",
+        "test_second_recovery_consumes_a_pending_recovery_token",
+        "test_password_reset_does_not_disable_mfa",
+        "test_approved_authenticator_recovery_replaces_the_secret",
         "test_an_expired_request_cannot_be_approved"
       ],
       "is_test": true,

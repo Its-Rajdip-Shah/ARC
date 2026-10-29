@@ -257,4 +257,12 @@ def test_planner_reparent_runs_scheduler_once(
     )
 
     assert response.status_code == 200, response.data
-    assert len(calls) == 1
+    # Reparenting queues durable work; it must not invoke the optimiser inline.
+    assert calls == []
+    from planning.models import SchedulingState
+    from planning.services import scheduler_worker
+    pending = SchedulingState.objects.get(user=user)
+    assert pending.scheduling_revision > pending.applied_scheduling_revision
+    assert scheduler_worker.process_request(user.pk, pending.scheduling_revision) == 'published'
+    moved.refresh_from_db()
+    assert moved.parent_id == right.pk

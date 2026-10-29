@@ -6,7 +6,7 @@ import pytest
 from freezegun import freeze_time
 
 from planning.models import DurationCategory, PlanningItem, SchedulingState
-from planning.services import deletion, domain_commands, hierarchy, history, scheduling, scheduler_v1
+from planning.services import deletion, domain_commands, hierarchy, history, scheduling, scheduler_v1, scheduler_worker
 from planning.services.focus_buckets import focus_bucket_key
 
 pytestmark = pytest.mark.django_db
@@ -49,7 +49,15 @@ def test_four_calendar_days_carry_then_expire_and_reconcile(user, make_item, fla
     for age in (1, 2, 3):
         today = ORIGIN + timedelta(days=age)
         result = scheduling.daily_schedule(user, today=today)
+
+        # Canonical carry happens immediately. The disposable schedule is
+        # published separately by the background worker.
         assert commitment(item) == (today, ORIGIN, 1, None)
+        state = SchedulingState.objects.get(user=user)
+        assert scheduler_worker.process_request(
+            user.pk, state.scheduling_revision
+        ) == 'published'
+        item.refresh_from_db()
         assert item.scheduled_date == today
         assert item.pk in result['anchor_changed_ids']
         assert item.pk in result['changed_ids']
@@ -74,13 +82,27 @@ def test_deadline_crossing_terminates_without_changing_task_facts(user, make_ite
     SchedulingState.objects.create(user=user, scheduler_flavour=flavour)
     item = anchor(make_item, user, start_date=ORIGIN, due_date=ORIGIN)
     today = ORIGIN + timedelta(days=1)
-    result = scheduling.schedule(user, today=today)
+    result = scheduling.daily_schedule(user, today=today)
     assert commitment(item) == (None, None, None, ORIGIN)
     assert item.start_date == item.due_date == ORIGIN
     assert not item.is_completed and not item.is_deleted
     assert PlanningItem.objects.for_user(user).filter(pk=item.pk).exists()
-    assert {'item_id': item.pk, 'code': 'overdue'} in result['conflicts']
     assert item.pk in result['expired_anchor_ids']
+
+    # Daily maintenance expires the canonical anchor immediately.
+    # Conflict reporting belongs to the worker-published projection.
+    state = SchedulingState.objects.get(user=user)
+    assert state.applied_scheduling_revision < state.scheduling_revision
+    with freeze_time('2026-10-11T12:00:00Z'):
+        assert scheduler_worker.process_request(
+            user.pk, state.scheduling_revision
+        ) == 'published'
+
+    state.refresh_from_db()
+    assert state.applied_scheduling_revision == state.scheduling_revision
+    assert {'item_id': item.pk, 'code': 'overdue'} in (
+        state.scheduler_runtime['compatibility_conflicts']
+    )
     request = adapter_slots(user, today)
     assert request.tasks[0].anchor_date is None
     # Automatic recovery releases only the adapter's expired constraint.
@@ -91,10 +113,16 @@ def test_deadline_crossing_terminates_without_changing_task_facts(user, make_ite
 
 def test_existing_release_validation_terminates_invalid_legacy_carry(user, make_item):
     item = anchor(make_item, user, origin=None, start_date=ORIGIN + timedelta(days=2), due_date=ORIGIN + timedelta(days=8))
-    scheduling.schedule(user, today=ORIGIN + timedelta(days=1))
+    scheduling.daily_schedule(user, today=ORIGIN + timedelta(days=1))
     assert commitment(item) == (None, None, None, ORIGIN)
     assert item.start_date == ORIGIN + timedelta(days=2)
     assert item.due_date == ORIGIN + timedelta(days=8)
+
+    state = SchedulingState.objects.get(user=user)
+    assert scheduler_worker.process_request(
+        user.pk, state.scheduling_revision
+    ) == 'published'
+    item.refresh_from_db()
     assert item.scheduled_date >= item.start_date
 
 
@@ -174,6 +202,12 @@ def test_carry_invalidates_same_day_cached_v1_result(user, make_item):
     assert commitment(item) == (today, ORIGIN, 1, None)
     state.refresh_from_db()
     assert state.scheduling_revision > revision
+    assert state.applied_scheduling_revision < state.scheduling_revision
+
+    assert scheduler_worker.process_request(
+        user.pk, state.scheduling_revision
+    ) == 'published'
+    state.refresh_from_db()
     assert state.applied_scheduling_revision == state.scheduling_revision
 
 
@@ -292,7 +326,13 @@ def test_replacement_resets_or_clears_origin(user, make_item, overload):
     scheduling.daily_schedule(user, today=today)
     scheduling.replace(user, replacement.pk, displaced.pk, allow_overload=overload, today=today)
     assert commitment(replacement)[:2] == (today, today)
-    assert commitment(displaced)[:3] == ((today, today, 1) if overload else (None, None, None))
+    displaced_commitment = commitment(displaced)
+    if overload:
+        assert displaced_commitment[:3] == (today, today, 1)
+    else:
+        assert displaced_commitment[0] == today + timedelta(days=1)
+        assert displaced_commitment[1] == today + timedelta(days=1)
+        assert displaced_commitment[2] is None
 
 
 @pytest.mark.parametrize('expired', [None, date(2026, 9, 1)])
@@ -318,6 +358,14 @@ def test_schedule_history_reconciles_restored_anchor_for_current_day(user, make_
     with freeze_time('2026-10-13T12:00:00Z'):
         history.undo(user)
         assert commitment(item) == (date(2026, 10, 13), ORIGIN, 1, None)
+
+        # Undo restores canonical state immediately. The worker publishes
+        # its disposable schedule separately.
+        state = SchedulingState.objects.get(user=user)
+        assert scheduler_worker.process_request(
+            user.pk, state.scheduling_revision
+        ) == 'published'
+        item.refresh_from_db()
         assert item.scheduled_date == date(2026, 10, 13)
         history.redo(user)
         assert commitment(item) == (date(2026, 10, 13), date(2026, 10, 12), 1, None)

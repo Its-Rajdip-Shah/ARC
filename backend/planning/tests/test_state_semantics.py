@@ -576,6 +576,13 @@ def test_reopening_child_demotes_exposed_parent_without_factual_damage(
 
     hierarchy.reopen(child)
 
+    # Canonical mutation is immediate; its disposable schedule is published
+    # separately by the nonblocking scheduler worker.
+    from planning.models import SchedulingState
+    from planning.services import scheduler_worker
+    revision = SchedulingState.objects.get(user=semantic_user).scheduling_revision
+    assert scheduler_worker.process_request(semantic_user.pk, revision) == "published"
+
     assert _factual_meaning(parent) == parent_before
     assert _factual_meaning(child) == child_before
     assert not _is_execution_frontier(parent)
@@ -668,6 +675,13 @@ def test_reparent_leaf_preserves_child_factual_meaning_and_reconciles_both_branc
     assert _is_execution_frontier(child)
 
     hierarchy.set_parent(child, target)
+
+    # Reparenting requests a new schedule; wait for worker publication
+    # before asserting the resulting disposable projection.
+    from planning.models import SchedulingState
+    from planning.services import scheduler_worker
+    revision = SchedulingState.objects.get(user=semantic_user).scheduling_revision
+    assert scheduler_worker.process_request(semantic_user.pk, revision) == "published"
 
     assert _factual_meaning(child) == child_before
     assert child.parent_id == target.pk

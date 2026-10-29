@@ -769,19 +769,41 @@ def test_existing_assignment_regains_eligible_priority_with_deadline(connection,
 
 
 def test_sync_schedules_each_course_batch_once(connection, user):
+    """Canvas commits one durable request; the worker publishes afterward."""
     from unittest.mock import patch
-    from planning.services import scheduling
+
+    from planning.models import SchedulingState
+    from planning.services import scheduler_worker, scheduling
 
     client = StubCanvas(courses=[{'id': 1}], assignments={1: [
         {'id': 100, 'name': 'One'}, {'id': 101, 'name': 'Two'},
     ]})
-    with patch.object(scheduling, 'schedule', wraps=scheduling.schedule) as run:
+
+    with patch.object(
+        scheduling,
+        'schedule',
+        side_effect=AssertionError('Canvas sync must not run the optimizer'),
+    ):
         log = sync.run_sync(connection, client)
-        assert log.status == SyncStatus.SUCCESS
-        assert run.call_count == 1
-        assert run.call_args.kwargs.get('mode', 'minimal') == 'minimal'
+
+    assert log.status == SyncStatus.SUCCESS
+    assert log.error_message is None
+
     items = PlanningItem.objects.for_user(user).priority_eligible()
     assert items.count() == 2
+
+    state = SchedulingState.objects.get(user=user)
+    assert state.scheduling_revision == 1
+    assert state.applied_scheduling_revision == 0
+    assert state.pending_scheduling_mode == 'minimal'
+    assert items.filter(scheduled_date=None).count() == 2
+
+    assert scheduler_worker.process_request(
+        user.pk, state.scheduling_revision,
+    ) == 'published'
+
+    state.refresh_from_db()
+    assert state.applied_scheduling_revision == state.scheduling_revision
     assert not items.filter(scheduled_date=None).exists()
 
 

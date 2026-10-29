@@ -4,6 +4,18 @@ from planning.services import hierarchy, history, priority
 
 pytestmark = pytest.mark.django_db
 
+def publish_current_revision(user):
+    """Publish pending durable intent; fail if the worker cannot publish it."""
+    from planning.models import SchedulingState
+    from planning.services import scheduler_worker
+    state = SchedulingState.objects.get(user=user)
+    if state.scheduling_revision > state.applied_scheduling_revision:
+        outcome = scheduler_worker.process_request(user.pk, state.scheduling_revision)
+        assert outcome == 'published', (outcome, state.scheduling_revision)
+    state.refresh_from_db()
+    assert state.scheduling_revision == state.applied_scheduling_revision
+
+
 
 def ids(user):
     return list(priority.ordered(user).values_list('pk', flat=True))
@@ -46,6 +58,7 @@ def test_completion_history_and_eligibility_restoration(user, api_for, make_item
     after = history.capture_items(user, [b.pk])
     history.undo(user)
     assert ids(user) == [a.pk, b.pk, c.pk]
+    publish_current_revision(user)
     restored = history.capture_items(user, [b.pk])
     for row in restored:
         assert row["scheduled_date"] is not None

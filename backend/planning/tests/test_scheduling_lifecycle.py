@@ -5,9 +5,21 @@ import pytest
 from freezegun import freeze_time
 
 from planning.models import DurationCategory, ItemType, PlanningHistoryEntry, PlanningItem, SchedulingState
-from planning.services import history, priority, scheduling, hierarchy
+from planning.services import history, priority, scheduler_worker, scheduling, hierarchy
 
 pytestmark = pytest.mark.django_db
+
+def publish_current_revision(user):
+    """Publish pending durable intent; fail if the worker cannot publish it."""
+    from planning.models import SchedulingState
+    from planning.services import scheduler_worker
+    state = SchedulingState.objects.get(user=user)
+    if state.scheduling_revision > state.applied_scheduling_revision:
+        outcome = scheduler_worker.process_request(user.pk, state.scheduling_revision)
+        assert outcome == 'published', (outcome, state.scheduling_revision)
+    state.refresh_from_db()
+    assert state.scheduling_revision == state.applied_scheduling_revision
+
 TODAY = date(2026, 9, 14)
 
 
@@ -28,9 +40,15 @@ def test_create_edit_and_title_lifecycle(user, api_for, make_item):
     response = client.post('/api/planning/items/', {'title': 'New', 'item_type': 'TASK'}, format='json')
     assert response.status_code == 201
     item = PlanningItem.objects.get(pk=response.data['id'])
+    state = SchedulingState.objects.get(user=user)
+    assert state.applied_scheduling_revision < state.scheduling_revision
+    assert scheduler_worker.process_request(user.pk, state.scheduling_revision) == 'published'
+    item.refresh_from_db()
     assert item.scheduled_date == TODAY
     response = client.patch(f'/api/planning/items/{item.pk}/', {'start_date': '2026-09-17'}, format='json')
     assert response.status_code == 200
+    state.refresh_from_db()
+    assert scheduler_worker.process_request(user.pk, state.scheduling_revision) == 'published'
     refresh(item, future)
     assert item.scheduled_date == date(2026, 9, 17)
     assert future.scheduled_date == TODAY + timedelta(days=8)
@@ -91,22 +109,23 @@ def test_overdue_frozen_and_legacy_repaired_and_visible(user, make_item, api_for
     assert {legacy.pk, existing.pk} <= overdue_ids
 
 
-def test_daily_local_date_once_isolated_and_history_free(user, other_user, make_item, api_for):
+def test_timeline_get_is_optimizer_free_and_returns_the_published_projection(user, other_user, make_item, api_for):
     future = make_item(user, 'Future', scheduled_date=TODAY + timedelta(days=8))
     other = make_item(other_user, 'Other', scheduled_date=TODAY + timedelta(days=8))
     client = api_for(user)
-    with patch.object(scheduling, 'schedule', wraps=scheduling.schedule) as run:
+    with patch.object(scheduling, 'schedule', wraps=scheduling.schedule) as run, patch.object(
+        scheduling, '_legacy_schedule', wraps=scheduling._legacy_schedule,
+    ) as legacy:
         assert client.get('/api/planning/timeline/').status_code == 200
-        assert run.call_args.kwargs['mode'] == 'global'
         assert client.get('/api/planning/timeline/').status_code == 200
-        assert run.call_args.kwargs['mode'] == 'minimal'
         with freeze_time('2026-09-15'):
             assert client.get('/api/planning/timeline/').status_code == 200
-            assert run.call_args.kwargs['mode'] == 'global'
+        run.assert_not_called()
+        legacy.assert_not_called()
     refresh(future, other)
-    assert future.scheduled_date == TODAY + timedelta(days=1)
+    assert future.scheduled_date == TODAY + timedelta(days=8)
     assert other.scheduled_date == TODAY + timedelta(days=8)
-    assert SchedulingState.objects.get(user=user).last_global_date == TODAY + timedelta(days=1)
+    assert SchedulingState.objects.get(user=user).last_global_date is None
     assert not SchedulingState.objects.filter(user=other_user).exists()
     assert not PlanningHistoryEntry.objects.filter(user=user).exists()
 
@@ -130,26 +149,43 @@ def test_reschedule_auth_isolation_history_and_noop(user, other_user, api, api_f
     client = api_for(user)
     response = client.post('/api/planning/timeline/reschedule/')
     assert response.status_code == 200
-    assert mine.pk in response.data['changed_ids']
-    assert response.data['conflicts'] == []
+    assert response.data['pending'] is True
+    revision = response.data['requested_revision']
+    assert scheduler_worker.process_request(user.pk, revision) == 'published'
     refresh(mine, theirs)
     assert mine.scheduled_date == TODAY
     assert theirs.scheduled_date is None
-    assert client.post('/api/planning/timeline/reschedule/').data['changed_ids'] == []
-    assert PlanningHistoryEntry.objects.filter(user=user, action_type='SCHEDULE').count() == 1
+    second = client.post('/api/planning/timeline/reschedule/').data
+    assert second['pending'] is True
+    assert scheduler_worker.process_request(user.pk, second['requested_revision']) == 'published'
+    refresh(mine)
+    assert mine.scheduled_date == TODAY
+    assert PlanningHistoryEntry.objects.filter(user=user, action_type='SCHEDULE').count() == 2
     history.undo(user)
     refresh(mine)
-    assert mine.scheduled_date == TODAY + timedelta(days=7)
+    assert mine.scheduled_date == TODAY
     history.redo(user)
+    state = SchedulingState.objects.get(user=user)
+    assert state.applied_scheduling_revision < state.scheduling_revision
+    assert scheduler_worker.process_request(user.pk, state.scheduling_revision) == 'published'
     refresh(mine)
     assert mine.scheduled_date == TODAY
 
 
 def test_daily_failure_does_not_mark_maintenance_complete(user):
-    with patch.object(scheduling, 'schedule', side_effect=RuntimeError('failed')):
-        with pytest.raises(RuntimeError):
-            scheduling.daily_schedule(user)
-    assert not SchedulingState.objects.filter(user=user).exists()
+    # Optimiser failure happens after canonical maintenance commits, in the worker.
+    from planning.services import async_scheduler
+    result = scheduling.daily_schedule(user)
+    state = SchedulingState.objects.get(user=user)
+    assert state.last_global_date == TODAY
+    assert result['pending'] is True
+    revision = state.scheduling_revision
+    with patch.object(async_scheduler, 'compute_legacy_request', side_effect=RuntimeError('failed')):
+        assert scheduler_worker.process_request(user.pk, revision) == 'failed'
+    state.refresh_from_db()
+    assert state.applied_scheduling_revision < revision
+    assert state.scheduler_failure_count >= 1
+    assert scheduler_worker.process_request(user.pk, revision) == 'published'
 
 
 def test_global_empty_capacity_moves_forward_and_release_is_hard(user, make_item, monkeypatch):
@@ -306,6 +342,7 @@ def test_anchored_parent_suspends_anchor_when_child_reopens(user, make_item):
     parent.save(update_fields=['manual_requested_date'])
 
     hierarchy.reopen(child)
+    publish_current_revision(user)
 
     parent.refresh_from_db()
     child.refresh_from_db()
@@ -351,6 +388,7 @@ def test_moving_child_under_anchored_parent_suspends_parent_anchor(user, make_it
     target.save(update_fields=['manual_requested_date'])
 
     hierarchy.set_parent(child, target)
+    publish_current_revision(user)
 
     target.refresh_from_db()
     child.refresh_from_db()
@@ -372,6 +410,7 @@ def test_daily_schedule_expires_past_manual_anchor(user, make_item):
     )
 
     result = scheduling.daily_schedule(user, today=today)
+    publish_current_revision(user)
 
     item.refresh_from_db()
 
@@ -432,6 +471,7 @@ def test_expired_anchor_does_not_create_overdue_semantics(user, make_item):
     )
 
     scheduling.daily_schedule(user, today=today)
+    publish_current_revision(user)
 
     item.refresh_from_db()
 

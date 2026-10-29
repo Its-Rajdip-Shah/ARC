@@ -10,7 +10,7 @@ from planning.models import (
     SchedulerAllocation,
     SchedulingState,
 )
-from planning.services import scheduling, scheduler_v1
+from planning.services import scheduler_worker, scheduling, scheduler_v1
 
 
 pytestmark = pytest.mark.django_db
@@ -63,10 +63,14 @@ def test_unconfigured_timeline_exposes_scheduler_state(
 
     payload = response.json()
 
-    assert payload["scheduler"] == {
-        "configured": False,
-        "flavour": None,
-    }
+    runtime = payload["scheduler"]
+    assert runtime["configured"] is False
+    assert runtime["flavour"] is None
+    assert runtime["freshness"]["pending"] is False
+    assert (
+        runtime["freshness"]["requested_revision"]
+        == runtime["freshness"]["applied_revision"]
+    )
 
 
 def test_configured_timeline_exposes_complete_v1_runtime(
@@ -87,10 +91,11 @@ def test_configured_timeline_exposes_complete_v1_runtime(
         due_date=TODAY + timedelta(days=30),
     )
 
-    scheduling.reschedule(
+    result = scheduling.reschedule(
         user,
         today=TODAY,
     )
+    assert scheduler_worker.process_request(user.pk, result['requested_revision']) == 'published'
 
     allocations = list(
         SchedulerAllocation.objects.filter(
@@ -177,10 +182,11 @@ def test_split_item_remains_visible_when_later_session_hits_window(
         due_date=TODAY + timedelta(days=40),
     )
 
-    scheduling.reschedule(
+    result = scheduling.reschedule(
         user,
         today=TODAY,
     )
+    assert scheduler_worker.process_request(user.pk, result['requested_revision']) == 'published'
 
     allocations = list(
         SchedulerAllocation.objects.filter(
@@ -260,11 +266,25 @@ def test_reschedule_endpoint_exposes_v1_runtime_contract(
     assert response.status_code == 200
 
     payload = response.json()
-    runtime = payload["scheduler"]
+
+    # POST registers a durable request without waiting for optimisation.
+    assert payload["pending"] is True
+    revision = payload["requested_revision"]
+    assert revision > payload["applied_revision"]
+
+    assert scheduler_worker.process_request(
+        user.pk, revision
+    ) == "published"
+
+    # Completed runtime is exposed by the read endpoint.
+    timeline = api_for(user).get("/api/planning/timeline/")
+    assert timeline.status_code == 200
+    runtime = timeline.json()["scheduler"]
 
     assert runtime["configured"] is True
     assert runtime["flavour"] == "lock-in"
     assert runtime["engine_version"] == "c11.15.9"
+    assert runtime["freshness"]["pending"] is False
 
     assert "allocations" in runtime
     assert "estimates" in runtime
@@ -290,10 +310,11 @@ def test_same_day_timeline_read_reuses_cached_v1_runtime(
         due_date=TODAY + timedelta(days=10),
     )
 
-    scheduling.reschedule(
+    result = scheduling.reschedule(
         user,
         today=TODAY,
     )
+    assert scheduler_worker.process_request(user.pk, result['requested_revision']) == 'published'
 
     state = SchedulingState.objects.get(user=user)
 

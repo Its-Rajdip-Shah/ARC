@@ -28,6 +28,8 @@ let Navigator
 before(async () => {
   server = await createServer({
     configFile: false,
+    // Keep this independent from other concurrent node:test Vite servers.
+    cacheDir: 'node_modules/.vite-node-timeline-rendering',
     server: { middlewareMode: true, hmr: false, ws: false },
     optimizeDeps: { noDiscovery: true, include: [] },
     appType: 'custom',

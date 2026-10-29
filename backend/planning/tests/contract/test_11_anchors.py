@@ -16,6 +16,7 @@ from django.core.exceptions import ValidationError
 
 from planning.models import PlanningItem
 from planning.services import hierarchy, priority
+from planning.services.scheduling import SchedulingConflict
 
 pytestmark = pytest.mark.django_db
 
@@ -125,7 +126,7 @@ def test_A4_anchor_after_due_requires_explicit_resolution_not_silent_deadline_ch
 
     try:
         _set_anchor(item, due + timedelta(days=3))
-    except (ValidationError, ValueError):
+    except (ValidationError, ValueError, SchedulingConflict):
         item.refresh_from_db()
         assert item.due_date == due
         assert getattr(item, _anchor_field()) is None
@@ -148,7 +149,7 @@ def test_A5_anchor_before_release_requires_explicit_resolution_not_silent_releas
 
     try:
         _set_anchor(item, today + timedelta(days=1))
-    except (ValidationError, ValueError):
+    except (ValidationError, ValueError, SchedulingConflict):
         item.refresh_from_db()
         assert item.start_date == release
         assert getattr(item, _anchor_field()) is None

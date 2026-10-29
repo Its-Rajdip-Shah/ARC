@@ -152,6 +152,7 @@ class PlanningItemQuerySet(models.QuerySet):
         """
         return self.filter(
             Q(scheduled_date__range=(start, end))
+            | Q(manual_requested_date__range=(start, end))
             | Q(completed_display_date__range=(start, end))
             | Q(scheduler_allocations__scheduled_date__range=(start, end))
             | Q(start_date__range=(start, end))
@@ -645,6 +646,26 @@ class SchedulingState(OwnedModel):
     applied_scheduling_revision = models.PositiveBigIntegerField(
         default=0,
     )
+
+    # Durable intent for the newest unapplied reconciliation request.  This
+    # lets a future out-of-process worker retain a global request when later
+    # minimal requests are coalesced into it.
+    pending_scheduling_date = models.DateField(null=True, blank=True)
+
+    pending_scheduling_mode = models.CharField(
+        max_length=16,
+        choices=(
+            ('minimal', 'Minimal'),
+            ('global', 'Global'),
+        ),
+        default='minimal',
+    )
+
+    # Worker failures are durable so a malformed or temporarily unsupported
+    # request cannot turn a polling worker into a hot loop.  They are reset
+    # by the next canonical request and are deliberately not planner history.
+    scheduler_failure_count = models.PositiveIntegerField(default=0)
+    scheduler_retry_after = models.DateTimeField(null=True, blank=True)
 
     # Retained so existing databases keep the column. Nothing reads or writes it
     # now that the study-plan API is gone. A flavour change still must not wipe it.

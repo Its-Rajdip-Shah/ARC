@@ -6,11 +6,20 @@ import react from '@vitejs/plugin-react'
 
 
 export default defineConfig({
+  // Keep Vitest's transform/dependency cache separate from dev/build Vite
+  // and the embedded Vite servers used by node:test files.  Those runners
+  // may start concurrently in CI and Vite's cache rename is not shared-safe.
+  cacheDir: 'node_modules/.vite-unit',
+
   plugins: [
     react(),
   ],
 
   test: {
+    // Serial execution avoids resource-contention timeouts in the
+    // integration-heavy UI tests while preserving per-file isolation.
+    maxWorkers: 1,
+
     environment:
       'jsdom',
 

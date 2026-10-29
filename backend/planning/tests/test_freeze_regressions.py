@@ -5,10 +5,20 @@ import pytest
 from django.core.exceptions import ValidationError
 from django.utils import timezone
 from django.db import transaction, IntegrityError
-from planning.models import DurationCategory, PlanningItem, PlanningDependency, ProgressSegment, SchedulerAllocation
-from planning.services import domain_commands as commands, dependencies, hierarchy, progress, scheduling, priority, deletion, focus, history
+from planning.models import DurationCategory, PlanningItem, PlanningDependency, ProgressSegment, SchedulerAllocation, SchedulingState
+from planning.services import domain_commands as commands, dependencies, hierarchy, progress, scheduling, priority, deletion, focus, history, scheduler_worker
 
 pytestmark = pytest.mark.django_db
+
+
+def publish_current_revision(user):
+    state = SchedulingState.objects.filter(user=user).first()
+    if state is None:
+        return  # Legacy path may have published synchronously.
+    if state.scheduling_revision > state.applied_scheduling_revision:
+        assert scheduler_worker.process_request(user.pk, state.scheduling_revision) == 'published'
+    state.refresh_from_db()
+    assert state.scheduling_revision == state.applied_scheduling_revision
 
 
 def state(user):
@@ -39,6 +49,7 @@ def test_http_dependency_completion_rejection_is_atomic(user, make_item, api_for
 
 def test_confirm_reverse_and_duration_round_trip_through_http(user, api_for):
     item = commands.create_item(user, title='Large', item_type='TASK', duration_category='UNDER_8_HOURS')
+    publish_current_revision(user)
     first = progress.complete_segment(item.scheduler_allocations.first())
     item.refresh_from_db()
     assert item.percent_completed == first.percentage
@@ -164,6 +175,7 @@ def test_undo_rejects_later_conflicting_edit_and_preserves_unrelated_edit(user, 
 
 def test_progress_completion_and_reverse_reconcile_completion_and_priority(user):
     item = commands.create_item(user, title='Large', item_type='TASK', duration_category='UNDER_8_HOURS')
+    publish_current_revision(user)
     confirmed = []
     # Complete the currently proposed remaining allocations, without relying
     # on the scheduler's session sizing policy.
@@ -174,9 +186,11 @@ def test_progress_completion_and_reverse_reconcile_completion_and_priority(user)
         allocation.percentage = 100 - item.percent_completed
         allocation.save(update_fields=['percentage'])
         confirmed.append(progress.complete_segment(allocation))
+        publish_current_revision(user)
         item.refresh_from_db()
     assert item.is_completed and item.priority_position is None
     progress.reopen_segment(confirmed[-1])
+    publish_current_revision(user)
     item.refresh_from_db()
     assert not item.is_completed and item.percent_completed == 0
     assert item.priority_position is not None
@@ -184,14 +198,26 @@ def test_progress_completion_and_reverse_reconcile_completion_and_priority(user)
 
 
 def test_scheduler_failure_rolls_back_entire_http_create(user, api_for, monkeypatch):
-    # Failure injection tests the enclosing transaction; no domain behaviour is mocked.
+    # A worker failure must NOT roll back a committed canonical HTTP mutation.
+    # The durable revision remains pending and can be retried after recovery.
+    from planning.services import async_scheduler
     def fail(*args, **kwargs):
         raise RuntimeError('Injected proposal failure')
-    monkeypatch.setattr(scheduling, '_reconcile_progress_allocations', fail)
-    before = state(user)
-    with pytest.raises(RuntimeError):
-        api_for(user).post('/api/planning/items/', {'title': 'Rollback', 'item_type': 'TASK'}, format='json')
-    assert state(user) == before
+    response = api_for(user).post('/api/planning/items/', {'title': 'Rollback', 'item_type': 'TASK'}, format='json')
+    assert response.status_code in (200, 201), response.data
+    assert PlanningItem.objects.filter(user=user, title='Rollback').exists()
+    revision = SchedulingState.objects.get(user=user).scheduling_revision
+    with monkeypatch.context() as patcher:
+        patcher.setattr(async_scheduler, 'compute_legacy_request', fail)
+        assert scheduler_worker.process_request(user.pk, revision) == 'failed'
+    durable = SchedulingState.objects.get(user=user)
+    assert durable.scheduling_revision == revision
+    assert durable.applied_scheduling_revision < revision
+    assert durable.scheduler_failure_count >= 1
+    assert PlanningItem.objects.filter(user=user, title='Rollback').exists()
+    assert scheduler_worker.process_request(user.pk, revision) == 'published'
+    durable.refresh_from_db()
+    assert durable.applied_scheduling_revision == revision
 
 
 def test_anchor_overload_requires_confirmation_and_preserves_exact_prestate(user, make_item, monkeypatch):
@@ -199,8 +225,10 @@ def test_anchor_overload_requires_confirmation_and_preserves_exact_prestate(user
     a, b = make_item(user, 'A'), make_item(user, 'B')
     scheduling.set_anchor(a, timezone.localdate())
     before = state(user)
-    with pytest.raises(ValidationError):
+    with pytest.raises(scheduling.SchedulingConflict) as exc:
         scheduling.set_anchor(b, timezone.localdate())
+    assert any(row['code'] == 'capacity_exceeded' and row['item_id'] == b.pk
+               for row in exc.value.conflicts)
     assert state(user) == before
     scheduling.set_anchor(b, timezone.localdate(), allow_overload=True)
     b.refresh_from_db()
@@ -249,13 +277,22 @@ def test_anchor_expiry_and_focus_reprioritisation_roll_back_on_scheduler_failure
     b = make_item(user, 'B')
     priority.reconcile(user)
     before = state(user)
+    # Neither canonical command may invoke the optimizer inline. The old
+    # synchronous rollback contract no longer applies: both changes must
+    # commit and enqueue revisions even if the optimizer is unavailable.
     def fail(*args, **kwargs):
-        raise RuntimeError('Injected failure')
+        raise RuntimeError('Optimizer must not run in canonical transaction')
     monkeypatch.setattr(scheduling, 'schedule', fail)
-    for operation in [lambda: scheduling.reconcile_anchors(user), lambda: focus.reprioritise(user, b, 1)]:
-        with pytest.raises(RuntimeError):
-            operation()
-        assert state(user) == before
+    original_origin = a.manual_requested_date
+    scheduling.reconcile_anchors(user)
+    a.refresh_from_db()
+    assert a.manual_requested_date == timezone.localdate()
+    assert a.manual_anchor_origin_date == original_origin
+    assert a.expired_manual_requested_date is None
+    focus.reprioritise(user, b, 1)
+    assert state(user) != before
+    pending = SchedulingState.objects.get(user=user)
+    assert pending.scheduling_revision > pending.applied_scheduling_revision
 
 
 def test_completed_large_parent_decomposition_preserves_history_and_exposes_closure(user):
@@ -266,6 +303,7 @@ def test_completed_large_parent_decomposition_preserves_history_and_exposes_clos
     assert not parent.is_completed and parent.scheduled_date is None
     assert child.percent_completed == 0
     hierarchy.complete_subtree(child)
+    publish_current_revision(user)
     parent.refresh_from_db()
     assert parent.duration_category == 'UNDER_8_HOURS'
     assert parent.scheduled_date is not None

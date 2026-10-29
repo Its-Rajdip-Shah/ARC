@@ -6,7 +6,7 @@ This is a **production-style local validation guide**, not a production infrastr
 
 Its goal is to answer:
 
-> Can a clean machine obtain the intended ARC revision, install it from committed files only, create the required database state, start both application layers, and exercise the implementation successfully?
+> Can a clean machine obtain the intended ARC revision, install it from committed files only, create the required database state, start the backend, scheduler worker and frontend, and exercise the implementation successfully?
 
 For active feature work, use `docs/setup/developer.md`.
 
@@ -65,12 +65,12 @@ Example:
 Switch to the exact branch being validated:
 
     git fetch origin
-    git switch --track origin/integration/scheduler-backend
+    git switch --track origin/feature/nonblocking-scheduler
 
 If the branch already exists locally:
 
-    git switch integration/scheduler-backend
-    git pull --ff-only origin integration/scheduler-backend
+    git switch feature/nonblocking-scheduler
+    git pull --ff-only origin feature/nonblocking-scheduler
 
 Record the exact commit:
 
@@ -332,7 +332,39 @@ An isolated development-server `Broken pipe` line is not automatically a functio
 
 ---
 
-# 13. Start the clean frontend server
+# 13. Start the asynchronous scheduler worker
+
+Open a third terminal in the same clean validation checkout.
+
+From `backend/`, activate the virtual environment and run:
+
+    python manage.py run_scheduler_worker
+
+Keep this process running throughout interactive validation.
+
+The Django HTTP process commits canonical changes and durable scheduling
+requests. The worker computes and publishes the disposable schedule
+independently. Without the worker, scheduling requests remain pending.
+
+To verify the asynchronous boundary:
+
+1. Stop the idle worker with Ctrl+C.
+2. Create or modify a planning item in the browser.
+3. Confirm that the canonical edit succeeds without waiting for scheduling.
+4. Confirm that the schedule remains pending while the worker is stopped.
+5. Restart the worker.
+6. Confirm that the pending request is processed and the Timeline updates.
+
+Run migrations before starting a worker version that requires new schema
+fields. Production deployments must supervise the worker separately from
+the Django HTTP service and restart it after unexpected termination.
+
+This guide validates application behaviour locally. Production service
+configuration and deployment security are handled separately.
+
+---
+
+# 14. Start the clean frontend server
 
 In the frontend terminal:
 
@@ -348,7 +380,7 @@ During active editing it may print HMR updates. In a clean validation clone with
 
 ---
 
-# 14. Browser live-test checklist
+# 15. Browser live-test checklist
 
 Use the clean clone only.
 
@@ -463,7 +495,7 @@ Confirm:
 
 ---
 
-# 15. Browser developer-tools checks
+# 16. Browser developer-tools checks
 
 While live testing, inspect the browser console and network panel.
 
@@ -481,7 +513,7 @@ Do not treat normal CORS preflight `OPTIONS` requests as failures.
 
 ---
 
-# 16. Contract verification
+# 17. Contract verification
 
 A passing UI is not enough if the implementation violates architectural ownership.
 
@@ -503,7 +535,7 @@ In particular:
 
 ---
 
-# 17. File and repository checks
+# 18. File and repository checks
 
 Before declaring the revision ready:
 
@@ -530,9 +562,9 @@ Check the actual review branch for:
 
 ---
 
-# 18. Clean up validation state
+# 19. Clean up validation state
 
-When finished, stop both servers.
+When finished, stop the Django backend, scheduler worker and frontend development server.
 
 Drop the disposable validation database.
 
@@ -546,7 +578,7 @@ Do not delete the developer's normal ARC database as part of this cleanup.
 
 ---
 
-# 19. Pass criteria before PR or release handoff
+# 20. Pass criteria before PR or release handoff
 
 The implementation is ready for handoff only when all relevant points are true:
 
@@ -561,7 +593,7 @@ The implementation is ready for handoff only when all relevant points are true:
 - frontend tests pass;
 - frontend lint has no blocking errors;
 - frontend production build succeeds;
-- both servers start from the clean clone;
+- the Django backend, scheduler worker and frontend development server all start from the clean clone;
 - manual browser checks pass;
 - no missing assets or source files appear;
 - authentication works;

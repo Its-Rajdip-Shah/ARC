@@ -9,6 +9,20 @@ from planning.services import history, priority, scheduling
 
 pytestmark = pytest.mark.django_db
 
+def publish_current_revision(user):
+    """Publish pending durable intent; fail if the worker cannot publish it."""
+    from planning.models import SchedulingState
+    from planning.services import scheduler_worker
+    state = SchedulingState.objects.filter(user=user).first()
+    if state is None:
+        return  # Legacy scheduling may publish without a revision row.
+    if state.scheduling_revision > state.applied_scheduling_revision:
+        outcome = scheduler_worker.process_request(user.pk, state.scheduling_revision)
+        assert outcome == 'published', (outcome, state.scheduling_revision)
+    state.refresh_from_db()
+    assert state.scheduling_revision == state.applied_scheduling_revision
+
+
 
 @pytest.fixture(autouse=True)
 def frozen_clock():
@@ -75,6 +89,7 @@ def test_manual_move_overload_and_undo_redo(user, other_user, make_item, monkeyp
     assert snapshot(user) == before
     scheduling.move_to_date(user, second.pk, TODAY, allow_overload=True)
     after = snapshot(user)
+    publish_current_revision(user)
     assert SchedulingOverload.objects.get(user=user, date=TODAY).allowed
     first.refresh_from_db(); second.refresh_from_db(); third.refresh_from_db(); theirs.refresh_from_db()
     assert first.scheduled_date == second.scheduled_date == TODAY
@@ -92,9 +107,11 @@ def test_replacement_execution_intent_and_history(user, make_item, overload, mon
     monkeypatch.setitem(scheduling.BASELINE_SCHEDULER_CAPACITY, DurationCategory.UNDER_1_HOUR, 2)
     a, b, c, d = [make_item(user, title) for title in 'ABCD']
     scheduling.schedule(user, TODAY)
+    publish_current_revision(user)
     before = snapshot(user)
     scheduling.replace(user, d.pk, a.pk, allow_overload=overload)
     after = snapshot(user)
+    publish_current_revision(user)
     assert history.capture_priority(user, include_unpositioned=True) == before['priority']
     a.refresh_from_db(); b.refresh_from_db(); d.refresh_from_db()
     assert d.scheduled_date == TODAY
@@ -136,6 +153,8 @@ def test_timeline_api_context_and_tenant_scoped_operations(user, other_user, api
     task = make_item(user, 'Assignment', ItemType.ASSIGNMENT, parent=root, due_date=TODAY + timedelta(days=5))
     AssignmentDetail.objects.create(planning_item=task, submission_url='https://example.com/submit')
     other = make_item(other_user, 'Private')
+    scheduling.schedule(user, TODAY)
+    publish_current_revision(user)
     response = client.get('/api/planning/timeline/')
     assert response.status_code == 200, response.data
     row = response.data['groups'][0]['items'][0]
@@ -185,12 +204,14 @@ def test_manual_endpoints_report_changes_and_overload_is_tenant_owned(user, othe
         'item_id': a.pk, 'date': TODAY.isoformat(),
     }, format='json')
     assert response.status_code == 200, response.data
-    assert a.pk in response.data['changed_ids']
+    assert a.pk in response.data['canonical_changed_ids']
+    assert response.data['pending'] is True
     response = client.post('/api/planning/timeline/replace/', {
         'replacement_id': b.pk, 'displaced_id': a.pk,
     }, format='json')
     assert response.status_code == 200, response.data
-    assert b.pk in response.data['changed_ids']
+    assert b.pk in response.data['canonical_changed_ids']
+    assert response.data['pending'] is True
     assert client.get('/api/planning/timeline/').data['overload'] == []
     response = client.post('/api/planning/timeline/overload/', {
         'date': TODAY.isoformat(), 'allowed': True,
@@ -232,6 +253,8 @@ def test_timeline_load_schedules_unscheduled_work_globally_without_history(user,
     history.record_checkpoint(user, 'PRIORITY', {'priority': []}, {'priority': history.capture_priority(user)})
     PlanningHistoryEntry.objects.filter(user=user).update(is_undone=True)
     history_before = list(PlanningHistoryEntry.objects.filter(user=user).values())
+    scheduling.schedule(user, TODAY)
+    publish_current_revision(user)
     response = api_for(user).get('/api/planning/timeline/')
     assert response.status_code == 200
     rows = {row['id']: row for group in response.data['groups'] for row in group['items']}
@@ -255,6 +278,8 @@ def test_timeline_read_respects_policy_manual_overload_and_constraints(user, api
     assignment = make_item(user, 'Assignment', ItemType.ASSIGNMENT,
                            start_date=TODAY + timedelta(days=2), due_date=TODAY + timedelta(days=2))
     overdue = make_item(user, 'Overdue', due_date=TODAY - timedelta(days=1))
+    scheduling.daily_schedule(user, today=TODAY)
+    publish_current_revision(user)
     response = api_for(user).get('/api/planning/timeline/')
     assert response.status_code == 200
     for item in [*manual, missed, assignment, overdue]:
@@ -316,10 +341,15 @@ def test_timeline_move_runs_public_scheduler_once_after_preflight(
         today=TODAY,
     )
 
-    # One legacy compatibility preflight, plus the legacy compatibility
-    # pass performed inside the single final public schedule() invocation.
-    assert len(schedule_calls) == 1
-    assert len(legacy_calls) == 2
+    # The mutation may perform preflight, but must not optimise inline.
+    assert schedule_calls == []
+    from planning.models import SchedulingState
+    from planning.services import scheduler_worker
+    state = SchedulingState.objects.get(user=user)
+    assert state.scheduling_revision > state.applied_scheduling_revision
+    assert scheduler_worker.process_request(user.pk, state.scheduling_revision) == 'published'
+    item.refresh_from_db()
+    assert item.manual_requested_date == TODAY + timedelta(days=1)
 
 
 

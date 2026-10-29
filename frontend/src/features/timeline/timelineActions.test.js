@@ -9,6 +9,9 @@ let server, planning, apiClient, SchedulerRunButton, timelineActions, schedulerS
 before(async () => {
   server = await createServer({
     configFile: false,
+    // Node's test runner starts test files concurrently.  This embedded Vite
+    // server must not contend with the Timeline rendering test's dep cache.
+    cacheDir: 'node_modules/.vite-node-timeline-actions',
     server: { middlewareMode: true, hmr: false, ws: false },
     optimizeDeps: { noDiscovery: true, include: [] },
     appType: 'custom',

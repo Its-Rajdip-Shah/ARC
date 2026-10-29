@@ -61,6 +61,15 @@ def finish(user, today=None):
     from planning.services import scheduling, focus
     validate_graph(user)
     priority.reconcile(user)
-    result = scheduling.reconcile(user, today)
+    # Anchor windows are canonical commitments, not optimiser artifacts.
+    # Terminate invalid, completed, or deleted windows before a worker can
+    # observe this mutation; task facts themselves remain untouched.
+    scheduling._reconcile_manual_anchors(
+        user,
+        scheduling.user_local_date(user, explicit_date=today),
+    )
+    # Persist intent with the canonical command; a worker computes after the
+    # transaction releases its canonical locks.
+    result = scheduling.request_reconcile(user, today)
     focus.reconcile_current(user)
     return result

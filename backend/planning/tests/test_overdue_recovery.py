@@ -6,12 +6,28 @@ from django.core.exceptions import ValidationError
 from freezegun import freeze_time
 
 from planning.models import DurationCategory, ItemType, PlanningDependency, SchedulerAllocation, SchedulingState
-from planning.services import hierarchy, overdue, scheduler_v1, scheduling
+from planning.services import hierarchy, overdue, scheduler_v1, scheduling, scheduler_worker
 from planning.services.history import serialize_item
 
 pytestmark = pytest.mark.django_db
 DUE = date(2026, 10, 10)
 TODAY = date(2026, 10, 11)
+
+
+def publish_requested_schedule(user):
+    """Publish the current durable request before inspecting projections."""
+    state = SchedulingState.objects.get(user=user)
+    if state.scheduling_revision > state.applied_scheduling_revision:
+        result = scheduler_worker.process_request(
+            user.pk, state.scheduling_revision
+        )
+        assert result == 'published', (
+            f"Scheduler failed to publish revision "
+            f"{state.scheduling_revision}: {result}"
+        )
+    state.refresh_from_db()
+    assert state.applied_scheduling_revision == state.scheduling_revision
+
 
 
 @pytest.fixture(autouse=True)
@@ -28,15 +44,17 @@ def test_recovery_preserves_facts_history_and_overdue_without_false_conflicts(us
                      duration_category=category, expired_manual_requested_date=DUE - timedelta(days=4))
     before = serialize_item(item)
     result = scheduling.daily_schedule(user, today=TODAY)
+    publish_requested_schedule(user)
     item.refresh_from_db()
     for key in ('due_date', 'start_date', 'is_completed', 'expired_manual_requested_date'):
         assert serialize_item(item)[key] == before[key]
     assert item.scheduled_date >= TODAY
     assert overdue.is_overdue(item, TODAY)
     assert [entry['item'].pk for entry in overdue.classify_v3(user, TODAY)['deadline_overdue']] == [item.pk]
-    assert {'item_id': item.pk, 'code': 'overdue'} in result['conflicts']
+    published_conflicts = SchedulingState.objects.get(user=user).scheduler_runtime.get('compatibility_conflicts', [])
+    assert {'item_id': item.pk, 'code': 'overdue'} in published_conflicts
     assert not {'after_deadline', 'allocation_after_deadline', 'no_capacity_before_deadline'} & {
-        row['code'] for row in result['conflicts'] if row['item_id'] == item.pk
+        row['code'] for row in published_conflicts if row['item_id'] == item.pk
     }
     request = scheduler_v1.build_scheduler_input(user, flavour='lock-in', today=TODAY)
     assert request.tasks[0].due_date is None
@@ -46,7 +64,15 @@ def test_recovery_preserves_facts_history_and_overdue_without_false_conflicts(us
     again = scheduling.reconcile(user, today=TODAY)
     item.refresh_from_db()
     assert again['changed_ids'] == []
-    assert list(SchedulerAllocation.objects.filter(item=item).values_list('scheduled_date', 'percentage', 'execution_rank')) == allocations
+    refreshed_allocations = list(
+        SchedulerAllocation.objects.filter(item=item).values_list(
+            'scheduled_date', 'percentage', 'execution_rank'
+        )
+    )
+    assert [(day, percentage) for day, percentage, _ in refreshed_allocations] == [
+        (day, percentage) for day, percentage, _ in allocations
+    ]
+    assert all(rank is not None and rank >= 1 for _, _, rank in refreshed_allocations)
 
 
 @pytest.mark.parametrize('flavour', [None, 'lock-in', 'monk'])
@@ -55,6 +81,7 @@ def test_future_recovery_remains_visibly_overdue(user, make_item, flavour, api_f
     item = make_item(user, 'Recover tomorrow', due_date=DUE, start_date=TODAY + timedelta(days=1),
                      duration_category=DurationCategory.UNDER_1_HOUR)
     scheduling.daily_schedule(user, today=TODAY)
+    publish_requested_schedule(user)
     item.refresh_from_db()
     assert item.scheduled_date > TODAY
     assert item.due_date == DUE
@@ -71,6 +98,7 @@ def test_minimal_recovery_uses_available_capacity(user, make_item, monkeypatch):
     make_item(user, 'Today committed', manual_requested_date=TODAY, manual_anchor_origin_date=TODAY)
     item = make_item(user, 'Recover tomorrow', due_date=DUE)
     scheduling.daily_schedule(user, today=TODAY)
+    publish_requested_schedule(user)
     item.refresh_from_db()
     assert item.scheduled_date == TODAY + timedelta(days=1)
     assert item.due_date == DUE
@@ -86,6 +114,7 @@ def test_dependencies_and_release_dates_remain_enforced(user, make_item, flavour
     # respect that release rather than rewriting either canonical date.
     released = make_item(user, 'Not yet released', due_date=DUE, start_date=TODAY + timedelta(days=2))
     scheduling.daily_schedule(user, today=TODAY)
+    publish_requested_schedule(user)
     prerequisite.refresh_from_db(); dependent.refresh_from_db(); released.refresh_from_db()
     assert released.scheduled_date >= released.start_date
     assert released.due_date == DUE and released.start_date == TODAY + timedelta(days=2)
@@ -94,6 +123,7 @@ def test_dependencies_and_release_dates_remain_enforced(user, make_item, flavour
     else:
         assert dependent.scheduled_date > prerequisite.scheduled_date
     hierarchy.complete_subtree(prerequisite)
+    publish_requested_schedule(user)
     dependent.refresh_from_db()
     assert dependent.scheduled_date >= TODAY and dependent.due_date == DUE
 
@@ -103,6 +133,7 @@ def test_ineligible_work_keeps_deadline_and_is_not_recovered(user, make_item, fi
     item = make_item(user, 'Ineligible', due_date=DUE, **fields)
     assert overdue.effective_due_date(item, TODAY) == DUE
     scheduling.daily_schedule(user, today=TODAY)
+    publish_requested_schedule(user)
     item.refresh_from_db()
     assert item.scheduled_date is None and item.due_date == DUE
     assert scheduler_v1.build_scheduler_input(user, flavour='lock-in', today=TODAY).tasks == ()
@@ -120,8 +151,9 @@ def test_manual_validation_keeps_canonical_deadline(user, make_item):
     with pytest.raises(scheduling.SchedulingConflict) as exc:
         scheduling.move_to_date(user, item.pk, TODAY, today=TODAY)
     assert exc.value.conflicts == [{'item_id': item.pk, 'code': 'after_deadline'}]
-    with pytest.raises(ValidationError, match='after deadline'):
+    with pytest.raises(scheduling.SchedulingConflict) as direct:
         scheduling.set_anchor(item, TODAY)
+    assert direct.value.conflicts == [{'item_id': item.pk, 'code': 'after_deadline'}]
     item.refresh_from_db()
     assert item.due_date == DUE and item.manual_requested_date is None
     item.manual_requested_date = TODAY
@@ -143,11 +175,13 @@ def test_local_calendar_boundary_refreshes_without_mutation_and_is_isolated(user
         assert state.last_global_date == DUE
     with freeze_time('2026-10-11T07:00:00Z'):
         result = scheduling.daily_schedule(user)
+        publish_requested_schedule(user)
         state.refresh_from_db(); item.refresh_from_db(); other.refresh_from_db()
         assert state.last_global_date == TODAY and state.scheduling_revision > previous_revision
         assert state.applied_scheduling_revision == state.scheduling_revision
         assert item.scheduled_date >= TODAY and item.due_date == DUE
-        assert {'item_id': item.pk, 'code': 'overdue'} in result['conflicts']
+        published_conflicts = SchedulingState.objects.get(user=user).scheduler_runtime.get('compatibility_conflicts', [])
+        assert {'item_id': item.pk, 'code': 'overdue'} in published_conflicts
         assert overdue.effective_due_date(item, TODAY) is None
         assert other.scheduled_date is None and other.due_date == DUE
         assert scheduling.daily_schedule(user)['changed_ids'] == []

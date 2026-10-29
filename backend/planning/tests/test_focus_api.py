@@ -10,7 +10,28 @@ from planning.models import (
     PlanningItem,
     SchedulingOverload,
 )
-from planning.services import scheduling
+from planning.services import scheduler_worker, scheduling
+
+def _publish_pending_schedule(user):
+    """Publish the requested projection explicitly in integration tests."""
+    from planning.models import SchedulingState
+
+    state = SchedulingState.objects.get(user=user)
+
+    if state.scheduling_revision <= state.applied_scheduling_revision:
+        return
+
+    result = scheduler_worker.process_request(
+        user.pk,
+        state.scheduling_revision,
+    )
+
+    assert result == 'published', (
+        f'Scheduler worker failed to publish revision '
+        f'{state.scheduling_revision}: {result}'
+    )
+
+
 
 
 pytestmark = pytest.mark.django_db
@@ -478,12 +499,16 @@ def test_focus_anchor_persists_date_and_manual_order(
 
     item.refresh_from_db()
 
-    assert called['user_id'] == user.pk
+    from planning.models import SchedulingState
+    assert 'user_id' not in called
+    state = SchedulingState.objects.get(user=user)
+    assert state.scheduling_revision > state.applied_scheduling_revision
     assert item.manual_requested_date == target
     assert item.manual_requested_order == 2
 
     # Disposable scheduler result remains distinct from canonical intent.
-    assert item.execution_rank == 2
+    # The disposable projection is not synchronously overwritten.
+    assert item.execution_rank is None
 
 
 def test_timeline_date_anchor_clears_prior_focus_order(
@@ -691,9 +716,10 @@ def test_focus_anchor_batch_schedules_once_and_records_one_action(
 
     assert response.status_code == 200, response.data
 
-    assert calls == [
-        user.pk,
-    ]
+    from planning.models import SchedulingState
+    assert calls == []
+    state = SchedulingState.objects.get(user=user)
+    assert state.scheduling_revision > state.applied_scheduling_revision
 
     first.refresh_from_db()
     second.refresh_from_db()
@@ -1013,9 +1039,10 @@ def test_focus_anchor_batch_allows_same_order_across_buckets(
     )
 
     assert response.status_code == 200, response.data
-    assert calls == [
-        user.pk,
-    ]
+    from planning.models import SchedulingState
+    assert calls == []
+    state = SchedulingState.objects.get(user=user)
+    assert state.scheduling_revision > state.applied_scheduling_revision
 
     quick.refresh_from_db()
     side.refresh_from_db()
@@ -1522,7 +1549,7 @@ def test_focus_batch_same_day_reorder_does_not_reprompt_capacity(
     )
 
 
-def test_focus_reprioritise_runs_scheduler_once(
+def test_focus_reprioritise_queues_scheduler_without_running_it_in_http(
     api_for,
     user,
     make_item,
@@ -1543,16 +1570,10 @@ def test_focus_reprioritise_runs_scheduler_once(
     )
 
     calls = []
-    real_schedule = scheduling.schedule
-
-    def counted_schedule(*args, **kwargs):
-        calls.append((args, kwargs))
-        return real_schedule(*args, **kwargs)
-
     monkeypatch.setattr(
         scheduling,
         'schedule',
-        counted_schedule,
+        lambda *args, **kwargs: calls.append((args, kwargs)),
     )
 
     response = api_for(user).post(
@@ -1565,7 +1586,7 @@ def test_focus_reprioritise_runs_scheduler_once(
     )
 
     assert response.status_code == 200, response.data
-    assert len(calls) == 1
+    assert calls == []
 
 
 
@@ -1663,6 +1684,9 @@ def test_focus_displaced_span_rank_edit_survives_real_scheduler_round_trip(
     )
 
     assert response.status_code == 200, response.data
+
+    state = SchedulingState.objects.get(user=user)
+    assert scheduler_worker.process_request(user.pk, state.scheduling_revision) == 'published'
 
     projection = api_for(user).get(
         "/api/planning/focus/",
@@ -1798,6 +1822,9 @@ def test_focus_displaced_span_arrow_move_survives_real_scheduler_round_trip(
     )
 
     assert response.status_code == 200, response.data
+
+    state = SchedulingState.objects.get(user=user)
+    assert scheduler_worker.process_request(user.pk, state.scheduling_revision) == 'published'
 
     projection = api_for(user).get(
         "/api/planning/focus/",
@@ -1962,7 +1989,13 @@ def test_single_drag_batch_preserves_other_anchor_facts_and_history(user, make_i
         assert response.status_code == 200, response.data
         assert anchor_facts(dragged) == (today, order, today)
         assert [anchor_facts(item) for item in others] == before
-        saved = next(row for row in response.data['focus']['candidates'] if row['item_id'] == dragged.pk)
+        _publish_pending_schedule(user)
+        published = client.get('/api/planning/focus/')
+        assert published.status_code == 200, published.data
+        saved = next(
+            row for row in published.data['candidates']
+            if row['item_id'] == dragged.pk
+        )
         assert saved['manual_requested_order'] == order
         request = scheduler_v1.build_scheduler_input(user, flavour='lock-in', today=today)
         slots = [(row.anchor_date, row.anchor_order) for row in request.tasks if row.anchor_date is not None]
@@ -2034,6 +2067,7 @@ def test_focus_monk_boss_reorder_with_residual_parent(
     )
 
     scheduling.daily_schedule(user, today=today)
+    _publish_pending_schedule(user)
 
     client = api_for(user)
     initial = client.get('/api/planning/focus/')
@@ -2081,6 +2115,7 @@ def test_focus_monk_boss_reorder_with_residual_parent(
     )
 
     assert response.status_code == 200, response.data
+    _publish_pending_schedule(user)
 
     after = client.get('/api/planning/focus/')
     assert after.status_code == 200
@@ -2117,6 +2152,7 @@ def _focus_reorder_fixture(user, make_item):
     neighbour = make_item(user, 'Automatic neighbour', duration_category=DurationCategory.UNDER_1_HOUR)
     SchedulingOverload.objects.create(user=user, date=today, allowed=True)
     scheduling.daily_schedule(user, today=today)
+    _publish_pending_schedule(user)
     return today, tasks, neighbour
 
 
@@ -2137,6 +2173,8 @@ def test_focus_atomic_reorder_preserves_anchor_origin_and_scheduler_order(user, 
     today, tasks, neighbour = _focus_reorder_fixture(user, make_item)
     response = _post_focus_order(api_for(user), today, tasks, positions)
     assert response.status_code == 200, response.data
+    _publish_pending_schedule(user)
+    response.data['focus'] = api_for(user).get('/api/planning/focus/').data
     ids = [tasks[number - 1].pk for number in positions]
     assert [row['item_id'] for row in response.data['focus']['candidates'] if row['item_id'] in ids] == ids
     scheduling.daily_schedule(user, today=today)
@@ -2157,6 +2195,7 @@ def test_focus_atomic_reorder_preserves_anchor_origin_and_scheduler_order(user, 
         assert task.manual_requested_order == index
         assert task.manual_anchor_origin_date == today - timedelta(days=1)
     history.redo(user)
+    _publish_pending_schedule(user)
     assert [row['item_id'] for row in api_for(user).get('/api/planning/focus/').data['candidates'] if row['item_id'] in ids] == ids
 
 
@@ -2271,6 +2310,8 @@ def test_focus_mixed_reorder_anchors_only_selected_automatic_task(user, make_ite
         'expected_queue': [{'item_id': tasks[index].pk, 'date': today.isoformat()} for index in [0, 3, 1, 2]],
     }, format='json')
     assert response.status_code == 200, response.data
+    _publish_pending_schedule(user)
+    response.data['focus'] = api_for(user).get('/api/planning/focus/').data
     for task in tasks:
         task.refresh_from_db()
     assert tasks[0].manual_requested_date is None
@@ -2321,6 +2362,7 @@ def test_focus_cross_date_anchor_accepts_unrelated_scheduler_changes(user, make_
                            {'item_id': automatic.pk, 'date': later.isoformat()}],
     }, format='json')
     assert response.status_code == 200, response.data
+    _publish_pending_schedule(user)
     tasks[0].refresh_from_db()
     tasks[1].refresh_from_db()
     automatic.refresh_from_db()
@@ -2354,7 +2396,10 @@ def test_focus_same_date_reorder_ignores_unrelated_queue_postconditions(user, ma
         ] + [{'item_id': automatic.pk, 'date': later.isoformat()}],
     }, format='json')
     assert response.status_code == 200, response.data
-    ids = [row['item_id'] for row in response.data['focus']['candidates']]
+    _publish_pending_schedule(user)
+    published = api_for(user).get('/api/planning/focus/')
+    assert published.status_code == 200, published.data
+    ids = [row['item_id'] for row in published.data['candidates']]
     assert ids.index(tasks[5].pk) < ids.index(tasks[4].pk)
     automatic.refresh_from_db()
     assert automatic.manual_requested_date is None
@@ -2389,6 +2434,7 @@ def test_focus_cross_date_occupied_anchor_batch_survives_refresh_and_history(use
     }, format='json')
     assert response.status_code == 200, response.data
     scheduling.daily_schedule(user, today=today)
+    _publish_pending_schedule(user)
     fresh = api_for(user).get('/api/planning/focus/').data['candidates']
     assert [row['item_id'] for row in fresh if str(row['scheduled_date']) == tomorrow.isoformat()] == [first.pk, destination.pk]
     for task in [first, source, automatic, destination]:

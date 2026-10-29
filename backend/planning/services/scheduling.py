@@ -2,6 +2,7 @@
 from collections import Counter
 from datetime import date, timedelta
 from decimal import Decimal
+from types import SimpleNamespace
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
@@ -379,6 +380,108 @@ def _validate_date(item, day, today):
     return None
 
 
+def legacy_policy_projection(tasks, limits, overload_dates, today, mode):
+    """Pure legacy placement policy shared by worker-side computation.
+
+    ``tasks`` are immutable value objects exposing the legacy scheduling
+    fields.  This intentionally contains no ORM access or mutation; the
+    synchronous adapter remains responsible for persistence, allocations and
+    locking.
+    """
+    if mode not in {'minimal', 'global'}:
+        raise ValueError('Unknown scheduling mode')
+    conflicts, usage, dates = [], Counter(), {}
+    eligible = [task for task in tasks if task.is_eligible and not task.is_blocked]
+
+    def order(task):
+        return (0 if task.priority_position is not None else 1,
+                task.priority_position or 0, task.due_date or date.max,
+                task.start_date or date.max, task.item_id)
+
+    # Capture adapters supply tasks in primary-key order.  Preserve that order
+    # for blocked-dependency reporting just as the old ORM loop did.
+    for task in tasks:
+        if task.is_blocked and task.manual_requested_date and task.manual_requested_date >= today:
+            conflicts.append({'item_id': task.item_id, 'code': 'blocked_dependency'})
+    pending = []
+    for task in sorted(eligible, key=order):
+        bucket = task.duration_category
+        if bucket not in limits:
+            conflicts.append({'item_id': task.item_id, 'code': 'duration_required'})
+            continue
+        if task.due_date and task.due_date < today:
+            conflicts.append({'item_id': task.item_id, 'code': 'overdue'})
+        manual = task.manual_requested_date
+        if manual and manual < today:
+            manual = None
+        if manual:
+            code = ('past_date' if manual < today else
+                    'before_start' if task.start_date and manual < task.start_date else
+                    'after_deadline' if task.due_date and manual > task.due_date else None)
+            if code:
+                conflicts.append({'item_id': task.item_id, 'code': code})
+            if usage[(manual, bucket)] >= limits[bucket] and manual not in overload_dates:
+                conflicts.append({'item_id': task.item_id, 'code': 'capacity_exceeded'})
+            usage[(manual, bucket)] += 1
+            dates[task.item_id] = None if task.start_date and manual < task.start_date else manual
+        else:
+            pending.append(task)
+    for task in pending:
+        bucket = task.duration_category
+        lower = max(today, task.start_date or today)
+        due = None if task.due_date and task.due_date < today else task.due_date
+        day = lower
+        if (mode == 'minimal' and task.scheduled_date and task.scheduled_date >= lower
+                and (due is None or task.scheduled_date <= due)):
+            day = task.scheduled_date
+        if limits[bucket] == 0:
+            conflicts.append({'item_id': task.item_id, 'code': 'capacity_disabled'})
+        else:
+            while usage[(day, bucket)] >= limits[bucket] and (due is None or day <= due):
+                day += timedelta(days=1)
+        if due and day > due:
+            if lower <= due:
+                choices = (lower + timedelta(days=i) for i in range((due - lower).days + 1))
+                day = min(choices, key=lambda candidate: (usage[(candidate, bucket)], candidate))
+                if usage[(day, bucket)] >= limits[bucket]:
+                    conflicts.append({'item_id': task.item_id, 'code': 'no_capacity_before_deadline'})
+            else:
+                day = lower
+                conflicts.append({'item_id': task.item_id, 'code': 'after_deadline'})
+        usage[(day, bucket)] += 1
+        dates[task.item_id] = day
+    ranks, counts = {}, Counter()
+    for task in sorted(eligible, key=lambda task: (dates.get(task.item_id) or date.max, order(task))):
+        day = dates.get(task.item_id)
+        if day is not None:
+            counts[day] += 1
+            ranks[task.item_id] = counts[day]
+
+    # Allocation conflicts are part of the legacy reporting contract even
+    # though allocations themselves are persisted by the adapter.  Derive
+    # their dates from the same captured values so the worker never needs a
+    # database read during computation.
+    for task in sorted(eligible, key=lambda task: (dates.get(task.item_id) or date.max, order(task))):
+        day = dates.get(task.item_id)
+        active_anchor = (
+            task.manual_requested_date
+            and task.manual_requested_date >= today
+        )
+        due = task.due_date
+        if due and due < today and not active_anchor:
+            due = None
+        if (
+            day is not None
+            and due is not None
+            and task.duration_category in SPLITTABLE_DURATION_CATEGORIES
+            and day + timedelta(days=_allocation_count(task.duration_category) - 1) > due
+        ):
+            conflict = {'item_id': task.item_id, 'code': 'allocation_after_deadline'}
+            if conflict not in conflicts:
+                conflicts.append(conflict)
+    return dates, ranks, conflicts
+
+
 @transaction.atomic
 def _legacy_schedule(user, today=None, *, mode='minimal'):
     """Generate proposals from canonical state, reconsidering dates in global mode.
@@ -394,7 +497,7 @@ def _legacy_schedule(user, today=None, *, mode='minimal'):
     priority._lock(user)
     limits = capacities(user)
     overloaded = set(SchedulingOverload.objects.filter(user=user, allowed=True).values_list('date', flat=True))
-    items = sorted(_scheduler_eligible(user), key=_scheduling_order)
+    items = list(_scheduler_eligible(user))
 
     # Eligibility reconciliation is required in every scheduling mode.
     # Hierarchy changes can make a previously scheduled item cease to be
@@ -421,73 +524,37 @@ def _legacy_schedule(user, today=None, *, mode='minimal'):
             ['scheduled_date'],
         )
 
-    usage = Counter()
-    conflicts, changed, pending = [], [], []
-    for blocked in PlanningItem.objects.for_user(user).filter(
-        is_completed=False, manual_requested_date__gte=today,
-        blocked_by_dependencies__prerequisite__is_completed=False,
-        blocked_by_dependencies__prerequisite__is_deleted=False,
-    ).distinct():
-        conflicts.append(_conflict(blocked, 'blocked_dependency'))
-
-    def assign(item, day):
+    # The pure policy receives the complete canonical facts it needs.  This
+    # adapter deliberately does all ORM work before invoking it, so the worker
+    # and this compatibility path cannot drift in placement semantics.
+    all_rows = list(PlanningItem.objects.for_user(user).order_by('pk'))
+    blocked_ids = set(PlanningDependency.objects.filter(
+        dependent__user=user,
+        prerequisite__user=user,
+        prerequisite__is_completed=False,
+        prerequisite__is_deleted=False,
+    ).values_list('dependent_id', flat=True))
+    eligible_ids = {item.pk for item in items}
+    tasks = tuple(SimpleNamespace(
+        item_id=row.pk,
+        duration_category=row.duration_category,
+        start_date=row.start_date,
+        due_date=row.due_date,
+        manual_requested_date=row.manual_requested_date,
+        scheduled_date=row.scheduled_date,
+        priority_position=row.priority_position,
+        is_eligible=row.pk in eligible_ids,
+        is_blocked=row.pk in blocked_ids,
+    ) for row in all_rows)
+    dates, execution_ranks, conflicts = legacy_policy_projection(
+        tasks, limits, overloaded, today, mode,
+    )
+    changed = []
+    for item in items:
+        day = dates.get(item.pk)
         if item.scheduled_date != day:
             item.scheduled_date = day
             changed.append(item)
-
-    for item in items:
-        bucket = item.duration_category
-        if bucket not in limits:
-            conflicts.append(_conflict(item, 'duration_required'))
-            continue
-        if item.due_date and item.due_date < today:
-            conflicts.append(_conflict(item, 'overdue'))
-        # Expired intent remains recovery history, never a hard placement.
-        manual_day = item.manual_requested_date
-        if manual_day and manual_day < today:
-            manual_day = None
-
-        if manual_day:
-            day = manual_day
-            code = _validate_date(item, day, today)
-            if code:
-                conflicts.append(_conflict(item, code))
-            if usage[(day, bucket)] >= limits[bucket] and day not in overloaded:
-                conflicts.append(_conflict(item, 'capacity_exceeded'))
-            usage[(day, bucket)] += 1
-            if item.start_date and day < item.start_date:
-                assign(item, None)
-                continue
-            assign(item, day)
-        else:
-            pending.append(item)
-
-    for item in pending:
-        bucket = item.duration_category
-        due = effective_due_date(item, today)
-        lower = max(today, item.start_date or today)
-        day = lower
-        if (mode == 'minimal' and item.scheduled_date and item.scheduled_date >= lower
-                and (due is None or item.scheduled_date <= due)):
-            day = item.scheduled_date
-        if limits[bucket] == 0:
-            conflicts.append(_conflict(item, 'capacity_disabled'))
-        else:
-            while usage[(day, bucket)] >= limits[bucket] and (due is None or day <= due):
-                day += timedelta(days=1)
-        if due and day > due:
-            # An old suggestion is not a hard bound: try earlier legal space
-            # before accepting overload. Choose least-used, then earliest day.
-            if lower <= due:
-                candidates = (lower + timedelta(days=i) for i in range((due - lower).days + 1))
-                day = min(candidates, key=lambda candidate: (usage[(candidate, bucket)], candidate))
-                if usage[(day, bucket)] >= limits[bucket]:
-                    conflicts.append(_conflict(item, 'no_capacity_before_deadline'))
-            else:
-                day = lower
-                conflicts.append(_conflict(item, 'after_deadline'))
-        usage[(day, bucket)] += 1
-        assign(item, day)
     if changed:
         PlanningItem.objects.bulk_update(changed, ['scheduled_date'])
 
@@ -495,13 +562,8 @@ def _legacy_schedule(user, today=None, *, mode='minimal'):
     # unconfirmed projections; confirmed segments remain canonical progress.
     _reconcile_progress_allocations(user, today)
     # Rank is disposable execution advice, independent of canonical priority.
-    ranks = Counter()
-    for item in sorted(items, key=lambda row: (row.scheduled_date or timezone.datetime.max.date(), _scheduling_order(row))):
-        if item.scheduled_date is not None:
-            ranks[item.scheduled_date] += 1
-            item.execution_rank = ranks[item.scheduled_date]
-        else:
-            item.execution_rank = None
+    for item in items:
+        item.execution_rank = execution_ranks.get(item.pk)
     PlanningItem.objects.filter(user=user).exclude(pk__in=eligible_ids).update(execution_rank=None)
     if items:
         PlanningItem.objects.bulk_update(items, ['execution_rank'])
@@ -543,6 +605,77 @@ def _next_scheduling_revision(user):
 
 
 @transaction.atomic
+def request_reconcile(
+    user,
+    today=None,
+    *,
+    mode='minimal',
+):
+    """Durably request, but do not compute, a schedule reconciliation.
+
+    The state row is locked only long enough to allocate a revision and
+    coalesce intent.  A future separate worker must calculate and apply the
+    requested revision after the canonical mutation commits.
+    """
+
+    if mode not in {'minimal', 'global'}:
+        raise ValueError("Scheduling request mode must be 'minimal' or 'global'.")
+
+    # Keep requests in the same per-user -> SchedulingState lock order as
+    # canonical commands and asynchronous capture/publication.  Besides
+    # avoiding an inverse lock order, this makes a requested revision part of
+    # the same serialized canonical snapshot.
+    priority._lock(user)
+
+    state, _ = (
+        SchedulingState.objects
+        .select_for_update()
+        .get_or_create(user=user)
+    )
+
+    has_pending_request = (
+        state.applied_scheduling_revision
+        < state.scheduling_revision
+    )
+
+    # A global request subsumes minimal work.  Preserve it while there is
+    # pending work, but allow a fresh request after an applied revision to set
+    # its own intent.
+    if mode == 'global' or not (
+        has_pending_request
+        and state.pending_scheduling_mode == 'global'
+    ):
+        state.pending_scheduling_mode = mode
+
+    # Preserve the calendar date of the canonical request across worker delay.
+    state.pending_scheduling_date = user_local_date(user, explicit_date=today)
+    state.scheduling_revision += 1
+    state.scheduler_failure_count = 0
+    state.scheduler_retry_after = None
+    state.save(
+        update_fields=[
+            'scheduling_revision',
+            'pending_scheduling_mode',
+            'pending_scheduling_date',
+            'scheduler_failure_count',
+            'scheduler_retry_after',
+        ]
+    )
+
+    return {
+        'requested_revision': state.scheduling_revision,
+        'applied_revision': state.applied_scheduling_revision,
+        'pending': True,
+        'mode': state.pending_scheduling_mode,
+        'freshness': {
+            'pending': True,
+            'requested_revision': state.scheduling_revision,
+            'applied_revision': state.applied_scheduling_revision,
+        },
+    }
+
+
+@transaction.atomic
 def _mark_restored_schedule_current(user):
     """Advance freshness after history restores disposable schedule state.
 
@@ -570,6 +703,34 @@ def _mark_restored_schedule_current(user):
         ]
     )
 
+    return state.scheduling_revision
+
+
+@transaction.atomic
+def restore_scheduling_intent(user, intent):
+    """Restore a historical scheduling *request* without reviving its revision.
+
+    Revisions are deliberately monotonic.  Undoing a request therefore either
+    marks the restored projection current (when there was no earlier pending
+    request), or creates a new request with the historical mode.  In both
+    cases a worker holding the old revision is made stale before it can write.
+    """
+    if intent is None:
+        return _mark_restored_schedule_current(user)
+
+    state, _ = SchedulingState.objects.select_for_update().get_or_create(user=user)
+    state.scheduling_revision += 1
+    state.scheduler_failure_count = 0
+    state.scheduler_retry_after = None
+    if intent.get('pending'):
+        state.pending_scheduling_mode = intent['mode']
+    else:
+        state.applied_scheduling_revision = state.scheduling_revision
+    state.save(update_fields=[
+        'scheduling_revision', 'applied_scheduling_revision',
+        'pending_scheduling_mode', 'scheduler_failure_count',
+        'scheduler_retry_after',
+    ])
     return state.scheduling_revision
 
 
@@ -891,7 +1052,12 @@ def schedule(
     """
 
     today = user_local_date(user, explicit_date=today)
-    anchor_changed_ids = _reconcile_manual_anchors(user, today)
+    # Scheduling is projection-only.  In particular, it must not expire,
+    # carry, clear, or otherwise rewrite a user's manual commitment while
+    # computing or publishing dates.  Anchor lifecycle maintenance is an
+    # explicit daily-domain operation in ``daily_schedule``; keeping it out
+    # of this facade also makes direct worker publication authority-safe.
+    anchor_changed_ids = []
     flavour = _configured_scheduler_flavour(user)
 
     if flavour is None:
@@ -1094,36 +1260,19 @@ def _with_anchor_changes(result, user, changed_ids):
 
 @transaction.atomic
 def daily_schedule(user, today=None):
-    """Run global maintenance once per local day, without user undo history."""
+    """Apply canonical daily maintenance and queue projection work.
+
+    This boundary is intentionally safe for request paths: carrying/expiring
+    anchors is canonical work, while every optimisation is deferred to the
+    durable worker after this transaction commits.
+    """
     today = user_local_date(user, explicit_date=today)
     priority._lock(user)
     state, _ = SchedulingState.objects.get_or_create(user=user)
     mode = 'global' if state.last_global_date != today else 'minimal'
     anchor_changed_ids = _reconcile_manual_anchors(user, today)
 
-    # A configured V1 schedule is already refreshed by every canonical
-    # planning mutation.  Do not rerun the full optimiser on a read-only
-    # Timeline GET when today's disposable result is already available.
-    if (
-        state.scheduler_flavour is not None
-        and mode == 'minimal'
-        and state.scheduler_runtime
-        and not anchor_changed_ids
-    ):
-        result = {
-            'changed_ids': [],
-            'conflicts': state.scheduler_runtime.get(
-                'compatibility_conflicts',
-                [],
-            ),
-            'scheduler': state.scheduler_runtime,
-        }
-    else:
-        result = reconcile(
-            user,
-            today,
-            mode=mode,
-        )
+    result = request_reconcile(user, today, mode=mode)
 
     _with_anchor_changes(result, user, anchor_changed_ids)
 
@@ -1136,19 +1285,14 @@ def daily_schedule(user, today=None):
 
 @transaction.atomic
 def reschedule(user, today=None):
-    """Explicit global optimisation is undoable, including legacy repairs."""
+    """Durably request an undoable global optimisation; never compute inline."""
 
     today = user_local_date(user, explicit_date=today)
 
     priority._lock(user)
 
     before = _snapshot(user)
-
-    result = reconcile(
-        user,
-        today,
-        mode='global',
-    )
+    result = request_reconcile(user, today, mode='global')
 
     history.record_checkpoint(
         user,
@@ -1156,22 +1300,6 @@ def reschedule(user, today=None):
         before,
         _snapshot(user),
     )
-
-    # A successful explicit V1 reschedule already performed today's global
-    # optimisation.  Record that maintenance fact so the next read-only
-    # Timeline request can reuse the cached runtime instead of immediately
-    # running the expensive optimiser again.
-    if result.get('scheduler', {}).get('configured'):
-        state, _ = SchedulingState.objects.get_or_create(
-            user=user,
-        )
-
-        if state.last_global_date != today:
-            state.last_global_date = today
-            state.save(
-                update_fields=['last_global_date']
-            )
-
     return result
 
 
@@ -1277,6 +1405,21 @@ def _snapshot(
             else {}
         ),
 
+        # This is the undoable user intent, not a historical revision number.
+        # Restoring it always allocates a fresh revision so stale workers can
+        # never publish after undo/redo.
+        'scheduling_intent': {
+            'pending': bool(
+                scheduler_state
+                and scheduler_state.scheduling_revision
+                > scheduler_state.applied_scheduling_revision
+            ),
+            'mode': (
+                scheduler_state.pending_scheduling_mode
+                if scheduler_state is not None else 'minimal'
+            ),
+        },
+
         'overload': [
             {
                 'date':
@@ -1320,54 +1463,73 @@ def _snapshot(
     return state
 
 
-def _item(user, item_id):
-    item = _scheduler_eligible(user).filter(pk=item_id).first()
+def _item(user, item_id, *, include_blocked=False):
+    """Return an actionable item for a manual command.
+
+    A dependency-blocked item is still a real canonical target.  Hiding it
+    here used to turn a useful ``blocked_dependency`` response into the much
+    less useful ``not_eligible`` response before the manual-command
+    preflight had a chance to run.
+    """
+    item = _scheduler_eligible(
+        user,
+        include_blocked=include_blocked,
+    ).filter(pk=item_id).first()
     if item is None:
         raise SchedulingConflict([{'item_id': item_id, 'code': 'not_eligible'}])
     return item
 
 
 def _finish(user, before, today, baseline):
-    result = reconcile(user, today)
-    new_conflicts = [c for c in result['conflicts'] if (c['item_id'], c['code']) not in baseline]
-    if new_conflicts:
-        raise SchedulingConflict(new_conflicts)
+    # Projection conflicts and allocations are worker output.  The mutation
+    # transaction records only canonical anchor intent and exits promptly.
+    result = request_reconcile(user, today)
+    history.record_checkpoint(user, 'SCHEDULE', before, _snapshot(user))
+    # These are canonical intent changes made by the command itself.  Do not
+    # overload ``changed_ids``: projected placement changes are unknown until
+    # a worker publishes the requested revision.
     after = _snapshot(user)
-    previous = {row['id']: row for row in before['schedule']}
-    result['changed_ids'] = [row['id'] for row in after['schedule'] if previous.get(row['id']) != row]
-    history.record_checkpoint(user, 'SCHEDULE', before, after)
+    before_rows = {row['id']: row for row in before['schedule']}
+    result['canonical_changed_ids'] = sorted(
+        row['id'] for row in after['schedule']
+        if any(
+            row.get(key) != before_rows.get(row['id'], {}).get(key)
+            for key in (
+                'manual_requested_date', 'manual_anchor_origin_date',
+                'expired_manual_requested_date', 'manual_requested_order',
+            )
+        )
+    )
     return result
 
 
 def _begin(user, today):
     priority._lock(user)
     before = _snapshot(user)
-
-    # Timeline preflight needs only the established compatibility-conflict
-    # surface. For configured users, the public facade would additionally run
-    # the expensive frozen V1 optimiser before the canonical mutation, only to
-    # run V1 again in _finish(). Keep the exact legacy conflict contract here
-    # without performing that redundant pre-mutation V1 optimisation.
-    compatibility = _legacy_schedule(user, today)
-
-    baseline = {
-        (conflict['item_id'], conflict['code'])
-        for conflict in compatibility['conflicts']
-    }
-
-    return before, baseline
+    # Commands need a canonical snapshot for history, not a speculative
+    # schedule.  Calling the legacy optimiser here used to hold the command
+    # transaction open and made an otherwise nonblocking mutation synchronous.
+    return before, set()
 
 
 @transaction.atomic
 def move_to_date(user, item_id, day, *, allow_overload=False, today=None):
     today = user_local_date(user, explicit_date=today)
     before, baseline = _begin(user, today)
-    item = _item(user, item_id)
-    code = _validate_date(item, day, today)
-    if code:
-        raise SchedulingConflict([_conflict(item, code)])
+    item = _item(user, item_id, include_blocked=True)
+    conflicts = _anchor_preflight_conflicts(user, [{
+        'item_id': item.pk,
+        'date': day,
+        'allow_overload': allow_overload,
+        # Timeline move has no dependency acknowledgement affordance.  Keep
+        # the established safe default rather than silently anchoring blocked
+        # work.
+        'acknowledge_dependency_block': False,
+    }], today=today)
     if not item.duration_category:
-        raise SchedulingConflict([_conflict(item, 'duration_required')])
+        conflicts.append(_conflict(item, 'duration_required'))
+    if conflicts:
+        raise SchedulingConflict(conflicts)
     if allow_overload:
         SchedulingOverload.objects.update_or_create(user=user, date=day, defaults={'allowed': True})
     # Explicit Timeline movement is canonical date intent, not merely a
@@ -1376,13 +1538,11 @@ def move_to_date(user, item_id, day, *, allow_overload=False, today=None):
     item.manual_requested_date = day
     item.manual_anchor_origin_date = day
     item.expired_manual_requested_date = None
-    item.scheduled_date = day
     item.save(
         update_fields=[
             'manual_requested_date',
             'manual_anchor_origin_date',
             'expired_manual_requested_date',
-            'scheduled_date',
         ]
     )
     # Existing conflicts on the manipulated item must not be swallowed.
@@ -1394,15 +1554,42 @@ def move_to_date(user, item_id, day, *, allow_overload=False, today=None):
 def replace(user, replacement_id, displaced_id, *, allow_overload=False, today=None):
     today = user_local_date(user, explicit_date=today)
     before, baseline = _begin(user, today)
-    replacement, displaced = _item(user, replacement_id), _item(user, displaced_id)
-    day = displaced.scheduled_date
+    replacement, displaced = (
+        _item(user, replacement_id, include_blocked=True),
+        _item(user, displaced_id, include_blocked=True),
+    )
+    # A published projection may not exist while the background worker is
+    # processing a newer revision. A canonical manual commitment is already
+    # authoritative and can supply the replacement date without waiting for
+    # optimisation. Never invent a date when neither source exists.
+    day = displaced.manual_requested_date or displaced.scheduled_date
     if replacement.pk == displaced.pk or day is None:
         raise SchedulingConflict([_conflict(displaced, 'invalid_replacement')])
-    code = _validate_date(replacement, day, today)
-    if code:
-        raise SchedulingConflict([_conflict(replacement, code)])
+    conflicts = _anchor_preflight_conflicts(user, [{
+        'item_id': replacement.pk,
+        'date': day,
+        'allow_overload': allow_overload,
+        'acknowledge_dependency_block': False,
+    }], today=today)
     if not replacement.duration_category:
-        raise SchedulingConflict([_conflict(replacement, 'duration_required')])
+        conflicts.append(_conflict(replacement, 'duration_required'))
+    # A non-overload replacement also commits the displaced item to the next
+    # date immediately.  Validate that canonical consequence here; the
+    # worker must never be responsible for accepting/rejecting a user edit.
+    if not allow_overload:
+        displaced_day = day + timedelta(days=1)
+        code = _validate_date(displaced, displaced_day, today)
+        if code:
+            # The replacement occupies the displaced task's original slot.
+            # Missing its deadline is therefore a capacity consequence, not
+            # an attempted explicit after-deadline anchor.
+            conflicts.append(_conflict(
+                displaced,
+                'no_capacity_before_deadline'
+                if code == 'after_deadline' else code,
+            ))
+    if conflicts:
+        raise SchedulingConflict(conflicts)
     if allow_overload:
         SchedulingOverload.objects.update_or_create(user=user, date=day, defaults={'allowed': True})
     # Replacement is date intent, not a global importance reorder. A
@@ -1410,19 +1597,19 @@ def replace(user, replacement_id, displaced_id, *, allow_overload=False, today=N
     replacement.manual_requested_date = day
     replacement.manual_anchor_origin_date = day
     replacement.expired_manual_requested_date = None
-    replacement.scheduled_date = day
     replacement.save(update_fields=[
         'manual_requested_date',
         'manual_anchor_origin_date',
         'expired_manual_requested_date',
-        'scheduled_date',
     ])
-    displaced.manual_requested_date = day if allow_overload else None
-    displaced.manual_anchor_origin_date = day if allow_overload else None
+    # A non-overload replacement explicitly commits the displaced task to
+    # the next day. Leaving it unanchored allows the optimizer to move it
+    # arbitrarily and violates the user's accepted replacement intent.
+    displaced.manual_requested_date = day if allow_overload else displaced_day
+    displaced.manual_anchor_origin_date = day if allow_overload else displaced_day
     if not allow_overload:
         displaced.manual_requested_order = None
-    displaced.scheduled_date = day if allow_overload else day + timedelta(days=1)
-    displaced.save(update_fields=['manual_requested_date', 'manual_anchor_origin_date', 'manual_requested_order', 'scheduled_date'])
+    displaced.save(update_fields=['manual_requested_date', 'manual_anchor_origin_date', 'manual_requested_order'])
     baseline = {pair for pair in baseline if pair[0] not in {replacement.pk, displaced.pk}}
     return _finish(user, before, today, baseline)
 
@@ -1543,6 +1730,116 @@ def _apply_anchor_intent(
     return item
 
 
+def _anchor_preflight_conflicts(user, changes, *, today):
+    """Return immediate, canonical conflicts for proposed manual anchors.
+
+    This intentionally models only facts owned by canonical rows: release and
+    deadline bounds, dependency blocking, and per-day category capacity.  It
+    must remain cheap enough to run inside the short mutation transaction and
+    must never call either scheduler implementation.
+    """
+    item_ids = {change['item_id'] for change in changes}
+    items = {
+        item.pk: item for item in _scheduler_eligible(
+            user, include_blocked=True,
+        ).filter(pk__in=item_ids)
+    }
+    conflicts = []
+    for change in changes:
+        item = items.get(change['item_id'])
+        if item is None:
+            conflicts.append({'item_id': change['item_id'], 'code': 'not_eligible'})
+            continue
+        code = _validate_date(item, change['date'], today)
+        if code == 'before_start' and change.get('change_release'):
+            code = None
+        if code == 'after_deadline' and change.get('change_deadline'):
+            code = None
+        if code:
+            conflicts.append(_conflict(item, code))
+        # A batch may explicitly dissolve this item's incoming blocking
+        # edges as part of the same atomic canonical command.  Do not reject
+        # that command based on the pre-command graph.
+        if (
+            dependencies.is_blocked(item)
+            and not change.get('dissolve_dependencies', False)
+            and not change.get('acknowledge_dependency_block', False)
+        ):
+            conflicts.append(_conflict(item, 'blocked_dependency'))
+
+    # Reuse the existing action-scoped capacity accounting so a same-date
+    # reorder does not spuriously require an overload acknowledgement.
+    for conflict in focus_capacity_conflicts(user, changes):
+        change = next(row for row in changes if row['item_id'] == conflict['item_id'])
+        if not change.get('allow_overload', False):
+            conflicts.append({'item_id': conflict['item_id'], 'code': 'capacity_exceeded'})
+    return conflicts
+
+
+def _focus_queue_preflight(user, items, changes, expected_queue):
+    """Validate explicit Focus slots without reading a stale projection.
+
+    Automatic neighbours are worker output.  Only manual same-day slots are
+    canonical and can therefore support an immediate order guarantee.
+    """
+    if any(change.get('order') is not None for change in changes):
+        state = SchedulingState.objects.filter(user=user).only(
+            'scheduler_flavour',
+        ).first()
+        # Legacy scheduling has no manual-order input.  Do not persist a
+        # command that it cannot ever publish faithfully.
+        if state is None or state.scheduler_flavour is None:
+            return [
+                {'item_id': change['item_id'],
+                 'code': 'queue_order_unrepresentable'}
+                for change in changes if change.get('order') is not None
+            ]
+
+    if expected_queue is None:
+        return []
+
+    prospective = {
+        item.pk: (item.manual_requested_date, item.manual_requested_order)
+        for item in _scheduler_eligible(user, include_blocked=True).filter(
+            manual_requested_date__isnull=False,
+        )
+    }
+    prospective.update({
+        change['item_id']: (change['date'], change.get('order'))
+        for change in changes
+    })
+    expected_by_date = {}
+    for entry in expected_queue:
+        expected_by_date.setdefault(entry['date'], []).append(entry['item_id'])
+
+    for day, expected_ids in expected_by_date.items():
+        # Ignore automatic entries: a later worker is allowed to place them.
+        expected_explicit = [
+            item_id for item_id in expected_ids
+            if prospective.get(item_id, (None, None))[0] == day
+            and prospective.get(item_id, (None, None))[1] is not None
+        ]
+        if not expected_explicit:
+            continue
+        actual_explicit = [
+            item_id for item_id, (anchor_day, order) in sorted(
+                prospective.items(),
+                key=lambda row: (row[1][1] is None, row[1][1] or 0, row[0]),
+            )
+            if anchor_day == day and order is not None
+        ]
+        if actual_explicit != expected_explicit:
+            affected = [
+                change['item_id'] for change in changes
+                if change['date'] == day
+            ]
+            return [
+                {'item_id': item_id, 'code': 'queue_order_unrepresentable'}
+                for item_id in affected
+            ]
+    return []
+
+
 @transaction.atomic
 def set_anchor(
     item: PlanningItem,
@@ -1552,8 +1849,19 @@ def set_anchor(
     change_deadline=False,
     change_release=False,
     allow_overload=False,
+    acknowledge_dependency_block=False,
 ):
     """Set one explicit canonical placement intent and reconcile once."""
+
+    priority._lock(item.user)
+    today = user_local_date(item.user)
+    conflicts = _anchor_preflight_conflicts(item.user, [{
+        'item_id': item.pk, 'date': day, 'change_deadline': change_deadline,
+        'change_release': change_release, 'allow_overload': allow_overload,
+        'acknowledge_dependency_block': acknowledge_dependency_block,
+    }], today=today)
+    if conflicts:
+        raise SchedulingConflict(conflicts)
 
     before = _snapshot(
         item.user,
@@ -1568,34 +1876,7 @@ def set_anchor(
         allow_overload=allow_overload,
     )
 
-    result = schedule(
-        item.user,
-    )
-
-    conflicts = [
-        conflict
-        for conflict in result[
-            "conflicts"
-        ]
-        if (
-            conflict[
-                "item_id"
-            ]
-            == item.pk
-            and conflict[
-                "code"
-            ]
-            == "capacity_exceeded"
-        )
-    ]
-
-    if (
-        conflicts
-        and not allow_overload
-    ):
-        raise ValidationError(
-            "Anchor overload requires explicit confirmation."
-        )
+    result = request_reconcile(item.user)
 
     item.refresh_from_db()
 
@@ -1682,7 +1963,6 @@ def set_anchor_batch(
                 "One or more planning items do not exist."
         })
 
-    expected_orders = {}
     if expected_queue is not None:
         expected_ids = [entry["item_id"] for entry in expected_queue]
         owned_ids = set(PlanningItem.objects.for_user(user).filter(
@@ -1694,18 +1974,6 @@ def set_anchor_batch(
             or set(expected_ids) != owned_ids
         ):
             raise ValidationError({"expected_queue": "Choose distinct owned tasks, including every changed task."})
-        # Only same-date changes promise a relative execution order. A
-        # cross-date gesture promises the moved task's date anchor, not a
-        # frozen arrangement/date for every automatic neighbour.
-        for change in changes:
-            if items[change["item_id"]].scheduled_date == change["date"]:
-                item = items[change["item_id"]]
-                key = (change["date"], focus_bucket_key(item.duration_category, is_residual=item.is_residual))
-                expected_orders.setdefault(key, set()).add(change["item_id"])
-        expected_orders = {
-            key: [item_id for item_id in expected_ids if item_id in ids]
-            for key, ids in expected_orders.items()
-        }
 
     explicit_slots = [
         (
@@ -1843,6 +2111,16 @@ def set_anchor_batch(
             slot_conflicts
         )
 
+    # Preserve the established conflict precedence: concrete occupied
+    # manual slots are reported before speculative queue feasibility.
+    # Both checks run before any canonical mutation.
+    if expected_queue is not None:
+        queue_conflicts = _focus_queue_preflight(
+            user, items, changes, expected_queue,
+        )
+        if queue_conflicts:
+            raise SchedulingConflict(queue_conflicts)
+
     captures_dependencies = any(
         change.get(
             "dissolve_dependencies",
@@ -1857,7 +2135,11 @@ def set_anchor_batch(
             captures_dependencies,
     )
 
-    acknowledgement_by_item = {}
+    preflight_conflicts = _anchor_preflight_conflicts(
+        user, changes, today=today,
+    )
+    if preflight_conflicts:
+        raise SchedulingConflict(preflight_conflicts)
 
     for change in changes:
         item = items[
@@ -1874,21 +2156,6 @@ def set_anchor_batch(
                 item,
                 finish=False,
             )
-
-        acknowledgement_by_item[
-            item.pk
-        ] = {
-            "allow_overload":
-                change.get(
-                    "allow_overload",
-                    False,
-                ),
-            "acknowledge_dependency_block":
-                change.get(
-                    "acknowledge_dependency_block",
-                    False,
-                ),
-        }
 
         _apply_anchor_intent(
             item,
@@ -1913,90 +2180,13 @@ def set_anchor_batch(
             ),
         )
 
-    result = schedule(
-        user,
-        today,
-    )
+    result = request_reconcile(user, today)
 
-    blocking_conflicts = []
-
-    for conflict in result[
-        "conflicts"
-    ]:
-        item_id = conflict.get(
-            "item_id"
-        )
-
-        if item_id not in changed_ids:
-            continue
-
-        code = conflict.get(
-            "code"
-        )
-
-        acknowledgement = (
-            acknowledgement_by_item.get(
-                item_id,
-                {},
-            )
-        )
-
-        if (
-            code
-            == "capacity_exceeded"
-            and acknowledgement.get(
-                "allow_overload",
-                False,
-            )
-        ):
-            continue
-
-        if (
-            code
-            == "blocked_dependency"
-            and acknowledgement.get(
-                "acknowledge_dependency_block",
-                False,
-            )
-        ):
-            continue
-
-        blocking_conflicts.append(
-            conflict
-        )
-
-    if blocking_conflicts:
-        raise SchedulingConflict(
-            blocking_conflicts
-        )
-
-    if expected_orders:
-        from . import focus
-
-        candidates = focus._ordered_candidates(user)
-        buckets = {
-            item.pk: focus_bucket_key(item.duration_category, is_residual=item.is_residual)
-            for item in _scheduler_eligible(user, include_blocked=True)
-        }
-        changes_by_id = {change["item_id"]: change for change in changes}
-        for (day, bucket), expected in expected_orders.items():
-            actual = [row.item_id for row in candidates
-                      if row.scheduled_date == day and buckets.get(row.item_id) == bucket]
-            affected_ids = set(expected)
-            relative_order_valid = [item_id for item_id in actual if item_id in affected_ids] == expected
-            # Validate only changed tasks' promised slots. Out-of-range manual
-            # slots retain the scheduler's established overflow semantics.
-            slots_valid = all(
-                changes_by_id[item_id].get("order") is None
-                or changes_by_id[item_id]["order"] > len(actual)
-                or (item_id in actual and actual.index(item_id) + 1 == changes_by_id[item_id]["order"])
-                for item_id in expected
-            )
-            if not relative_order_valid or not slots_valid:
-                raise SchedulingConflict([{
-                    "item_id": expected[0],
-                    "code": "queue_order_unrepresentable",
-                }])
+    # ``expected_queue`` guards the caller's edit basis above, but cannot be
+    # checked against Focus here: this request only persists canonical
+    # anchors and queues a revision.  The Focus projection remains the last
+    # published one until the worker applies that revision.  Rejecting based
+    # on that stale projection made valid Lock-In/Monk reorders fail in HTTP.
 
     after = _snapshot(
         user,
@@ -2069,9 +2259,7 @@ def remove_anchor(item: PlanningItem):
             "expired_manual_requested_date",
         ]
     )
-    schedule(
-        item.user
-    )
+    request_reconcile(item.user)
 
     item.refresh_from_db()
 
@@ -2109,7 +2297,7 @@ def reconcile_anchors(user, today=None):
     """Time reconciliation for expired explicit date intent."""
     today = user_local_date(user, explicit_date=today)
     changed = _reconcile_manual_anchors(user, today)
-    result = schedule(user, today)
+    result = request_reconcile(user, today)
     return _with_anchor_changes(result, user, changed)
 
 

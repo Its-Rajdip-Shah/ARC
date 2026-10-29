@@ -14,7 +14,8 @@ import importlib
 import pytest
 
 from planning.models import PlanningItem
-from planning.services import priority
+from planning.services import priority, scheduler_worker
+from planning.models import SchedulingState
 
 pytestmark = pytest.mark.django_db
 
@@ -48,9 +49,14 @@ def _reschedule(user, today):
         if callable(fn):
             for args in ((user, today), (user,), ()):
                 try:
-                    return fn(*args)
+                    result = fn(*args)
                 except TypeError:
                     continue
+                state = SchedulingState.objects.filter(user=user).first()
+                if state and state.scheduling_revision > state.applied_scheduling_revision:
+                    status = scheduler_worker.process_request(user.pk, state.scheduling_revision)
+                    assert status == 'published', f'Temporal contract publication: {status}'
+                return result
     raise AssertionError("TMP MISSING: no callable reschedule/schedule domain command")
 
 

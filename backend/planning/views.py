@@ -112,8 +112,33 @@ def _root_lookup(user):
 
 
 def ensure_scheduled(user):
-    """Re-evaluate current capacity and eligibility; same-day changes matter."""
-    return scheduling.daily_schedule(user, user_local_date(user))
+    """Read the published projection; Timeline GET never runs an optimizer."""
+    state, _ = SchedulingState.objects.get_or_create(user=user)
+    runtime = dict(state.scheduler_runtime or {})
+    runtime.setdefault('configured', state.scheduler_flavour is not None)
+    runtime.setdefault('flavour', state.scheduler_flavour)
+    runtime['freshness'] = {
+        'pending': state.scheduling_revision > state.applied_scheduling_revision,
+        'requested_revision': state.scheduling_revision,
+        'applied_revision': state.applied_scheduling_revision,
+    }
+    return {'changed_ids': [], 'conflicts': runtime.get('compatibility_conflicts', []), 'scheduler': runtime}
+
+
+def _scheduler_freshness(user):
+    """Return the durable scheduler token for a queued mutation response."""
+    state, _ = SchedulingState.objects.get_or_create(user=user)
+    pending = state.scheduling_revision > state.applied_scheduling_revision
+    return {
+        'requested_revision': state.scheduling_revision,
+        'applied_revision': state.applied_scheduling_revision,
+        'pending': pending,
+        'freshness': {
+            'requested_revision': state.scheduling_revision,
+            'applied_revision': state.applied_scheduling_revision,
+            'pending': pending,
+        },
+    }
 
 
 class TagViewSet(UserScopedMixin, viewsets.ModelViewSet):
@@ -823,7 +848,7 @@ class PriorityReorderView(APIView):
                 serializer.validated_data['new_position'],
             )
             leaf_order_sync.from_priority(request.user)
-            scheduling.reconcile(request.user)
+            scheduling.request_reconcile(request.user)
         except DjangoValidationError as exc:
             raise _as_400(exc)
 
@@ -1111,9 +1136,7 @@ class FocusReprioritiseView(APIView):
             leaf_order_sync.from_priority(
                 request.user,
             )
-            scheduling.reconcile(
-                request.user,
-            )
+            scheduling.request_reconcile(request.user)
         except DjangoValidationError as exc:
             raise _as_400(exc)
 
@@ -1878,6 +1901,7 @@ def _schedule_anchor_response(user, data):
                 item.due_date,
             'removed':
                 True,
+            **_scheduler_freshness(user),
         })
 
     day = data['date']
@@ -2006,7 +2030,24 @@ def _schedule_anchor_response(user, data):
                 'allow_overload',
                 False,
             ),
+            acknowledge_dependency_block=data.get(
+                'acknowledge_dependency_block',
+                False,
+            ),
         )
+
+    except scheduling.SchedulingConflict as exc:
+        return Response({
+            'conflicts': exc.conflicts,
+            'decisions': [
+                {
+                    'code': 'allow_overload',
+                    'label': 'Allow overload on this date and continue',
+                }
+                for conflict in exc.conflicts
+                if conflict.get('code') == 'capacity_exceeded'
+            ],
+        }, status=409)
 
     except DjangoValidationError as exc:
         messages = getattr(
@@ -2063,6 +2104,7 @@ def _schedule_anchor_response(user, data):
             item.due_date,
         'removed':
             False,
+        **_scheduler_freshness(user),
     })
 
 
@@ -2425,6 +2467,18 @@ class FocusAnchorBatchView(APIView):
                     {},
                 ),
 
+            # The anchors above are committed canonical intent.  The Focus
+            # projection remains the last published schedule until a worker
+            # applies this revision, so expose both truths explicitly.
+            "canonical_changed_ids": result.get(
+                "canonical_changed_ids",
+                result.get("changed_ids", []),
+            ),
+            "requested_revision": result.get("requested_revision"),
+            "applied_revision": result.get("applied_revision"),
+            "pending": result.get("pending", False),
+            "freshness": result.get("freshness", {}),
+
             "focus":
                 _focus_projection(
                     request.user
@@ -2538,4 +2592,6 @@ class ScheduleOverloadView(APIView):
 class ScheduleRescheduleView(APIView):
     @extend_schema(request=None, responses=ScheduleResultSerializer)
     def post(self, request):
+        # The history checkpoint represents the request, not a fabricated
+        # completed projection. Undo invalidates its in-flight revision.
         return Response(scheduling.reschedule(request.user))

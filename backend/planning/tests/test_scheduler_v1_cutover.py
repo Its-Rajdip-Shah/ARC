@@ -9,10 +9,22 @@ from planning.models import (
     SchedulerAllocation,
     SchedulingState,
 )
-from planning.services import history, scheduling
+from planning.services import history, scheduler_worker, scheduling
 
 
 pytestmark = pytest.mark.django_db
+
+def publish_current_revision(user):
+    """Publish pending durable intent; fail if the worker cannot publish it."""
+    from planning.models import SchedulingState
+    from planning.services import scheduler_worker
+    state = SchedulingState.objects.get(user=user)
+    if state.scheduling_revision > state.applied_scheduling_revision:
+        outcome = scheduler_worker.process_request(user.pk, state.scheduling_revision)
+        assert outcome == 'published', (outcome, state.scheduling_revision)
+    state.refresh_from_db()
+    assert state.scheduling_revision == state.applied_scheduling_revision
+
 
 
 TODAY = date(2026, 9, 28)
@@ -166,6 +178,7 @@ def test_explicit_anchor_remains_canonical_under_v1(
         today=TODAY,
     )
 
+    publish_current_revision(user)
     item.refresh_from_db()
 
     assert item.manual_requested_date == target
@@ -229,10 +242,11 @@ def test_daily_schedule_uses_saved_v1_flavour(
         today=TODAY,
     )
 
+    publish_current_revision(user)
     state = SchedulingState.objects.get(user=user)
 
-    assert result["scheduler"]["configured"] is True
-    assert result["scheduler"]["flavour"] == "monk"
+    assert state.scheduler_runtime["configured"] is True
+    assert state.scheduler_runtime["flavour"] == "monk"
     assert state.last_global_date == TODAY
 
 
@@ -257,8 +271,11 @@ def test_explicit_reschedule_uses_saved_v1_flavour(
         today=TODAY,
     )
 
-    assert result["scheduler"]["configured"] is True
-    assert result["scheduler"]["flavour"] == "lock-in"
+    assert result['pending'] is True
+    assert scheduler_worker.process_request(user.pk, result['requested_revision']) == 'published'
+    state = SchedulingState.objects.get(user=user)
+    assert state.scheduler_runtime['configured'] is True
+    assert state.scheduler_runtime['flavour'] == 'lock-in'
 
 
 def _allocation_snapshot(user):
@@ -374,10 +391,10 @@ def test_v1_reschedule_undo_redo_restores_complete_disposable_state(
         state.scheduling_revision
         == revision_after_reschedule + 1
     )
-    assert (
-        state.applied_scheduling_revision
-        == state.scheduling_revision
-    )
+    # Undo restores the pre-reschedule intent.  That intent was already
+    # published, so the restored projection is current and no worker remains
+    # pending.
+    assert state.applied_scheduling_revision == state.scheduling_revision
 
     revision_after_undo = (
         state.scheduling_revision
@@ -408,10 +425,17 @@ def test_v1_reschedule_undo_redo_restores_complete_disposable_state(
         state.scheduling_revision
         == revision_after_undo + 1
     )
-    assert (
-        state.applied_scheduling_revision
-        == state.scheduling_revision
-    )
+    # Redo restores the original global request with a *new* revision.  Its
+    # projection is historical until the worker applies that fresh request.
+    assert state.applied_scheduling_revision == revision_after_undo
+    assert state.scheduling_revision == revision_after_undo + 1
+
+    # The redo request is genuinely pending; only the worker may advance the
+    # applied token.  This also certifies that restored disposable state is
+    # not overwritten by a stale pre-undo computation.
+    assert scheduler_worker.process_request(user.pk, state.scheduling_revision) == 'published'
+    state.refresh_from_db()
+    assert state.applied_scheduling_revision == state.scheduling_revision
 
 
 def test_reconcile_tracks_requested_and_applied_revision(

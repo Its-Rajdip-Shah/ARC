@@ -784,15 +784,16 @@ def _validated_delta(user, state, action_type, expected):
         )
         if placements_changed:
             # A historical proposal cannot remain attached to a carried date.
-            scheduling.reconcile(user, today)
+            scheduling.request_reconcile(user, today)
             return
 
-        # Undo/redo is itself newer user intent. Do not restore historical
-        # revision numbers: revisions are monotonic. Advance freshness so an
-        # older in-flight scheduler result can never overwrite this restored
-        # disposable schedule.
-        scheduling._mark_restored_schedule_current(
-            user
+        # A schedule checkpoint includes the request that caused it. Restore
+        # that intent with a *new* revision; never resurrect an old worker
+        # revision. Older history entries predate this contract and retain the
+        # previous "projection is current" behaviour.
+        scheduling.restore_scheduling_intent(
+            user,
+            state.get('scheduling_intent'),
         )
 
         return

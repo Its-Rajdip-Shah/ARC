@@ -676,6 +676,7 @@ class SchedulerRuntimeSerializer(serializers.Serializer):
     flavour = serializers.CharField(
         allow_null=True,
     )
+    freshness = serializers.DictField(required=False)
 
     engine_version = serializers.CharField(required=False)
     input_contract_version = serializers.CharField(required=False)
@@ -733,6 +734,14 @@ class ScheduleResultSerializer(serializers.Serializer):
         child=serializers.DictField(),
     )
     scheduler = SchedulerRuntimeSerializer(required=False)
+    canonical_changed_ids = serializers.ListField(
+        child=serializers.IntegerField(), required=False,
+    )
+    requested_revision = serializers.IntegerField(required=False)
+    applied_revision = serializers.IntegerField(required=False)
+    pending = serializers.BooleanField(required=False)
+    mode = serializers.ChoiceField(choices=('minimal', 'global'), required=False)
+    freshness = serializers.DictField(required=False)
 
 
 class SchedulerSettingsSerializer(serializers.Serializer):

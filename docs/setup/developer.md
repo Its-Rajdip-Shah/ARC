@@ -440,7 +440,10 @@ Do not append `/api/v1`.
 
 # 9. Start ARC for live development
 
-Use two terminals.
+Use three terminals. The scheduler worker is required: the API deliberately
+acknowledges canonical changes before their disposable Timeline projection is
+computed, so running only Django and Vite leaves scheduling permanently
+pending.
 
 ## Terminal 1 — backend
 
@@ -462,7 +465,18 @@ A temporary `401` followed by a successful token refresh can be normal when an a
 
 An isolated development-server `Broken pipe` message can occur when a browser cancels or closes a connection; investigate only if it corresponds to visible broken behavior or repeated request failures.
 
-## Terminal 2 — frontend
+## Terminal 2 — scheduler worker
+
+From `backend/` with `.venv` active:
+
+    python manage.py run_scheduler_worker
+
+Use `python manage.py run_scheduler_worker --once` to process one bounded
+batch while debugging. Run exactly one worker locally unless deliberately
+testing PostgreSQL concurrency; revision-checked publication makes duplicate
+delivery safe, but it does not replace the worker process.
+
+## Terminal 3 — frontend
 
 From `frontend/`:
 

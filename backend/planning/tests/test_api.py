@@ -14,6 +14,8 @@ from django.utils import timezone
 from freezegun import freeze_time
 from decimal import Decimal
 from accounts.tests.conftest import login_through_mfa, make_user
+from planning.services import scheduling, scheduler_worker
+from planning.models import SchedulingState
 from planning.models import (
     AssignmentDetail,
     DurationCategory,
@@ -489,6 +491,10 @@ def test_the_timeline_separates_execution_dates_and_deadlines(client, user, make
     make_item(user, 'Fixed', ItemType.GOAL)  # a root to group under
     make_item(user, 'Deadline', due_date='2026-09-20')
     make_item(user, 'Whenever', scheduled_date='2026-09-20')
+    scheduling.schedule(user, mode='global')
+    pending = SchedulingState.objects.filter(user=user).first()
+    if pending and pending.scheduling_revision > pending.applied_scheduling_revision:
+        assert scheduler_worker.process_request(user.pk, pending.scheduling_revision) == 'published'
 
     items = {
         item['title']: item
@@ -540,8 +546,17 @@ def test_reading_the_timeline_rolls_neglected_adaptive_tasks_forward(client, use
     past the next time the user looks."""
     stale = make_item(user, 'Neglected', scheduled_date='2026-09-01', priority_position=1)
 
-    client.get('/api/planning/timeline/')
+    # A read must not mutate canonical state or refresh projections.
+    response = client.get('/api/planning/timeline/')
+    assert response.status_code == 200
+    stale.refresh_from_db()
+    assert stale.scheduled_date.isoformat() == '2026-09-01'
 
+    # The explicit daily-maintenance boundary advances neglected work.
+    scheduling.daily_schedule(user)
+    pending = SchedulingState.objects.filter(user=user).first()
+    if pending and pending.scheduling_revision > pending.applied_scheduling_revision:
+        assert scheduler_worker.process_request(user.pk, pending.scheduling_revision) == 'published'
     stale.refresh_from_db()
     assert stale.scheduled_date.isoformat() == '2026-09-14'
     assert stale.due_date is None
